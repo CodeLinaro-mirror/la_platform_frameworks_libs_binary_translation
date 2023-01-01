@@ -52,9 +52,11 @@ bool RunOneInstruction(ThreadState* state, GuestAddr stop_pc) {
 }
 
 #define TESTSUITE Riscv64LiteTranslateInsnTest
+#define TESTING_LITE_TRANSLATOR
 
 #include "berberis/test_utils/insn_tests_riscv64-inl.h"
 
+#undef TESTING_LITE_TRANSLATOR
 #undef TESTSUITE
 
 }  // namespace

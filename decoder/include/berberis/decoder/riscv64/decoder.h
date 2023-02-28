@@ -34,11 +34,68 @@ class Decoder {
   explicit Decoder(InsnConsumer* insn_consumer) : insn_consumer_(insn_consumer) {}
 
   enum class BaseOpcode {
+    kLoad = 0b00'000,
+    kLoadFp = 0b00'001,
+    kCustom0 = 0b00'010,
+    kMiscMem = 0b00'011,
+    kOpImm = 0b00'100,
+    kAuipc = 0b00'101,
+    kOpImm32 = 0b00'110,
+    // Reserved 0b00'111,
+    kStore = 0b01'000,
+    kStoreFp = 0b01'001,
+    kCustom1 = 0b01'010,
+    kAmo = 0b01'011,
     kOp = 0b01'100,
+    kLui = 0b01'101,
+    kOp32 = 0b01'110,
+    // Reserved 0b01'111,
+    kMAdd = 0b10'000,
+    kMSub = 0b10'001,
+    kNmSub = 0b10'010,
+    kNmAdd = 0b10'011,
+    kOpFp = 0b10'100,
+    // Reserved 0b10'101,
+    kCustom2 = 0b10'110,
+    // Reserved 0b10'111,
+    kBranch = 0b11'000,
+    kJalr = 0b11'001,
+    // Reserved 0b11'010,
+    kJal = 0b11'011,
+    kSystem = 0b11'100,
+    // Reserved 0b11'101,
+    kCustom3 = 0b11'110,
+    // Reserved 0b11'111,
   };
 
   enum class OpOpcode {
-    kAdd = 0b0000000'000,
+    kAdd = 0b0000'000'000,
+    kSub = 0b0100'000'000,
+    kSll = 0b0000'000'001,
+    kSlt = 0b0000'000'010,
+    kSltu = 0b0000'000'011,
+    kXor = 0b0000'000'100,
+    kSlr = 0b0000'000'101,
+    kSra = 0b0100'000'101,
+    kOr = 0b0000'000'110,
+    kAnd = 0b0000'000'111,
+  };
+
+  enum class LoadOpcode {
+    kLb = 0b000,
+    kLh = 0b001,
+    kLw = 0b010,
+    kLd = 0b011,
+    kLbu = 0b100,
+    kLhu = 0b101,
+    kLwu = 0b110,
+  };
+
+  enum class StoreOpcode {
+    kSb = 0b000,
+    kSh = 0b001,
+    kSw = 0b010,
+    kSd = 0b011,
   };
 
   struct OpArgs {
@@ -46,6 +103,20 @@ class Decoder {
     uint8_t dst;
     uint8_t src1;
     uint8_t src2;
+  };
+
+  struct LoadArgs {
+    LoadOpcode opcode;
+    uint8_t dst;
+    uint8_t src;
+    uint16_t offset;
+  };
+
+  struct StoreArgs {
+    StoreOpcode opcode;
+    uint8_t src;
+    uint16_t offset;
+    uint8_t data;
   };
 
   uint8_t Decode(const uint16_t* code) {
@@ -65,6 +136,12 @@ class Decoder {
     switch (opcode_bits) {
       case BaseOpcode::kOp:
         DecodeOp();
+        break;
+      case BaseOpcode::kLoad:
+        DecodeLoad();
+        break;
+      case BaseOpcode::kStore:
+        DecodeStore();
         break;
       default:
         insn_consumer_->Unimplemented();
@@ -93,6 +170,32 @@ class Decoder {
         .src2 = GetBits<uint8_t, 20, 5>(),
     };
     insn_consumer_->Op(args);
+  }
+
+  void DecodeLoad() {
+    LoadOpcode opcode{GetBits<uint8_t, 12, 3>()};
+    const LoadArgs args = {
+        .opcode = opcode,
+        .dst = GetBits<uint8_t, 7, 5>(),
+        .src = GetBits<uint8_t, 15, 5>(),
+        .offset = GetBits<uint16_t, 20, 12>(),
+    };
+    insn_consumer_->Load(args);
+  }
+
+  void DecodeStore() {
+    StoreOpcode opcode{GetBits<uint8_t, 12, 3>()};
+
+    uint16_t low_imm = GetBits<uint16_t, 7, 5>();
+    uint16_t high_imm = GetBits<uint16_t, 25, 7>();
+
+    const StoreArgs args = {
+        .opcode = opcode,
+        .src = GetBits<uint8_t, 15, 5>(),
+        .offset = static_cast<uint16_t>(low_imm | (high_imm << 5)),
+        .data = GetBits<uint8_t, 20, 5>(),
+    };
+    insn_consumer_->Store(args);
   }
 
   InsnConsumer* insn_consumer_;

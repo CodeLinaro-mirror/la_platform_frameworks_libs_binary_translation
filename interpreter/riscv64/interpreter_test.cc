@@ -34,12 +34,28 @@ namespace {
 
 class Riscv64InterpreterTest : public ::testing::Test {
  public:
+  void InterpretCFld(uint16_t insn_bytes, uint64_t offset) {
+    auto code_start = ToGuestAddr(&insn_bytes);
+    state_.cpu.insn_addr = code_start;
+    SetXReg<8>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&kDataToLoad) - offset));
+    InterpretInsn(&state_);
+    EXPECT_EQ(GetFReg<8>(state_.cpu), kDataToLoad);
+  }
+
   void InterpretCAddi4spn(uint16_t insn_bytes, uint64_t expected_offset) {
     auto code_start = ToGuestAddr(&insn_bytes);
     state_.cpu.insn_addr = code_start;
     SetXReg<2>(state_.cpu, 1);
     InterpretInsn(&state_);
     EXPECT_EQ(GetXReg<9>(state_.cpu), 1 + expected_offset);
+  }
+
+  void InterpretCAddi(uint16_t insn_bytes, uint64_t expected_increment) {
+    auto code_start = ToGuestAddr(&insn_bytes);
+    state_.cpu.insn_addr = code_start;
+    SetXReg<2>(state_.cpu, 1);
+    InterpretInsn(&state_);
+    EXPECT_EQ(GetXReg<2>(state_.cpu), 1 + expected_increment);
   }
 
   void InterpretCJ(uint16_t insn_bytes, int16_t expected_offset) {
@@ -119,11 +135,29 @@ class Riscv64InterpreterTest : public ::testing::Test {
     EXPECT_EQ(GetXReg<1>(state_.cpu), expected_result);
   }
 
+  void InterpretLoadFp(uint32_t insn_bytes, uint64_t expected_result) {
+    state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+    // Offset is always 8.
+    SetXReg<2>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&kDataToLoad) - 8));
+    InterpretInsn(&state_);
+    EXPECT_EQ(GetFReg<1>(state_.cpu), expected_result);
+  }
+
   void InterpretStore(uint32_t insn_bytes, uint64_t expected_result) {
     state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
     // Offset is always 8.
     SetXReg<1>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&store_area_) - 8));
     SetXReg<2>(state_.cpu, kDataToStore);
+    store_area_ = 0;
+    InterpretInsn(&state_);
+    EXPECT_EQ(store_area_, expected_result);
+  }
+
+  void InterpretStoreFp(uint32_t insn_bytes, uint64_t expected_result) {
+    state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+    // Offset is always 8.
+    SetXReg<1>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&store_area_) - 8));
+    SetFReg<2>(state_.cpu, kDataToStore);
     store_area_ = 0;
     InterpretInsn(&state_);
     EXPECT_EQ(store_area_, expected_result);
@@ -164,6 +198,67 @@ class Riscv64InterpreterTest : public ::testing::Test {
   uint64_t store_area_;
   ThreadState state_;
 };
+
+TEST_F(Riscv64InterpreterTest, CFld) {
+  union {
+    uint16_t offset;
+    struct {
+      uint8_t : 3;
+      uint8_t i3_i5 : 3;
+      uint8_t i6_i7 : 2;
+    } i_bits;
+  };
+  for (offset = int16_t{0}; offset < int16_t{256}; offset += 8) {
+    union {
+      int16_t parcel;
+      struct {
+        uint8_t low_opcode : 2;
+        uint8_t rd : 3;
+        uint8_t i6_i7 : 2;
+        uint8_t rs : 3;
+        uint8_t i3_i5 : 3;
+        uint8_t high_opcode : 3;
+      } __attribute__((__packed__));
+    } o_bits = {
+        .low_opcode = 0b00,
+        .rd = 0,
+        .i6_i7 = i_bits.i6_i7,
+        .rs = 0,
+        .i3_i5 = i_bits.i3_i5,
+        .high_opcode = 0b001,
+    };
+    InterpretCFld(o_bits.parcel, offset);
+  }
+}
+
+TEST_F(Riscv64InterpreterTest, CAddi) {
+  union {
+    int8_t offset;
+    struct {
+      uint8_t i4_i0 : 5;
+      uint8_t i5 : 1;
+    } i_bits;
+  };
+  for (offset = int8_t{-32}; offset < int8_t{31}; offset++) {
+    union {
+      int16_t parcel;
+      struct {
+        uint8_t low_opcode : 2;
+        uint8_t i4_i0 : 5;
+        uint8_t r : 5;
+        uint8_t i5 : 1;
+        uint8_t high_opcode : 3;
+      } __attribute__((__packed__));
+    } o_bits = {
+        .low_opcode = 0b01,
+        .i4_i0 = i_bits.i4_i0,
+        .r = 2,
+        .i5 = i_bits.i5,
+        .high_opcode = 0b000,
+    };
+    InterpretCAddi(o_bits.parcel, offset);
+  }
+}
 
 TEST_F(Riscv64InterpreterTest, CAddi4spn) {
   union {
@@ -454,6 +549,14 @@ TEST_F(Riscv64InterpreterTest, LoadInstructions) {
   InterpretLoad(0x00812083, int64_t{int32_t(kDataToLoad)});
 }
 
+TEST_F(Riscv64InterpreterTest, LoadFpInstructions) {
+  // Offset is always 8.
+  // Flw
+  InterpretLoadFp(0x00812087, kDataToLoad | 0xffffffff00000000ULL);
+  // Fld
+  InterpretLoadFp(0x00813087, kDataToLoad);
+}
+
 TEST_F(Riscv64InterpreterTest, StoreInstructions) {
   // Offset is always 8.
   // Sb
@@ -464,6 +567,14 @@ TEST_F(Riscv64InterpreterTest, StoreInstructions) {
   InterpretStore(0x0020a423, kDataToStore & 0xffff'ffffULL);
   // Sd
   InterpretStore(0x0020b423, kDataToStore);
+}
+
+TEST_F(Riscv64InterpreterTest, StoreFpInstructions) {
+  // Offset is always 8.
+  // Fsw
+  InterpretStoreFp(0x0020a427, kDataToStore & 0xffff'ffffULL);
+  // Fsd
+  InterpretStoreFp(0x0020b427, kDataToStore);
 }
 
 TEST_F(Riscv64InterpreterTest, BranchInstructions) {

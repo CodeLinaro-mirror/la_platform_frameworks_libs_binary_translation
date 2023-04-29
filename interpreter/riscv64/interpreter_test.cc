@@ -35,6 +35,8 @@ namespace {
 
 class Riscv64InterpreterTest : public ::testing::Test {
  public:
+  // Compressed Instructions.
+
   template <RegisterType register_type, uint64_t expected_result>
   void InterpretCompressedStore(uint16_t insn_bytes, uint64_t offset) {
     auto code_start = ToGuestAddr(&insn_bytes);
@@ -53,6 +55,14 @@ class Riscv64InterpreterTest : public ::testing::Test {
     SetXReg<8>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&kDataToLoad) - offset));
     InterpretInsn(&state_);
     EXPECT_EQ((GetReg<register_type, 9>(state_.cpu)), expected_result);
+  }
+
+  void InterpretCAddi16sp(uint16_t insn_bytes, uint64_t expected_offset) {
+    auto code_start = ToGuestAddr(&insn_bytes);
+    state_.cpu.insn_addr = code_start;
+    SetXReg<2>(state_.cpu, 1);
+    InterpretInsn(&state_);
+    EXPECT_EQ(GetXReg<2>(state_.cpu), 1 + expected_offset);
   }
 
   void InterpretCAddi4spn(uint16_t insn_bytes, uint64_t expected_offset) {
@@ -78,6 +88,8 @@ class Riscv64InterpreterTest : public ::testing::Test {
     EXPECT_EQ(state_.cpu.insn_addr, code_start + expected_offset);
   }
 
+  // Non-Compressed Instructions.
+
   void InterpretCsr(uint32_t insn_bytes, uint8_t expected_rm) {
     auto code_start = ToGuestAddr(&insn_bytes);
     state_.cpu.insn_addr = code_start;
@@ -85,6 +97,41 @@ class Riscv64InterpreterTest : public ::testing::Test {
     InterpretInsn(&state_);
     EXPECT_EQ(GetXReg<2>(state_.cpu), 0b001u);
     EXPECT_EQ(state_.cpu.frm, expected_rm);
+  }
+
+  void InterpretFma(
+      uint32_t insn_bytes,
+      std::initializer_list<std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>> args) {
+    for (auto [arg1, arg2, arg3, expected_result] : args) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetFReg<2>(state_.cpu, arg1);
+      SetFReg<3>(state_.cpu, arg2);
+      SetFReg<4>(state_.cpu, arg3);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetFReg<1>(state_.cpu), expected_result);
+    }
+  }
+
+  void InterpretFmaSingle(uint32_t insn_bytes,
+                          std::initializer_list<std::tuple<float, float, float, float>> args) {
+    for (auto [arg1, arg2, arg3, expected_result] : args) {
+      InterpretFma(insn_bytes,
+                   {{bit_cast<uint32_t>(arg1) | 0xffff'ffff'0000'0000,
+                     bit_cast<uint32_t>(arg2) | 0xffff'ffff'0000'0000,
+                     bit_cast<uint32_t>(arg3) | 0xffff'ffff'0000'0000,
+                     bit_cast<uint32_t>(expected_result) | 0xffff'ffff'0000'0000}});
+    }
+  }
+
+  void InterpretFmaDouble(uint32_t insn_bytes,
+                          std::initializer_list<std::tuple<double, double, double, double>> args) {
+    for (auto [arg1, arg2, arg3, expected_result] : args) {
+      InterpretFma(insn_bytes,
+                   {{bit_cast<uint64_t>(arg1),
+                     bit_cast<uint64_t>(arg2),
+                     bit_cast<uint64_t>(arg3),
+                     bit_cast<uint64_t>(expected_result)}});
+    }
   }
 
   void InterpretOp(uint32_t insn_bytes,
@@ -251,6 +298,8 @@ class Riscv64InterpreterTest : public ::testing::Test {
   ThreadState state_;
 };
 
+// Tests for Compressed Instructions.
+
 template <uint16_t opcode, auto execute_instruction_func>
 void TestCompressedLoadOrStore32bit(Riscv64InterpreterTest* that) {
   union {
@@ -383,6 +432,78 @@ TEST_F(Riscv64InterpreterTest, CAddi) {
   }
 }
 
+TEST_F(Riscv64InterpreterTest, CAddi16sp) {
+  union {
+    int16_t offset;
+    struct {
+      uint8_t : 4;
+      uint8_t i4 : 1;
+      uint8_t i5 : 1;
+      uint8_t i6 : 1;
+      uint8_t i7 : 1;
+      uint8_t i8 : 1;
+      uint8_t i9 : 1;
+    } i_bits;
+  };
+  for (offset = int16_t{-512}; offset < int16_t{512}; offset += 16) {
+    union {
+      int16_t parcel;
+      struct [[gnu::packed]] {
+        uint8_t low_opcode : 2;
+        uint8_t i5 : 1;
+        uint8_t i7 : 1;
+        uint8_t i8 : 1;
+        uint8_t i6 : 1;
+        uint8_t i4 : 1;
+        uint8_t rd : 5;
+        uint8_t i9 : 1;
+        uint8_t high_opcode : 3;
+      };
+    } o_bits = {
+        .low_opcode = 0b01,
+        .i5 = i_bits.i5,
+        .i7 = i_bits.i7,
+        .i8 = i_bits.i8,
+        .i6 = i_bits.i6,
+        .i4 = i_bits.i4,
+        .rd = 2,
+        .i9 = i_bits.i9,
+        .high_opcode = 0b011,
+    };
+    InterpretCAddi16sp(o_bits.parcel, offset);
+  }
+}
+
+TEST_F(Riscv64InterpreterTest, CLui) {
+  union {
+    int32_t offset;
+    struct [[gnu::packed]] {
+      uint8_t : 12;
+      uint8_t i12_i16 : 5;
+      uint8_t i17 : 1;
+    } i_bits;
+  };
+  for (offset = int32_t{-131072}; offset < int32_t{131072}; offset += 4096) {
+    union {
+      int16_t parcel;
+      struct [[gnu::packed]] {
+        uint8_t low_opcode : 2;
+        uint8_t i12_i16 : 5;
+        uint8_t rd : 5;
+        uint8_t i17 : 1;
+        uint8_t high_opcode : 3;
+      };
+    } o_bits = {
+        .low_opcode = 0b01,
+        .i12_i16 = i_bits.i12_i16,
+        .rd = 1,
+        .i17 = i_bits.i17,
+        .high_opcode = 0b011,
+    };
+    InterpretLui(o_bits.parcel, offset);
+  }
+}
+
 TEST_F(Riscv64InterpreterTest, CAddi4spn) {
   union {
     int16_t offset;
@@ -486,6 +607,8 @@ TEST_F(Riscv64InterpreterTest, CJ) {
   }
 }
 
+// Tests for Non-Compressed Instructions.
+
 TEST_F(Riscv64InterpreterTest, CsrInstrctuion) {
   ScopedRoundingMode scoped_rounding_mode;
   // Csrrw x2, frm, 2
@@ -503,6 +626,25 @@ TEST_F(Riscv64InterpreterTest, FenceInstructions) {
   InterpretFence(0x8330000f);
   // FenceI
   InterpretFence(0x0000100f);
+}
+
+TEST_F(Riscv64InterpreterTest, FmaInstructions) {
+  // Fmadd.S
+  InterpretFmaSingle(0x203170c3, {{1.0f, 2.0f, 3.0f, 5.0f}});
+  // Fmadd.D
+  InterpretFmaDouble(0x223170c3, {{1.0, 2.0, 3.0, 5.0}});
+  // Fmsub.S
+  InterpretFmaSingle(0x203170c7, {{1.0f, 2.0f, 3.0f, -1.0f}});
+  // Fmsub.D
+  InterpretFmaDouble(0x223170c7, {{1.0, 2.0, 3.0, -1.0}});
+  // Fnmsub.S
+  InterpretFmaSingle(0x203170cb, {{1.0f, 2.0f, 3.0f, 1.0f}});
+  // Fnmsub.D
+  InterpretFmaDouble(0x223170cb, {{1.0, 2.0, 3.0, 1.0}});
+  // Fnmadd.S
+  InterpretFmaSingle(0x203170cf, {{1.0f, 2.0f, 3.0f, -5.0f}});
+  // Fnmadd.D
+  InterpretFmaDouble(0x223170cf, {{1.0, 2.0, 3.0, -5.0}});
 }
 
 TEST_F(Riscv64InterpreterTest, OpInstructions) {

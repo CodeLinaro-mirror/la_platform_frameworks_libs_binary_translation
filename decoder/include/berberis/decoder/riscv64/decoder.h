@@ -195,6 +195,14 @@ class Decoder {
     kMaxAmoOpcode = 0b11111'111,
   };
 
+  enum class FmaOpcode {
+    kFmadd = 0b00,
+    kFmsub = 0b01,
+    kFnmsub = 0b10,
+    kFnmadd = 0b11,
+    kMaxFmaOpcode = 0b11,
+  };
+
   enum class OpFpOpcode {
     // Bit #2 = 1 means rm is an opcode extension.
     // Bit #3 = 1 means rs2 is an opcode extension
@@ -341,6 +349,16 @@ class Decoder {
     int16_t imm;
   };
 
+  struct FmaArgs {
+    FmaOpcode opcode;
+    FloatOperandType operand_type;
+    uint8_t dst;
+    uint8_t src1;
+    uint8_t src2;
+    uint8_t src3;
+    uint8_t rm;
+  };
+
   template <typename OpcodeType>
   struct OpArgsTemplate {
     OpcodeType opcode;
@@ -477,10 +495,39 @@ class Decoder {
       case CompressedOpcode::kSw:
         DecodeCompressedLoadStore<LoadStore::kStore, StoreOperandType::k32bit>();
         break;
+      case CompressedOpcode::kLui_Addi16sp:
+        DecodeCompressedLuiAddi16sp();
+        break;
       default:
         insn_consumer_->Unimplemented();
     }
     return 2;
+  }
+
+  void DecodeCompressedLuiAddi16sp() {
+    uint8_t low_imm = GetBits<uint8_t, 2, 5>();
+    uint8_t high_imm = GetBits<uint8_t, 12, 1>();
+    uint8_t rd = GetBits<uint8_t, 7, 5>();
+    if (rd != 2) {
+      int32_t imm = SignExtend<18>((high_imm << 17) + (low_imm << 12));
+      const UpperImmArgs args = {
+          .dst = rd,
+          .imm = imm,
+      };
+      return insn_consumer_->Lui(args);
+    }
+    constexpr uint8_t kAddi16spLow[32] = {0x00, 0x08, 0x20, 0x28, 0x40, 0x48, 0x60, 0x68,
+                                          0x10, 0x18, 0x30, 0x38, 0x50, 0x58, 0x70, 0x78,
+                                          0x04, 0x0c, 0x24, 0x2c, 0x44, 0x4c, 0x64, 0x6c,
+                                          0x14, 0x1c, 0x34, 0x3c, 0x54, 0x5c, 0x74, 0x7c};
+    int16_t imm = SignExtend<10>((high_imm << 9) + (kAddi16spLow[low_imm] << 2));
+    const OpImmArgs args = {
+        .opcode = OpImmOpcode::kAddi,
+        .dst = 2,
+        .src = 2,
+        .imm = imm,
+    };
+    insn_consumer_->OpImm(args);
   }
 
   enum class LoadStore { kLoad, kStore };
@@ -598,6 +645,12 @@ class Decoder {
         break;
       case BaseOpcode::kLoadFp:
         DecodeLoad<FloatOperandType>();
+        break;
+      case BaseOpcode::kMAdd:
+      case BaseOpcode::kMSub:
+      case BaseOpcode::kNmSub:
+      case BaseOpcode::kNmAdd:
+        DecodeFma();
         break;
       case BaseOpcode::kOpImm:
         DecodeOp<OpImmOpcode, ShiftImmOpcode, 6>();
@@ -736,6 +789,21 @@ class Decoder {
         .aq = bool(GetBits<uint8_t, 26, 1>()),
     };
     insn_consumer_->Amo(args);
+  }
+
+  void DecodeFma() {
+    uint8_t operand_type = GetBits<uint8_t, 25, 2>();
+    uint8_t opcode_bits = GetBits<uint8_t, 2, 2>();
+    const FmaArgs args = {
+        .opcode = FmaOpcode(opcode_bits),
+        .operand_type = FloatOperandType(operand_type),
+        .dst = GetBits<uint8_t, 7, 5>(),
+        .src1 = GetBits<uint8_t, 15, 5>(),
+        .src2 = GetBits<uint8_t, 20, 5>(),
+        .src3 = GetBits<uint8_t, 27, 5>(),
+        .rm = GetBits<uint8_t, 12, 3>(),
+    };
+    insn_consumer_->Fma(args);
   }
 
   void DecodeLui() {

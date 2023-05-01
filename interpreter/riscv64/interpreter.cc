@@ -39,6 +39,7 @@ class Interpreter {
  public:
   using Decoder = Decoder<SemanticsPlayer<Interpreter>>;
   using Register = uint64_t;
+  using FpRegister = uint64_t;
 
   explicit Interpreter(ThreadState* state) : state_(state), branch_taken_(false) {}
 
@@ -56,7 +57,8 @@ class Interpreter {
   // created assembly code.
   // Ordering affecting I/O devices is not relevant to user-space code thus we just ignore bits
   // related to devices I/O.
-  void Fence(Decoder::FenceOpcode opcode,
+  void Fence(Decoder::FenceOpcode /*opcode*/,
+             Register /*src*/,
              bool sw,
              bool sr,
              bool /*so*/,
@@ -67,28 +69,22 @@ class Interpreter {
              bool /*pi*/) {
     bool read_fence = sr | pr;
     bool write_fence = sw | pw;
-    switch (opcode) {
-      case Decoder::FenceOpcode::kFence:
-        if (read_fence) {
-          if (write_fence) {
-            asm volatile("mfence" ::: "memory");
-          } else {
-            asm volatile("lfence" ::: "memory");
-          }
-        } else if (write_fence) {
-          asm volatile("sfence" ::: "memory");
-        }
-        return;
-      case Decoder::FenceOpcode::kFenceTso:
-        if (read_fence && write_fence) {
-          asm volatile("mfence" ::: "memory");
-          return;
-        }
-        break;
-      default:
-        break;
+    // Two types of fences (total store ordering fence and normal fence) are supposed to be
+    // processed differently, but only for the “read_fence && write_fence” case (otherwise total
+    // store ordering fence becomes normal fence for the “forward compatibility”), yet because x86
+    // doesn't distinguish between these two types of fences and since we are supposed to map all
+    // not-yet defined fences to normal fence (again, for the “forward compatibility”) it's Ok to
+    // just ignore opcode field.
+    if (read_fence) {
+      if (write_fence) {
+        asm volatile("mfence" ::: "memory");
+      } else {
+        asm volatile("lfence" ::: "memory");
+      }
+    } else if (write_fence) {
+      asm volatile("sfence" ::: "memory");
     }
-    return Unimplemented();
+    return;
   }
 
   void FenceI(Register /*arg*/, int16_t /*imm*/) {
@@ -258,6 +254,19 @@ class Interpreter {
     }
   }
 
+  FpRegister LoadFp(Decoder::LoadFpOpcode opcode, Register arg, int16_t offset) {
+    void* ptr = ToHostAddr<void>(arg + offset);
+    switch (opcode) {
+      case Decoder::LoadFpOpcode::kFlw:
+        return LoadFp<float>(ptr);
+      case Decoder::LoadFpOpcode::kFld:
+        return LoadFp<double>(ptr);
+      default:
+        Unimplemented();
+        return {};
+    }
+  }
+
   Register OpImm(Decoder::OpImmOpcode opcode, Register arg, int16_t imm) {
     switch (opcode) {
       case Decoder::OpImmOpcode::kAddi:
@@ -348,6 +357,20 @@ class Interpreter {
     }
   }
 
+  void StoreFp(Decoder::StoreFpOpcode opcode, Register arg, int16_t offset, FpRegister data) {
+    void* ptr = ToHostAddr<void>(arg + offset);
+    switch (opcode) {
+      case Decoder::StoreFpOpcode::kFsw:
+        StoreFp<float>(ptr, data);
+        break;
+      case Decoder::StoreFpOpcode::kFsd:
+        StoreFp<double>(ptr, data);
+        break;
+      default:
+        return Unimplemented();
+    }
+  }
+
   void Branch(Decoder::BranchOpcode opcode, Register arg1, Register arg2, int16_t offset) {
     bool cond_value;
     switch (opcode) {
@@ -394,13 +417,15 @@ class Interpreter {
     return pc + insn_len;
   }
 
+  void Nop() {}
+
   void Unimplemented() { FATAL("Unimplemented riscv64 instruction"); }
 
   //
   // Guest state getters/setters.
   //
 
-  uint64_t GetReg(uint8_t reg) const {
+  Register GetReg(uint8_t reg) const {
     CheckRegIsValid(reg);
     return state_->cpu.x[reg - 1];
   }
@@ -408,6 +433,16 @@ class Interpreter {
   void SetReg(uint8_t reg, Register value) {
     CheckRegIsValid(reg);
     state_->cpu.x[reg - 1] = value;
+  }
+
+  FpRegister GetFpReg(uint8_t reg) const {
+    CheckFpRegIsValid(reg);
+    return state_->cpu.f[reg];
+  }
+
+  void SetFpReg(uint8_t reg, FpRegister value) {
+    CheckFpRegIsValid(reg);
+    state_->cpu.f[reg] = value;
   }
 
   //
@@ -424,7 +459,8 @@ class Interpreter {
 
  private:
   template <typename DataType>
-  uint64_t Load(const void* ptr) const {
+  Register Load(const void* ptr) const {
+    static_assert(std::is_integral_v<DataType>);
     DataType data;
     memcpy(&data, ptr, sizeof(data));
     // Signed types automatically sign-extend to int64_t.
@@ -432,7 +468,22 @@ class Interpreter {
   }
 
   template <typename DataType>
+  FpRegister LoadFp(const void* ptr) const {
+    static_assert(std::is_floating_point_v<DataType>);
+    FpRegister reg = ~0ULL;
+    memcpy(&reg, ptr, sizeof(DataType));
+    return reg;
+  }
+
+  template <typename DataType>
   void Store(void* ptr, uint64_t data) const {
+    static_assert(std::is_integral_v<DataType>);
+    memcpy(ptr, &data, sizeof(DataType));
+  }
+
+  template <typename DataType>
+  void StoreFp(void* ptr, uint64_t data) const {
+    static_assert(std::is_floating_point_v<DataType>);
     memcpy(ptr, &data, sizeof(DataType));
   }
 
@@ -440,6 +491,8 @@ class Interpreter {
     CHECK_GT(reg, 0u);
     CHECK_LE(reg, arraysize(state_->cpu.x));
   }
+
+  void CheckFpRegIsValid(uint8_t reg) const { CHECK_LT(reg, arraysize(state_->cpu.f)); }
 
   ThreadState* state_;
   bool branch_taken_;

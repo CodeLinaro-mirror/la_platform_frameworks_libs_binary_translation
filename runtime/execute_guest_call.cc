@@ -16,13 +16,14 @@
 
 #include "berberis/runtime_primitives/runtime_library.h"
 
-extern "C" {
+#include "berberis/base/checks.h"
+#include "berberis/guest_state/guest_state.h"
 
-void berberis_entry_Stop() {}
-void berberis_entry_NoExec() {}
-void berberis_entry_NotTranslated() {}
-void berberis_entry_Translating() {}
-void berberis_entry_Invalidating() {}
-void berberis_entry_Wrapping() {}
+namespace berberis {
 
-}  // extern "C"
+// TODO(b/278926583) Implement
+void ExecuteGuestCall(ThreadState* /* state */) {
+  FATAL("Not yet implemented");
+}
+
+}  // namespace berberis

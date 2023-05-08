@@ -895,6 +895,85 @@ TEST_F(Riscv64InterpreterTest, OpFpInstructions) {
   InterpretOpFp(0x183100d3, {std::tuple{6.0f, 2.0f, 3.0f}});
   // FDiv.D
   InterpretOpFp(0x1a3100d3, {std::tuple{6.0, 2.0, 3.0}});
+
+  // FSgnj.S
+  InterpretOpFp(0x203100d3,
+                {std::tuple{1.0f, 2.0f, 1.0f},
+                 {-1.0f, 2.0f, 1.0f},
+                 {1.0f, -2.0f, -1.0f},
+                 {-1.0f, -2.0f, -1.0f}});
+  // FSgnj.D
+  InterpretOpFp(0x223100d3,
+                {
+                    std::tuple{1.0, 2.0, 1.0},
+                    {-1.0, 2.0, 1.0},
+                    {1.0, -2.0, -1.0},
+                    {-1.0, -2.0, -1.0},
+                });
+  // FSgnjn.S
+  InterpretOpFp(0x203110d3,
+                {
+                    std::tuple{1.0f, 2.0f, -1.0f},
+                    {1.0f, 2.0f, -1.0f},
+                    {1.0f, -2.0f, 1.0f},
+                    {-1.0f, -2.0f, 1.0f},
+                });
+  // FSgnjn.D
+  InterpretOpFp(0x223110d3,
+                {
+                    std::tuple{1.0, 2.0, -1.0},
+                    {1.0, 2.0, -1.0},
+                    {1.0, -2.0, 1.0},
+                    {-1.0, -2.0, 1.0},
+                });
+  // FSgnjx.S
+  InterpretOpFp(0x203120d3,
+                {
+                    std::tuple{1.0f, 2.0f, 1.0f},
+                    {-1.0f, 2.0f, -1.0f},
+                    {1.0f, -2.0f, -1.0f},
+                    {-1.0f, -2.0f, 1.0f},
+                });
+  // FSgnjx.D
+  InterpretOpFp(0x223120d3,
+                {
+                    std::tuple{1.0, 2.0, 1.0},
+                    {-1.0, 2.0, -1.0},
+                    {1.0, -2.0, -1.0},
+                    {-1.0, -2.0, 1.0},
+                });
+  // FMin.S
+  InterpretOpFp(0x283100d3,
+                {std::tuple{+0.f, +0.f, +0.f},
+                 {+0.f, -0.f, -0.f},
+                 {-0.f, +0.f, -0.f},
+                 {-0.f, -0.f, -0.f},
+                 {+0.f, 1.f, +0.f},
+                 {-0.f, 1.f, -0.f}});
+  // FMin.D
+  InterpretOpFp(0x2a3100d3,
+                {std::tuple{+0.0, +0.0, +0.0},
+                 {+0.0, -0.0, -0.0},
+                 {-0.0, +0.0, -0.0},
+                 {-0.0, -0.0, -0.0},
+                 {+0.0, 1.0, +0.0},
+                 {-0.0, 1.0, -0.0}});
+  // FMax.S
+  InterpretOpFp(0x283110d3,
+                {std::tuple{+0.f, +0.f, +0.f},
+                 {+0.f, -0.f, +0.f},
+                 {-0.f, +0.f, +0.f},
+                 {-0.f, -0.f, -0.f},
+                 {+0.f, 1.f, 1.f},
+                 {-0.f, 1.f, 1.f}});
+  // FMax.D
+  InterpretOpFp(0x2a3110d3,
+                {std::tuple{+0.0, +0.0, +0.0},
+                 {+0.0, -0.0, +0.0},
+                 {-0.0, +0.0, +0.0},
+                 {-0.0, -0.0, -0.0},
+                 {+0.0, 1.0, 1.0},
+                 {-0.0, 1.0, 1.0}});
 }
 
 TEST_F(Riscv64InterpreterTest, RoundingModeTest) {

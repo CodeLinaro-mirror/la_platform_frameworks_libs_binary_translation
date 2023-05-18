@@ -16,10 +16,18 @@
 
 #include "berberis/guest_state/guest_state.h"
 
+#include "berberis/base/checks.h"
+#include "berberis/base/mmap.h"
+
 #include <atomic>   // std::memory_order_relaxed
+#include <cstddef>  // size_t
 #include <cstring>  // memset
 
 namespace berberis {
+
+namespace {
+
+constexpr size_t kThreadStatePageAlignedSize = AlignUpPageSize(sizeof(ThreadState));
 
 void InitThreadState(ThreadState* state) {
   // This is needed to set all flag values to 0.
@@ -34,6 +42,42 @@ void InitThreadState(ThreadState* state) {
   state->pending_signals_status.store(kPendingSignalsDisabled, std::memory_order_relaxed);
   state->residence = kOutsideGeneratedCode;
   state->instrument_data = nullptr;
+}
+
+}  // namespace
+
+ThreadState* CreateThreadState() {
+  void* storage = Mmap(kThreadStatePageAlignedSize);
+  if (storage == MAP_FAILED) {
+    return nullptr;
+  }
+  ThreadState* state = new (storage) ThreadState;
+  CHECK(state);
+
+  InitThreadState(state);
+  return state;
+};
+
+void DestroyThreadState(ThreadState* state) {
+  CHECK(state);
+  MunmapOrDie(state, kThreadStatePageAlignedSize);
+}
+
+class GuestThread;
+void SetGuestThread(ThreadState* state, GuestThread* thread) {
+  state->thread = thread;
+}
+
+void SetResidence(ThreadState* state, GuestThreadResidence residence) {
+  state->residence = residence;
+}
+
+void SetPendingSignalsStatus(ThreadState* state, PendingSignalsStatus status) {
+  state->pending_signals_status = status;
+}
+
+bool ArePendingSignalsPresent(const ThreadState* state) {
+  return state->pending_signals_status.load(std::memory_order_relaxed) == kPendingSignalsPresent;
 }
 
 }  // namespace berberis

@@ -19,11 +19,6 @@
 
 namespace berberis {
 
-inline constexpr bool kInstrumentExec = false;
-inline constexpr bool kInstrumentGuestThread = false;
-inline constexpr bool kInstrumentLoader = true;
-inline constexpr bool kInstrumentSyscalls = false;
-inline constexpr bool kInstrumentTrampolines = false;
 inline constexpr bool kInstrumentWrappers = false;
 
 }  // namespace berberis

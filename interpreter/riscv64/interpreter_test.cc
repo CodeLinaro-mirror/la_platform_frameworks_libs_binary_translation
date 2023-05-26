@@ -51,11 +51,11 @@ class Riscv64InterpreterTest : public ::testing::Test {
     EXPECT_EQ(store_area_, expected_result);
   }
 
-  template <RegisterType register_type, uint64_t expected_result>
+  template <RegisterType register_type, uint64_t expected_result, uint8_t kSourceReg>
   void InterpretCompressedLoad(uint16_t insn_bytes, uint64_t offset) {
     auto code_start = ToGuestAddr(&insn_bytes);
     state_.cpu.insn_addr = code_start;
-    SetXReg<8>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&kDataToLoad) - offset));
+    SetXReg<kSourceReg>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&kDataToLoad) - offset));
     InterpretInsn(&state_);
     EXPECT_EQ((GetReg<register_type, 9>(state_.cpu)), expected_result);
   }
@@ -160,6 +160,18 @@ class Riscv64InterpreterTest : public ::testing::Test {
       SetFReg<3>(state_.cpu, arg2);
       InterpretInsn(&state_);
       EXPECT_EQ(GetFReg<1>(state_.cpu), expected_result);
+    }
+  }
+
+  template <typename... Types>
+  void InterpretOpFpGpRegisterTarget(uint32_t insn_bytes,
+                                     std::initializer_list<std::tuple<Types...>> args) {
+    for (auto [arg1, arg2, expected_result] : TupleMap(args, kFPValueToFPReg)) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetFReg<2>(state_.cpu, arg1);
+      SetFReg<3>(state_.cpu, arg2);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetXReg<1>(state_.cpu), expected_result);
     }
   }
 
@@ -339,8 +351,8 @@ TEST_F(Riscv64InterpreterTest, CompressedLoadAndStores32bit) {
   TestCompressedLoadOrStore32bit<0b010'000'000'00'000'00,
                                  &Riscv64InterpreterTest::InterpretCompressedLoad<
                                      RegisterType::kReg,
-                                     static_cast<uint64_t>(static_cast<int32_t>(kDataToLoad))>>(
-      this);
+                                     static_cast<uint64_t>(static_cast<int32_t>(kDataToLoad)),
+                                     8>>(this);
   // c.Sw
   TestCompressedLoadOrStore32bit<0b110'000'000'00'000'00,
                                  &Riscv64InterpreterTest::InterpretCompressedStore<
@@ -386,11 +398,11 @@ TEST_F(Riscv64InterpreterTest, CompressedLoadAndStores) {
   // c.Fld
   TestCompressedLoadOrStore64bit<
       0b001'000'000'00'000'00,
-      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kFpReg, kDataToLoad>>(this);
+      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kFpReg, kDataToLoad, 8>>(this);
   // c.Ld
   TestCompressedLoadOrStore64bit<
       0b011'000'000'00'000'00,
-      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kReg, kDataToLoad>>(this);
+      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kReg, kDataToLoad, 8>>(this);
   // c.Fsd
   TestCompressedLoadOrStore64bit<
       0b101'000'000'00'000'00,
@@ -399,6 +411,51 @@ TEST_F(Riscv64InterpreterTest, CompressedLoadAndStores) {
   TestCompressedLoadOrStore64bit<
       0b111'000'000'00'000'00,
       &Riscv64InterpreterTest::InterpretCompressedStore<RegisterType::kReg, kDataToLoad>>(this);
+}
+
+template <uint16_t opcode, auto execute_instruction_func>
+void TestCompressedLoad64bitsp(Riscv64InterpreterTest* that) {
+  union {
+    uint16_t offset;
+    struct [[gnu::packed]] {
+      uint8_t : 3;
+      uint8_t i3_i4 : 2;
+      uint8_t i5 : 1;
+      uint8_t i6_i8 : 3;
+    } i_bits;
+  };
+  for (offset = uint16_t{0}; offset < uint16_t{512}; offset += 8) {
+    union {
+      int16_t parcel;
+      struct [[gnu::packed]] {
+        uint8_t low_opcode : 2;
+        uint8_t i6_i8 : 3;
+        uint8_t i3_i4 : 2;
+        uint8_t rd : 5;
+        uint8_t i5 : 1;
+        uint8_t high_opcode : 3;
+      };
+    } o_bits = {
+        .low_opcode = 0b10,
+        .i6_i8 = i_bits.i6_i8,
+        .i3_i4 = i_bits.i3_i4,
+        .rd = 9,
+        .i5 = i_bits.i5,
+        .high_opcode = 0b001,
+    };
+    (that->*execute_instruction_func)(o_bits.parcel | opcode, offset);
+  }
+}
+
+TEST_F(Riscv64InterpreterTest, TestCompressedLoad64bitsp) {
+  // c.Fldsp
+  TestCompressedLoad64bitsp<
+      0b001'000'000'00'000'00,
+      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kFpReg, kDataToLoad, 2>>(this);
+  // c.Ldsp
+  TestCompressedLoad64bitsp<
+      0b011'000'000'00'000'00,
+      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kReg, kDataToLoad, 2>>(this);
 }
 
 TEST_F(Riscv64InterpreterTest, CAddi) {
@@ -661,6 +718,14 @@ TEST_F(Riscv64InterpreterTest, CMiscAluImm) {
     InterpretCMiscAluImm(o_bits.parcel | 0b1000'1000'0000'0001,
                          0xffff'ffff'ffff'ffffULL,
                          0xffff'ffff'ffff'ffffULL & imm);
+
+    // Previous instructions use 3-bit register encoding where 0b000 is r8, 0b001 is r9, etc.
+    // c.Slli uses 5-bit register encoding. Since we want it to also work with r9 in the test body
+    // we add 0b01000 to register bits to mimic that shift-by-8.
+    // c.Slli                                   vvvvvv adds 8 to r to handle rd' vs rd difference.
+    InterpretCMiscAluImm(o_bits.parcel | 0b0000'0100'0000'0010,
+                         0x0000'0000'0000'0001ULL,
+                         0x0000'0000'0000'0001ULL << uimm);
   }
 }
 
@@ -1025,6 +1090,27 @@ TEST_F(Riscv64InterpreterTest, OpFpSingleInputInstructions) {
   InterpretOpFpSingleInput(0x401170d3, {std::tuple{1.0, 1.0f}});
   // Fcvt.D.S
   InterpretOpFpSingleInput(0x420100d3, {std::tuple{2.0f, 2.0}});
+}
+
+TEST_F(Riscv64InterpreterTest, OpFpGpRegisterTargetInstructions) {
+  // Fle.S
+  InterpretOpFpGpRegisterTarget(
+      0xa03100d3, {std::tuple{1.0f, 2.0f, 1UL}, {2.0f, 1.0f, 0UL}, {0.0f, 0.0f, 1UL}});
+  // Fle.D
+  InterpretOpFpGpRegisterTarget(0xa23100d3,
+                                {std::tuple{1.0, 2.0, 1UL}, {2.0, 1.0, 0UL}, {0.0, 0.0, 1UL}});
+  // Flt.S
+  InterpretOpFpGpRegisterTarget(
+      0xa03110d3, {std::tuple{1.0f, 2.0f, 1UL}, {2.0f, 1.0f, 0UL}, {0.0f, 0.0f, 0UL}});
+  // Flt.D
+  InterpretOpFpGpRegisterTarget(0xa23110d3,
+                                {std::tuple{1.0, 2.0, 1UL}, {2.0, 1.0, 0UL}, {0.0, 0.0, 0UL}});
+  // Feq.S
+  InterpretOpFpGpRegisterTarget(
+      0xa03120d3, {std::tuple{1.0f, 2.0f, 0UL}, {2.0f, 1.0f, 0UL}, {0.0f, 0.0f, 1UL}});
+  // Feq.D
+  InterpretOpFpGpRegisterTarget(0xa23120d3,
+                                {std::tuple{1.0, 2.0, 0UL}, {2.0, 1.0, 0UL}, {0.0, 0.0, 1UL}});
 }
 
 TEST_F(Riscv64InterpreterTest, RoundingModeTest) {

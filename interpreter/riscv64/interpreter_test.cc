@@ -27,7 +27,7 @@
 #include "berberis/guest_state/guest_addr.h"
 #include "berberis/guest_state/guest_state_riscv64.h"
 #include "berberis/interpreter/riscv64/interpreter.h"
-#include "berberis/intrinsics/guest_fpstate.h"
+#include "berberis/intrinsics/guest_rounding_modes.h"  // ScopedRoundingMode
 
 #include "fp_regs_util.h"
 #include "tuple_map.h"
@@ -118,6 +118,17 @@ class Riscv64InterpreterTest : public ::testing::Test {
     EXPECT_EQ(state_.cpu.insn_addr, code_start + expected_offset);
   }
 
+  void InterpretCOp(uint32_t insn_bytes,
+                    std::initializer_list<std::tuple<uint64_t, uint64_t, uint64_t>> args) {
+    for (auto [arg1, arg2, expected_result] : args) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetXReg<1>(state_.cpu, arg1);
+      SetXReg<2>(state_.cpu, arg2);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetXReg<1>(state_.cpu), expected_result);
+    }
+  }
+
   // Non-Compressed Instructions.
 
   void InterpretCsr(uint32_t insn_bytes, uint8_t expected_rm) {
@@ -172,6 +183,28 @@ class Riscv64InterpreterTest : public ::testing::Test {
       SetFReg<3>(state_.cpu, arg2);
       InterpretInsn(&state_);
       EXPECT_EQ(GetXReg<1>(state_.cpu), expected_result);
+    }
+  }
+
+  template <typename... Types>
+  void InterpretOpFpGpRegisterTargetSingleInput(uint32_t insn_bytes,
+                                                std::initializer_list<std::tuple<Types...>> args) {
+    for (auto [arg, expected_result] : TupleMap(args, kFPValueToFPReg)) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetFReg<2>(state_.cpu, arg);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetXReg<1>(state_.cpu), expected_result);
+    }
+  }
+
+  template <typename... Types>
+  void InterpretOpFpGpRegisterSourceSingleInput(uint32_t insn_bytes,
+                                                std::initializer_list<std::tuple<Types...>> args) {
+    for (auto [arg, expected_result] : TupleMap(args, kFPValueToFPReg)) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetXReg<2>(state_.cpu, arg);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetFReg<1>(state_.cpu), expected_result);
     }
   }
 
@@ -784,6 +817,17 @@ TEST_F(Riscv64InterpreterTest, CJ) {
   }
 }
 
+TEST_F(Riscv64InterpreterTest, CJalr) {
+  // C.Jr
+  InterpretJumpAndLinkRegister(0x8102, 42, 42);
+  // C.Mv
+  InterpretCOp(0x808a, {{0, 1, 1}});
+  // C.Jalr
+  InterpretJumpAndLinkRegister(0x9102, 42, 42);
+  // C.Add
+  InterpretCOp(0x908a, {{1, 2, 3}});
+}
+
 // Tests for Non-Compressed Instructions.
 
 TEST_F(Riscv64InterpreterTest, CsrInstrctuion) {
@@ -888,11 +932,15 @@ TEST_F(Riscv64InterpreterTest, Op32Instructions) {
   // Divw
   InterpretOp(0x23140bb, {{0x9999'9999'9999'9999, 0x3333, 0xffff'ffff'fffd'fffe}});
   // Divuw
-  InterpretOp(0x23150bb, {{0x9999'9999'9999'9999, 0x3333, 0x0000'0000'0003'0003}});
+  InterpretOp(0x23150bb,
+              {{0x9999'9999'9999'9999, 0x3333, 0x0000'0000'0003'0003},
+               {0xffff'ffff'8000'0000, 1, 0xffff'ffff'8000'0000}});
   // Remw
   InterpretOp(0x23160bb, {{0x9999'9999'9999'9999, 0x3333, 0xffff'ffff'ffff'ffff}});
   // Remuw
-  InterpretOp(0x23170bb, {{0x9999'9999'9999'9999, 0x3333, 0}});
+  InterpretOp(0x23170bb,
+              {{0x9999'9999'9999'9999, 0x3333, 0},
+               {0xffff'ffff'8000'0000, 0xffff'ffff'8000'0001, 0xffff'ffff'8000'0000}});
 }
 
 TEST_F(Riscv64InterpreterTest, AmoInstructions) {
@@ -1086,10 +1134,45 @@ TEST_F(Riscv64InterpreterTest, OpFpSingleInputInstructions) {
   InterpretOpFpSingleInput(0x580170d3, {std::tuple{4.0f, 2.0f}});
   // FSqrt.D
   InterpretOpFpSingleInput(0x5a0170d3, {std::tuple{16.0, 4.0}});
+}
+
+TEST_F(Riscv64InterpreterTest, OpFpFcvt) {
   // Fcvt.S.D
   InterpretOpFpSingleInput(0x401170d3, {std::tuple{1.0, 1.0f}});
   // Fcvt.D.S
   InterpretOpFpSingleInput(0x420100d3, {std::tuple{2.0f, 2.0}});
+  // Fcvt.W.S
+  InterpretOpFpGpRegisterTargetSingleInput(0xc00170d3, {std::tuple{3.0f, 3UL}});
+  // Fcvt.WU.S
+  InterpretOpFpGpRegisterTargetSingleInput(0xc01170d3, {std::tuple{3.0f, 3UL}});
+  // Fcvt.L.S
+  InterpretOpFpGpRegisterTargetSingleInput(0xc02170d3, {std::tuple{3.0f, 3UL}});
+  // Fcvt.LU.S
+  InterpretOpFpGpRegisterTargetSingleInput(0xc03170d3, {std::tuple{3.0f, 3UL}});
+  // Fcvt.W.D
+  InterpretOpFpGpRegisterTargetSingleInput(0xc20170d3, {std::tuple{3.0, 3UL}});
+  // Fcvt.WU.D
+  InterpretOpFpGpRegisterTargetSingleInput(0xc21170d3, {std::tuple{3.0, 3UL}});
+  // Fcvt.L.D
+  InterpretOpFpGpRegisterTargetSingleInput(0xc22170d3, {std::tuple{3.0, 3UL}});
+  // Fcvt.LU.D
+  InterpretOpFpGpRegisterTargetSingleInput(0xc23170d3, {std::tuple{3.0, 3UL}});
+  // Fcvt.S.W
+  InterpretOpFpGpRegisterSourceSingleInput(0xd00170d3, {std::tuple{3UL, 3.0f}});
+  // Fcvt.S.WU
+  InterpretOpFpGpRegisterSourceSingleInput(0xd01170d3, {std::tuple{3UL, 3.0f}});
+  // Fcvt.S.L
+  InterpretOpFpGpRegisterSourceSingleInput(0xd02170d3, {std::tuple{3UL, 3.0f}});
+  // Fcvt.S.LU
+  InterpretOpFpGpRegisterSourceSingleInput(0xd03170d3, {std::tuple{3UL, 3.0f}});
+  // Fcvt.D.W
+  InterpretOpFpGpRegisterSourceSingleInput(0xd20170d3, {std::tuple{3UL, 3.0}});
+  // Fcvt.D.Wu
+  InterpretOpFpGpRegisterSourceSingleInput(0xd21170d3, {std::tuple{3UL, 3.0}});
+  // Fcvt.D.L
+  InterpretOpFpGpRegisterSourceSingleInput(0xd22170d3, {std::tuple{3UL, 3.0}});
+  // Fcvt.D.LU
+  InterpretOpFpGpRegisterSourceSingleInput(0xd23170d3, {std::tuple{3UL, 3.0}});
 }
 
 TEST_F(Riscv64InterpreterTest, OpFpGpRegisterTargetInstructions) {
@@ -1111,6 +1194,35 @@ TEST_F(Riscv64InterpreterTest, OpFpGpRegisterTargetInstructions) {
   // Feq.D
   InterpretOpFpGpRegisterTarget(0xa23120d3,
                                 {std::tuple{1.0, 2.0, 0UL}, {2.0, 1.0, 0UL}, {0.0, 0.0, 1UL}});
+}
+
+TEST_F(Riscv64InterpreterTest, InterpretOpFpGpRegisterTargetSingleInput) {
+  // Fclass.S
+  InterpretOpFpGpRegisterTargetSingleInput(
+      0xe00110d3,
+      {std::tuple{-std::numeric_limits<float>::infinity(), 0b00'0000'0001UL},
+       {-1.0f, 0b00'0000'0010UL},
+       {-std::numeric_limits<float>::denorm_min(), 0b00'0000'0100UL},
+       {-0.0f, 0b00'0000'1000UL},
+       {0.0f, 0b00'0001'0000UL},
+       {std::numeric_limits<float>::denorm_min(), 0b00'0010'0000UL},
+       {1.0f, 0b00'0100'0000UL},
+       {std::numeric_limits<float>::infinity(), 0b00'1000'0000UL},
+       {std::numeric_limits<float>::signaling_NaN(), 0b01'0000'0000UL},
+       {std::numeric_limits<float>::quiet_NaN(), 0b10'0000'0000UL}});
+  // Fclass.D
+  InterpretOpFpGpRegisterTargetSingleInput(
+      0xe20110d3,
+      {std::tuple{-std::numeric_limits<double>::infinity(), 0b00'0000'0001UL},
+       {-1.0, 0b00'0000'0010UL},
+       {-std::numeric_limits<double>::denorm_min(), 0b00'0000'0100UL},
+       {-0.0, 0b00'0000'1000UL},
+       {0.0, 0b00'0001'0000UL},
+       {std::numeric_limits<double>::denorm_min(), 0b00'0010'0000UL},
+       {1.0, 0b00'0100'0000UL},
+       {std::numeric_limits<double>::infinity(), 0b00'1000'0000UL},
+       {std::numeric_limits<double>::signaling_NaN(), 0b01'0000'0000UL},
+       {std::numeric_limits<double>::quiet_NaN(), 0b10'0000'0000UL}});
 }
 
 TEST_F(Riscv64InterpreterTest, RoundingModeTest) {

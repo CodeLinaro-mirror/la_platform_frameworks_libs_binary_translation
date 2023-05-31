@@ -95,8 +95,20 @@ class SemanticsPlayer {
     SetRegOrIgnore(args.dst, result);
   };
 
-  void Fcvt(const typename Decoder::FcvtArgs& args) {
+  void Fcvt(const typename Decoder::FcvtFloatToFloatArgs& args) {
     FpRegister arg = GetFRegAndUnboxNaN(args.src, args.src_type);
+    FpRegister result = listener_->Fcvt(args.dst_type, args.src_type, args.rm, arg);
+    NanBoxAndSetFpReg(args.dst, result, args.dst_type);
+  }
+
+  void Fcvt(const typename Decoder::FcvtFloatToIntegerArgs& args) {
+    FpRegister arg = GetFRegAndUnboxNaN(args.src, args.src_type);
+    Register result = listener_->Fcvt(args.dst_type, args.src_type, args.rm, arg);
+    SetRegOrIgnore(args.dst, result);
+  }
+
+  void Fcvt(const typename Decoder::FcvtIntegerToFloatArgs& args) {
+    Register arg = GetRegOrZero(args.src);
     FpRegister result = listener_->Fcvt(args.dst_type, args.src_type, args.rm, arg);
     NanBoxAndSetFpReg(args.dst, result, args.dst_type);
   }
@@ -170,6 +182,15 @@ class SemanticsPlayer {
     FpRegister arg1 = GetFRegAndUnboxNaN(args.src1, args.operand_type);
     FpRegister arg2 = GetFRegAndUnboxNaN(args.src2, args.operand_type);
     FpRegister result = listener_->OpFpGpRegisterTarget(args.opcode, args.operand_type, arg1, arg2);
+    result = CanonicalizeNan(result, args.operand_type);
+    SetRegOrIgnore(args.dst, result);
+  }
+
+  void OpFpGpRegisterTargetSingleInputNoRounding(
+      const typename Decoder::OpFpGpRegisterTargetSingleInputNoRoundingArgs& args) {
+    FpRegister arg = GetFRegAndUnboxNaN(args.src, args.operand_type);
+    FpRegister result =
+        listener_->OpFpGpRegisterTargetSingleInputNoRounding(args.opcode, args.operand_type, arg);
     result = CanonicalizeNan(result, args.operand_type);
     SetRegOrIgnore(args.dst, result);
   }

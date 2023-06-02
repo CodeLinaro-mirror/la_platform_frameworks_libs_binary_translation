@@ -243,7 +243,7 @@ class Riscv64InterpreterTest : public ::testing::Test {
                  0xffff'eeee'dddd'ccccULL, expected_memory);
   }
 
-  void InterpretLui(uint32_t insn_bytes, uint64_t expected_result) {
+  void InterpretLi(uint32_t insn_bytes, uint64_t expected_result) {
     auto code_start = ToGuestAddr(&insn_bytes);
     state_.cpu.insn_addr = code_start;
     InterpretInsn(&state_);
@@ -325,13 +325,22 @@ class Riscv64InterpreterTest : public ::testing::Test {
     EXPECT_EQ(GetXReg<1>(state_.cpu), code_start + 4);
   }
 
-  void InterpretJumpAndLinkRegister(uint32_t insn_bytes, uint64_t base_disp,
+  // kLinkRegisterOffsetIfUsed is size of instruction or 0 if instruction does not link register.
+  template <uint8_t kLinkRegisterOffsetIfUsed>
+  void InterpretJumpAndLinkRegister(uint32_t insn_bytes,
+                                    uint64_t base_disp,
                                     int64_t expected_offset) {
     auto code_start = ToGuestAddr(&insn_bytes);
     state_.cpu.insn_addr = code_start;
+    SetXReg<1>(state_.cpu, 0);
     SetXReg<2>(state_.cpu, code_start + base_disp);
     InterpretInsn(&state_);
     EXPECT_EQ(state_.cpu.insn_addr, code_start + expected_offset);
+    if constexpr (kLinkRegisterOffsetIfUsed == 0) {
+      EXPECT_EQ(GetXReg<1>(state_.cpu), 0UL);
+    } else {
+      EXPECT_EQ(GetXReg<1>(state_.cpu), code_start + kLinkRegisterOffsetIfUsed);
+    }
   }
 
  protected:
@@ -444,6 +453,42 @@ TEST_F(Riscv64InterpreterTest, CompressedLoadAndStores) {
   TestCompressedLoadOrStore64bit<
       0b111'000'000'00'000'00,
       &Riscv64InterpreterTest::InterpretCompressedStore<RegisterType::kReg, kDataToLoad>>(this);
+}
+
+TEST_F(Riscv64InterpreterTest, TestCompressedLoad32bitsp) {
+  union {
+    uint16_t offset;
+    struct [[gnu::packed]] {
+      uint8_t : 2;
+      uint8_t i2_i4 : 3;
+      uint8_t i5 : 1;
+      uint8_t i6_i7 : 2;
+    } i_bits;
+  };
+  for (offset = uint16_t{0}; offset < uint16_t{256}; offset += 4) {
+    union {
+      int16_t parcel;
+      struct [[gnu::packed]] {
+        uint8_t low_opcode : 2;
+        uint8_t i6_i7 : 2;
+        uint8_t i2_i4 : 3;
+        uint8_t rd : 5;
+        uint8_t i5 : 1;
+        uint8_t high_opcode : 3;
+      };
+    } o_bits = {
+        .low_opcode = 0b10,
+        .i6_i7 = i_bits.i6_i7,
+        .i2_i4 = i_bits.i2_i4,
+        .rd = 9,
+        .i5 = i_bits.i5,
+        .high_opcode = 0b010,
+    };
+    // c.Lwsp
+    InterpretCompressedLoad<RegisterType::kReg,
+                            static_cast<uint64_t>(static_cast<int32_t>(kDataToLoad)),
+                            2>(o_bits.parcel, offset);
+  }
 }
 
 template <uint16_t opcode, auto execute_instruction_func>
@@ -591,7 +636,36 @@ TEST_F(Riscv64InterpreterTest, CLui) {
         .i17 = i_bits.i17,
         .high_opcode = 0b011,
     };
-    InterpretLui(o_bits.parcel, offset);
+    InterpretLi(o_bits.parcel, offset);
+  }
+}
+
+TEST_F(Riscv64InterpreterTest, CLi) {
+  union {
+    int8_t offset;
+    struct [[gnu::packed]] {
+      uint8_t i0_i4 : 5;
+      uint8_t i5 : 1;
+    } i_bits;
+  };
+  for (offset = int8_t{-32}; offset < int8_t{32}; offset++) {
+    union {
+      int16_t parcel;
+      struct [[gnu::packed]] {
+        uint8_t low_opcode : 2;
+        uint8_t i0_i4 : 5;
+        uint8_t rd : 5;
+        uint8_t i5 : 1;
+        uint8_t high_opcode : 3;
+      };
+    } o_bits = {
+        .low_opcode = 0b01,
+        .i0_i4 = i_bits.i0_i4,
+        .rd = 1,
+        .i5 = i_bits.i5,
+        .high_opcode = 0b010,
+    };
+    InterpretLi(o_bits.parcel, offset);
   }
 }
 
@@ -819,11 +893,11 @@ TEST_F(Riscv64InterpreterTest, CJ) {
 
 TEST_F(Riscv64InterpreterTest, CJalr) {
   // C.Jr
-  InterpretJumpAndLinkRegister(0x8102, 42, 42);
+  InterpretJumpAndLinkRegister<0>(0x8102, 42, 42);
   // C.Mv
   InterpretCOp(0x808a, {{0, 1, 1}});
   // C.Jalr
-  InterpretJumpAndLinkRegister(0x9102, 42, 42);
+  InterpretJumpAndLinkRegister<2>(0x9102, 42, 42);
   // C.Add
   InterpretCOp(0x908a, {{1, 2, 3}});
 }
@@ -986,7 +1060,7 @@ TEST_F(Riscv64InterpreterTest, AmoInstructions) {
 
 TEST_F(Riscv64InterpreterTest, UpperImmArgs) {
   // Lui
-  InterpretLui(0xfedcb0b7, 0xffff'ffff'fedc'b000);
+  InterpretLi(0xfedcb0b7, 0xffff'ffff'fedc'b000);
   // Auipc
   InterpretAuipc(0xfedcb097, 0xffff'ffff'fedc'b000);
 }
@@ -1430,11 +1504,17 @@ TEST_F(Riscv64InterpreterTest, JumpAndLinkInstructions) {
 
 TEST_F(Riscv64InterpreterTest, JumpAndLinkRegisterInstructions) {
   // Jalr offset=4.
-  InterpretJumpAndLinkRegister(0x004100e7, 38, 42);
+  InterpretJumpAndLinkRegister<4>(0x004100e7, 38, 42);
   // Jalr offset=-4.
-  InterpretJumpAndLinkRegister(0xffc100e7, 42, 38);
+  InterpretJumpAndLinkRegister<4>(0xffc100e7, 42, 38);
   // Jalr offset=5 - must properly align the target to even.
-  InterpretJumpAndLinkRegister(0x005100e7, 38, 42);
+  InterpretJumpAndLinkRegister<4>(0x005100e7, 38, 42);
+  // Jr offset=4.
+  InterpretJumpAndLinkRegister<0>(0x00410067, 38, 42);
+  // Jr offset=-4.
+  InterpretJumpAndLinkRegister<0>(0xffc10067, 42, 38);
+  // Jr offset=5 - must properly align the target to even.
+  InterpretJumpAndLinkRegister<0>(0x00510067, 38, 42);
 }
 
 TEST_F(Riscv64InterpreterTest, SyscallWrite) {

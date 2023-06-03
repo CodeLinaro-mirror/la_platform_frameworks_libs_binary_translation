@@ -16,10 +16,11 @@
 
 #include <cstdint>
 #include <limits>
-#include <utility>
+#include <tuple>
 
 #include "berberis/assembler/machine_code.h"
 #include "berberis/base/checks.h"
+#include "berberis/code_gen_lib/code_gen_lib.h"
 #include "berberis/decoder/riscv64/decoder.h"
 #include "berberis/decoder/riscv64/semantics_player.h"
 #include "berberis/guest_state/guest_addr.h"
@@ -30,23 +31,28 @@ namespace berberis {
 
 namespace {
 
+void Finalize(LiteTranslator* translator, GuestAddr pc) {
+  EmitDirectDispatch(translator->as(), pc, /* check_pending_signals */ true);
+  translator->as()->Finalize();
+}
+
 // Returns the success status and
 // - in case of success, the pc of the next instruction past the translated region
 // - in case of failure, the pc of the failed instruction
 // Specifically, returnes input pc if we cannot translate even the first instruction.
-std::pair<bool, GuestAddr> TryLiteTranslateRegionImpl(GuestAddr start_pc,
-                                                      GuestAddr end_pc,
-                                                      MachineCode* machine_code) {
+std::tuple<bool, GuestAddr> TryLiteTranslateRegionImpl(GuestAddr start_pc,
+                                                       GuestAddr end_pc,
+                                                       MachineCode* machine_code) {
   CHECK_LT(start_pc, end_pc);
   LiteTranslator translator(machine_code);
   SemanticsPlayer sem_player(&translator);
   Decoder decoder(&sem_player);
 
-  decoder.Decode(ToHostAddr<const uint16_t>(start_pc));
+  uint8_t insn_size = decoder.Decode(ToHostAddr<const uint16_t>(start_pc));
 
-  // Always return failure until we support at least something.
-  // TODO(b/277619887): Report the status of translation instead.
-  return {false, start_pc};
+  Finalize(&translator, start_pc + insn_size);
+
+  return {translator.success(), start_pc + insn_size};
 }
 
 }  // namespace
@@ -56,7 +62,7 @@ bool LiteTranslateRange(GuestAddr start_pc, GuestAddr end_pc, MachineCode* machi
   return success;
 }
 
-std::pair<bool, GuestAddr> TryLiteTranslateRegion(GuestAddr start_pc, MachineCode* machine_code) {
+std::tuple<bool, GuestAddr> TryLiteTranslateRegion(GuestAddr start_pc, MachineCode* machine_code) {
   // This effectively makes translating code at max guest address impossible, but we
   // assume that it's not practically significant.
   return TryLiteTranslateRegionImpl(start_pc, std::numeric_limits<GuestAddr>::max(), machine_code);

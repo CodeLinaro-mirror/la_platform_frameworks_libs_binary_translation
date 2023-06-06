@@ -27,7 +27,10 @@
 #include "berberis/guest_state/guest_addr.h"
 #include "berberis/guest_state/guest_state_riscv64.h"
 #include "berberis/interpreter/riscv64/interpreter.h"
-#include "berberis/intrinsics/guest_fpstate.h"
+#include "berberis/intrinsics/guest_rounding_modes.h"  // ScopedRoundingMode
+
+#include "fp_regs_util.h"
+#include "tuple_map.h"
 
 namespace berberis {
 
@@ -35,6 +38,8 @@ namespace {
 
 class Riscv64InterpreterTest : public ::testing::Test {
  public:
+  // Compressed Instructions.
+
   template <RegisterType register_type, uint64_t expected_result>
   void InterpretCompressedStore(uint16_t insn_bytes, uint64_t offset) {
     auto code_start = ToGuestAddr(&insn_bytes);
@@ -46,13 +51,21 @@ class Riscv64InterpreterTest : public ::testing::Test {
     EXPECT_EQ(store_area_, expected_result);
   }
 
-  template <RegisterType register_type, uint64_t expected_result>
+  template <RegisterType register_type, uint64_t expected_result, uint8_t kSourceReg>
   void InterpretCompressedLoad(uint16_t insn_bytes, uint64_t offset) {
     auto code_start = ToGuestAddr(&insn_bytes);
     state_.cpu.insn_addr = code_start;
-    SetXReg<8>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&kDataToLoad) - offset));
+    SetXReg<kSourceReg>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&kDataToLoad) - offset));
     InterpretInsn(&state_);
     EXPECT_EQ((GetReg<register_type, 9>(state_.cpu)), expected_result);
+  }
+
+  void InterpretCAddi16sp(uint16_t insn_bytes, uint64_t expected_offset) {
+    auto code_start = ToGuestAddr(&insn_bytes);
+    state_.cpu.insn_addr = code_start;
+    SetXReg<2>(state_.cpu, 1);
+    InterpretInsn(&state_);
+    EXPECT_EQ(GetXReg<2>(state_.cpu), 1 + expected_offset);
   }
 
   void InterpretCAddi4spn(uint16_t insn_bytes, uint64_t expected_offset) {
@@ -71,12 +84,52 @@ class Riscv64InterpreterTest : public ::testing::Test {
     EXPECT_EQ(GetXReg<2>(state_.cpu), 1 + expected_increment);
   }
 
+  void InterpretCBeqzBnez(uint16_t insn_bytes, uint64_t value, int16_t expected_offset) {
+    auto code_start = ToGuestAddr(&insn_bytes);
+    state_.cpu.insn_addr = code_start;
+    SetXReg<9>(state_.cpu, value);
+    InterpretInsn(&state_);
+    EXPECT_EQ(state_.cpu.insn_addr, code_start + expected_offset);
+  }
+
+  void InterpretCMiscAluImm(uint16_t insn_bytes, uint64_t value, uint64_t expected_result) {
+    auto code_start = ToGuestAddr(&insn_bytes);
+    state_.cpu.insn_addr = code_start;
+    SetXReg<9>(state_.cpu, value);
+    InterpretInsn(&state_);
+    EXPECT_EQ(GetXReg<9>(state_.cpu), expected_result);
+  }
+
+  void InterpretCMiscAlu(uint16_t insn_bytes,
+                         std::initializer_list<std::tuple<uint64_t, uint64_t, uint64_t>> args) {
+    for (auto [arg1, arg2, expected_result] : args) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetXReg<8>(state_.cpu, arg1);
+      SetXReg<9>(state_.cpu, arg2);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetXReg<8>(state_.cpu), expected_result);
+    }
+  }
+
   void InterpretCJ(uint16_t insn_bytes, int16_t expected_offset) {
     auto code_start = ToGuestAddr(&insn_bytes);
     state_.cpu.insn_addr = code_start;
     InterpretInsn(&state_);
     EXPECT_EQ(state_.cpu.insn_addr, code_start + expected_offset);
   }
+
+  void InterpretCOp(uint32_t insn_bytes,
+                    std::initializer_list<std::tuple<uint64_t, uint64_t, uint64_t>> args) {
+    for (auto [arg1, arg2, expected_result] : args) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetXReg<1>(state_.cpu, arg1);
+      SetXReg<2>(state_.cpu, arg2);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetXReg<1>(state_.cpu), expected_result);
+    }
+  }
+
+  // Non-Compressed Instructions.
 
   void InterpretCsr(uint32_t insn_bytes, uint8_t expected_rm) {
     auto code_start = ToGuestAddr(&insn_bytes);
@@ -85,6 +138,18 @@ class Riscv64InterpreterTest : public ::testing::Test {
     InterpretInsn(&state_);
     EXPECT_EQ(GetXReg<2>(state_.cpu), 0b001u);
     EXPECT_EQ(state_.cpu.frm, expected_rm);
+  }
+
+  template <typename... Types>
+  void InterpretFma(uint32_t insn_bytes, std::initializer_list<std::tuple<Types...>> args) {
+    for (auto [arg1, arg2, arg3, expected_result] : TupleMap(args, kFPValueToFPReg)) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetFReg<2>(state_.cpu, arg1);
+      SetFReg<3>(state_.cpu, arg2);
+      SetFReg<4>(state_.cpu, arg3);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetFReg<1>(state_.cpu), expected_result);
+    }
   }
 
   void InterpretOp(uint32_t insn_bytes,
@@ -98,12 +163,57 @@ class Riscv64InterpreterTest : public ::testing::Test {
     }
   }
 
-  void InterpretOpFp(uint32_t insn_bytes,
-                     std::initializer_list<std::tuple<uint64_t, uint64_t, uint64_t>> args) {
-    for (auto [arg1, arg2, expected_result] : args) {
+  template <typename... Types>
+  void InterpretOpFp(uint32_t insn_bytes, std::initializer_list<std::tuple<Types...>> args) {
+    for (auto [arg1, arg2, expected_result] : TupleMap(args, kFPValueToFPReg)) {
       state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
       SetFReg<2>(state_.cpu, arg1);
       SetFReg<3>(state_.cpu, arg2);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetFReg<1>(state_.cpu), expected_result);
+    }
+  }
+
+  template <typename... Types>
+  void InterpretOpFpGpRegisterTarget(uint32_t insn_bytes,
+                                     std::initializer_list<std::tuple<Types...>> args) {
+    for (auto [arg1, arg2, expected_result] : TupleMap(args, kFPValueToFPReg)) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetFReg<2>(state_.cpu, arg1);
+      SetFReg<3>(state_.cpu, arg2);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetXReg<1>(state_.cpu), expected_result);
+    }
+  }
+
+  template <typename... Types>
+  void InterpretOpFpGpRegisterTargetSingleInput(uint32_t insn_bytes,
+                                                std::initializer_list<std::tuple<Types...>> args) {
+    for (auto [arg, expected_result] : TupleMap(args, kFPValueToFPReg)) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetFReg<2>(state_.cpu, arg);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetXReg<1>(state_.cpu), expected_result);
+    }
+  }
+
+  template <typename... Types>
+  void InterpretOpFpGpRegisterSourceSingleInput(uint32_t insn_bytes,
+                                                std::initializer_list<std::tuple<Types...>> args) {
+    for (auto [arg, expected_result] : TupleMap(args, kFPValueToFPReg)) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetXReg<2>(state_.cpu, arg);
+      InterpretInsn(&state_);
+      EXPECT_EQ(GetFReg<1>(state_.cpu), expected_result);
+    }
+  }
+
+  template <typename... Types>
+  void InterpretOpFpSingleInput(uint32_t insn_bytes,
+                                std::initializer_list<std::tuple<Types...>> args) {
+    for (auto [arg, expected_result] : TupleMap(args, kFPValueToFPReg)) {
+      state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+      SetFReg<2>(state_.cpu, arg);
       InterpretInsn(&state_);
       EXPECT_EQ(GetFReg<1>(state_.cpu), expected_result);
     }
@@ -232,7 +342,10 @@ class Riscv64InterpreterTest : public ::testing::Test {
   ThreadState state_;
 };
 
-TEST_F(Riscv64InterpreterTest, CLw) {
+// Tests for Compressed Instructions.
+
+template <uint16_t opcode, auto execute_instruction_func>
+void TestCompressedLoadOrStore32bit(Riscv64InterpreterTest* that) {
   union {
     uint16_t offset;
     struct {
@@ -261,16 +374,29 @@ TEST_F(Riscv64InterpreterTest, CLw) {
         .i2 = i_bits.i2,
         .rs = 0,
         .i3_i5 = i_bits.i3_i5,
-        .high_opcode = 0b010,
+        .high_opcode = 0b000,
     };
-    InterpretCompressedLoad<RegisterType::kReg,
-                            static_cast<uint64_t>(static_cast<int32_t>(kDataToLoad))>(o_bits.parcel,
-                                                                                      offset);
+    (that->*execute_instruction_func)(o_bits.parcel | opcode, offset);
   }
 }
 
+TEST_F(Riscv64InterpreterTest, CompressedLoadAndStores32bit) {
+  // c.Lw
+  TestCompressedLoadOrStore32bit<0b010'000'000'00'000'00,
+                                 &Riscv64InterpreterTest::InterpretCompressedLoad<
+                                     RegisterType::kReg,
+                                     static_cast<uint64_t>(static_cast<int32_t>(kDataToLoad)),
+                                     8>>(this);
+  // c.Sw
+  TestCompressedLoadOrStore32bit<0b110'000'000'00'000'00,
+                                 &Riscv64InterpreterTest::InterpretCompressedStore<
+                                     RegisterType::kReg,
+                                     static_cast<uint64_t>(static_cast<uint32_t>(kDataToLoad))>>(
+      this);
+}
+
 template <uint16_t opcode, auto execute_instruction_func>
-void TestCompressedLoadOrStore(Riscv64InterpreterTest* that) {
+void TestCompressedLoadOrStore64bit(Riscv64InterpreterTest* that) {
   union {
     uint16_t offset;
     struct {
@@ -304,21 +430,66 @@ void TestCompressedLoadOrStore(Riscv64InterpreterTest* that) {
 
 TEST_F(Riscv64InterpreterTest, CompressedLoadAndStores) {
   // c.Fld
-  TestCompressedLoadOrStore<
+  TestCompressedLoadOrStore64bit<
       0b001'000'000'00'000'00,
-      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kFpReg, kDataToLoad>>(this);
+      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kFpReg, kDataToLoad, 8>>(this);
   // c.Ld
-  TestCompressedLoadOrStore<
+  TestCompressedLoadOrStore64bit<
       0b011'000'000'00'000'00,
-      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kReg, kDataToLoad>>(this);
+      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kReg, kDataToLoad, 8>>(this);
   // c.Fsd
-  TestCompressedLoadOrStore<
+  TestCompressedLoadOrStore64bit<
       0b101'000'000'00'000'00,
       &Riscv64InterpreterTest::InterpretCompressedStore<RegisterType::kFpReg, kDataToLoad>>(this);
   // c.Sd
-  TestCompressedLoadOrStore<
+  TestCompressedLoadOrStore64bit<
       0b111'000'000'00'000'00,
       &Riscv64InterpreterTest::InterpretCompressedStore<RegisterType::kReg, kDataToLoad>>(this);
+}
+
+template <uint16_t opcode, auto execute_instruction_func>
+void TestCompressedLoad64bitsp(Riscv64InterpreterTest* that) {
+  union {
+    uint16_t offset;
+    struct [[gnu::packed]] {
+      uint8_t : 3;
+      uint8_t i3_i4 : 2;
+      uint8_t i5 : 1;
+      uint8_t i6_i8 : 3;
+    } i_bits;
+  };
+  for (offset = uint16_t{0}; offset < uint16_t{512}; offset += 8) {
+    union {
+      int16_t parcel;
+      struct [[gnu::packed]] {
+        uint8_t low_opcode : 2;
+        uint8_t i6_i8 : 3;
+        uint8_t i3_i4 : 2;
+        uint8_t rd : 5;
+        uint8_t i5 : 1;
+        uint8_t high_opcode : 3;
+      };
+    } o_bits = {
+        .low_opcode = 0b10,
+        .i6_i8 = i_bits.i6_i8,
+        .i3_i4 = i_bits.i3_i4,
+        .rd = 9,
+        .i5 = i_bits.i5,
+        .high_opcode = 0b001,
+    };
+    (that->*execute_instruction_func)(o_bits.parcel | opcode, offset);
+  }
+}
+
+TEST_F(Riscv64InterpreterTest, TestCompressedLoad64bitsp) {
+  // c.Fldsp
+  TestCompressedLoad64bitsp<
+      0b001'000'000'00'000'00,
+      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kFpReg, kDataToLoad, 2>>(this);
+  // c.Ldsp
+  TestCompressedLoad64bitsp<
+      0b011'000'000'00'000'00,
+      &Riscv64InterpreterTest::InterpretCompressedLoad<RegisterType::kReg, kDataToLoad, 2>>(this);
 }
 
 TEST_F(Riscv64InterpreterTest, CAddi) {
@@ -340,13 +511,88 @@ TEST_F(Riscv64InterpreterTest, CAddi) {
         uint8_t high_opcode : 3;
       } __attribute__((__packed__));
     } o_bits = {
-        .low_opcode = 0b01,
+        .low_opcode = 0,
         .i4_i0 = i_bits.i4_i0,
         .r = 2,
         .i5 = i_bits.i5,
-        .high_opcode = 0b000,
+        .high_opcode = 0,
     };
-    InterpretCAddi(o_bits.parcel, offset);
+    // c.Addi
+    InterpretCAddi(o_bits.parcel | 0b0000'0000'0000'0001, offset);
+    // c.Addiw
+    InterpretCAddi(o_bits.parcel | 0b0010'0000'0000'0001, offset);
+  }
+}
+
+TEST_F(Riscv64InterpreterTest, CAddi16sp) {
+  union {
+    int16_t offset;
+    struct {
+      uint8_t : 4;
+      uint8_t i4 : 1;
+      uint8_t i5 : 1;
+      uint8_t i6 : 1;
+      uint8_t i7 : 1;
+      uint8_t i8 : 1;
+      uint8_t i9 : 1;
+    } i_bits;
+  };
+  for (offset = int16_t{-512}; offset < int16_t{512}; offset += 16) {
+    union {
+      int16_t parcel;
+      struct [[gnu::packed]] {
+        uint8_t low_opcode : 2;
+        uint8_t i5 : 1;
+        uint8_t i7 : 1;
+        uint8_t i8 : 1;
+        uint8_t i6 : 1;
+        uint8_t i4 : 1;
+        uint8_t rd : 5;
+        uint8_t i9 : 1;
+        uint8_t high_opcode : 3;
+      };
+    } o_bits = {
+        .low_opcode = 0b01,
+        .i5 = i_bits.i5,
+        .i7 = i_bits.i7,
+        .i8 = i_bits.i8,
+        .i6 = i_bits.i6,
+        .i4 = i_bits.i4,
+        .rd = 2,
+        .i9 = i_bits.i9,
+        .high_opcode = 0b011,
+    };
+    InterpretCAddi16sp(o_bits.parcel, offset);
+  }
+}
+
+TEST_F(Riscv64InterpreterTest, CLui) {
+  union {
+    int32_t offset;
+    struct [[gnu::packed]] {
+      uint8_t : 12;
+      uint8_t i12_i16 : 5;
+      uint8_t i17 : 1;
+    } i_bits;
+  };
+  for (offset = int32_t{-131072}; offset < int32_t{131072}; offset += 4096) {
+    union {
+      int16_t parcel;
+      struct [[gnu::packed]] {
+        uint8_t low_opcode : 2;
+        uint8_t i12_i16 : 5;
+        uint8_t rd : 5;
+        uint8_t i17 : 1;
+        uint8_t high_opcode : 3;
+      };
+    } o_bits = {
+        .low_opcode = 0b01,
+        .i12_i16 = i_bits.i12_i16,
+        .rd = 1,
+        .i17 = i_bits.i17,
+        .high_opcode = 0b011,
+    };
+    InterpretLui(o_bits.parcel, offset);
   }
 }
 
@@ -395,6 +641,125 @@ TEST_F(Riscv64InterpreterTest, CAddi4spn) {
         .high_opcode = 0b000,
     };
     InterpretCAddi4spn(o_bits.parcel, offset);
+  }
+}
+
+TEST_F(Riscv64InterpreterTest, CBeqzBnez) {
+  union {
+    int16_t offset;
+    struct {
+      uint8_t : 1;
+      uint8_t i1 : 1;
+      uint8_t i2 : 1;
+      uint8_t i3 : 1;
+      uint8_t i4 : 1;
+      uint8_t i5 : 1;
+      uint8_t i6 : 1;
+      uint8_t i7 : 1;
+      uint8_t i8 : 1;
+    } i_bits;
+  };
+  for (offset = int16_t{-256}; offset < int16_t{256}; offset += 8) {
+    union {
+      int16_t parcel;
+      struct [[gnu::packed]] {
+        uint8_t low_opcode : 2;
+        uint8_t i5 : 1;
+        uint8_t i1 : 1;
+        uint8_t i2 : 1;
+        uint8_t i6 : 1;
+        uint8_t i7 : 1;
+        uint8_t rs : 3;
+        uint8_t i3 : 1;
+        uint8_t i4 : 1;
+        uint8_t i8 : 1;
+        uint8_t high_opcode : 3;
+      };
+    } o_bits = {
+        .low_opcode = 0,
+        .i5 = i_bits.i5,
+        .i1 = i_bits.i1,
+        .i2 = i_bits.i2,
+        .i6 = i_bits.i6,
+        .i7 = i_bits.i7,
+        .rs = 1,
+        .i3 = i_bits.i3,
+        .i4 = i_bits.i4,
+        .i8 = i_bits.i8,
+        .high_opcode = 0,
+    };
+    InterpretCBeqzBnez(o_bits.parcel | 0b1100'0000'0000'0001, 0, offset);
+    InterpretCBeqzBnez(o_bits.parcel | 0b1110'0000'0000'0001, 1, offset);
+  }
+}
+
+TEST_F(Riscv64InterpreterTest, CMiscAluInstructions) {
+  // c.Sub
+  InterpretCMiscAlu(0x8c05, {{42, 23, 19}});
+  // c.Xor
+  InterpretCMiscAlu(0x8c25, {{0b0101, 0b0011, 0b0110}});
+  // c.Or
+  InterpretCMiscAlu(0x8c45, {{0b0101, 0b0011, 0b0111}});
+  // c.And
+  InterpretCMiscAlu(0x8c65, {{0b0101, 0b0011, 0b0001}});
+  // c.SubW
+  InterpretCMiscAlu(0x9c05, {{42, 23, 19}});
+  // c.AddW
+  InterpretCMiscAlu(0x9c25, {{19, 23, 42}});
+}
+
+TEST_F(Riscv64InterpreterTest, CMiscAluImm) {
+  union {
+    uint8_t uimm;
+    // Note: c.Andi uses sign-extended immediate while c.Srli/c.cSrain need zero-extended one.
+    // If we store the value into uimm and read from imm compiler would do correct conversion.
+    int8_t imm : 6;
+    struct {
+      uint8_t i0_i4 : 5;
+      uint8_t i5 : 1;
+    } i_bits;
+  };
+  for (uimm = uint8_t{0}; uimm < uint8_t{64}; uimm++) {
+    union {
+      int16_t parcel;
+      struct [[gnu::packed]] {
+        uint8_t low_opcode : 2;
+        uint8_t i0_i4 : 5;
+        uint8_t r : 3;
+        uint8_t mid_opcode : 2;
+        uint8_t i5 : 1;
+        uint8_t high_opcode : 3;
+      };
+    } o_bits = {
+        .low_opcode = 0,
+        .i0_i4 = i_bits.i0_i4,
+        .r = 1,
+        .mid_opcode = 0,
+        .i5 = i_bits.i5,
+        .high_opcode = 0,
+    };
+    // The o_bits.parcel here doesn't include opcodes and we are adding it in the function call.
+    // c.Srli
+    InterpretCMiscAluImm(o_bits.parcel | 0b1000'0000'0000'0001,
+                         0x8000'0000'0000'0000ULL,
+                         0x8000'0000'0000'0000ULL >> uimm);
+    // c.Srai
+    InterpretCMiscAluImm(o_bits.parcel | 0b1000'0100'0000'0001,
+                         0x8000'0000'0000'0000LL,
+                         ~0 ^ ((0x8000'0000'0000'0000 ^ ~0) >>
+                               uimm));  // Avoid shifting negative numbers to avoid UB
+    // c.Andi
+    InterpretCMiscAluImm(o_bits.parcel | 0b1000'1000'0000'0001,
+                         0xffff'ffff'ffff'ffffULL,
+                         0xffff'ffff'ffff'ffffULL & imm);
+
+    // Previous instructions use 3-bit register encoding where 0b000 is r8, 0b001 is r9, etc.
+    // c.Slli uses 5-bit register encoding. Since we want it to also work with r9 in the test body
+    // we add 0b01000 to register bits to mimic that shift-by-8.
+    // c.Slli                                   vvvvvv adds 8 to r to handle rd' vs rd difference.
+    InterpretCMiscAluImm(o_bits.parcel | 0b0000'0100'0000'0010,
+                         0x0000'0000'0000'0001ULL,
+                         0x0000'0000'0000'0001ULL << uimm);
   }
 }
 
@@ -453,6 +818,19 @@ TEST_F(Riscv64InterpreterTest, CJ) {
   }
 }
 
+TEST_F(Riscv64InterpreterTest, CJalr) {
+  // C.Jr
+  InterpretJumpAndLinkRegister(0x8102, 42, 42);
+  // C.Mv
+  InterpretCOp(0x808a, {{0, 1, 1}});
+  // C.Jalr
+  InterpretJumpAndLinkRegister(0x9102, 42, 42);
+  // C.Add
+  InterpretCOp(0x908a, {{1, 2, 3}});
+}
+
+// Tests for Non-Compressed Instructions.
+
 TEST_F(Riscv64InterpreterTest, CsrInstrctuion) {
   ScopedRoundingMode scoped_rounding_mode;
   // Csrrw x2, frm, 2
@@ -470,6 +848,25 @@ TEST_F(Riscv64InterpreterTest, FenceInstructions) {
   InterpretFence(0x8330000f);
   // FenceI
   InterpretFence(0x0000100f);
+}
+
+TEST_F(Riscv64InterpreterTest, FmaInstructions) {
+  // Fmadd.S
+  InterpretFma(0x203170c3, {std::tuple{1.0f, 2.0f, 3.0f, 5.0f}});
+  // Fmadd.D
+  InterpretFma(0x223170c3, {std::tuple{1.0, 2.0, 3.0, 5.0}});
+  // Fmsub.S
+  InterpretFma(0x203170c7, {std::tuple{1.0f, 2.0f, 3.0f, -1.0f}});
+  // Fmsub.D
+  InterpretFma(0x223170c7, {std::tuple{1.0, 2.0, 3.0, -1.0}});
+  // Fnmsub.S
+  InterpretFma(0x203170cb, {std::tuple{1.0f, 2.0f, 3.0f, 1.0f}});
+  // Fnmsub.D
+  InterpretFma(0x223170cb, {std::tuple{1.0, 2.0, 3.0, 1.0}});
+  // Fnmadd.S
+  InterpretFma(0x203170cf, {std::tuple{1.0f, 2.0f, 3.0f, -5.0f}});
+  // Fnmadd.D
+  InterpretFma(0x223170cf, {std::tuple{1.0, 2.0, 3.0, -5.0}});
 }
 
 TEST_F(Riscv64InterpreterTest, OpInstructions) {
@@ -536,11 +933,15 @@ TEST_F(Riscv64InterpreterTest, Op32Instructions) {
   // Divw
   InterpretOp(0x23140bb, {{0x9999'9999'9999'9999, 0x3333, 0xffff'ffff'fffd'fffe}});
   // Divuw
-  InterpretOp(0x23150bb, {{0x9999'9999'9999'9999, 0x3333, 0x0000'0000'0003'0003}});
+  InterpretOp(0x23150bb,
+              {{0x9999'9999'9999'9999, 0x3333, 0x0000'0000'0003'0003},
+               {0xffff'ffff'8000'0000, 1, 0xffff'ffff'8000'0000}});
   // Remw
   InterpretOp(0x23160bb, {{0x9999'9999'9999'9999, 0x3333, 0xffff'ffff'ffff'ffff}});
   // Remuw
-  InterpretOp(0x23170bb, {{0x9999'9999'9999'9999, 0x3333, 0}});
+  InterpretOp(0x23170bb,
+              {{0x9999'9999'9999'9999, 0x3333, 0},
+               {0xffff'ffff'8000'0000, 0xffff'ffff'8000'0001, 0xffff'ffff'8000'0000}});
 }
 
 TEST_F(Riscv64InterpreterTest, AmoInstructions) {
@@ -633,227 +1034,295 @@ TEST_F(Riscv64InterpreterTest, OpImm32Instructions) {
 
 TEST_F(Riscv64InterpreterTest, OpFpInstructions) {
   // FAdd.S
-  InterpretOpFp(0x003100d3,
-                {{bit_cast<uint32_t>(1.0f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(2.0f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(3.0f) | 0xffff'ffff'0000'0000}});
+  InterpretOpFp(0x003100d3, {std::tuple{1.0f, 2.0f, 3.0f}});
   // FAdd.D
-  InterpretOpFp(0x023100d3,
-                {{bit_cast<uint64_t>(1.0), bit_cast<uint64_t>(2.0), bit_cast<uint64_t>(3.0)}});
+  InterpretOpFp(0x023100d3, {std::tuple{1.0, 2.0, 3.0}});
+  // FSub.S
+  InterpretOpFp(0x083100d3, {std::tuple{3.0f, 2.0f, 1.0f}});
+  // FSub.D
+  InterpretOpFp(0x0a3100d3, {std::tuple{3.0, 2.0, 1.0}});
+  // FMul.S
+  InterpretOpFp(0x103100d3, {std::tuple{3.0f, 2.0f, 6.0f}});
+  // FMul.D
+  InterpretOpFp(0x123100d3, {std::tuple{3.0, 2.0, 6.0}});
+  // FDiv.S
+  InterpretOpFp(0x183100d3, {std::tuple{6.0f, 2.0f, 3.0f}});
+  // FDiv.D
+  InterpretOpFp(0x1a3100d3, {std::tuple{6.0, 2.0, 3.0}});
+
+  // FSgnj.S
+  InterpretOpFp(0x203100d3,
+                {std::tuple{1.0f, 2.0f, 1.0f},
+                 {-1.0f, 2.0f, 1.0f},
+                 {1.0f, -2.0f, -1.0f},
+                 {-1.0f, -2.0f, -1.0f}});
+  // FSgnj.D
+  InterpretOpFp(0x223100d3,
+                {
+                    std::tuple{1.0, 2.0, 1.0},
+                    {-1.0, 2.0, 1.0},
+                    {1.0, -2.0, -1.0},
+                    {-1.0, -2.0, -1.0},
+                });
+  // FSgnjn.S
+  InterpretOpFp(0x203110d3,
+                {
+                    std::tuple{1.0f, 2.0f, -1.0f},
+                    {1.0f, 2.0f, -1.0f},
+                    {1.0f, -2.0f, 1.0f},
+                    {-1.0f, -2.0f, 1.0f},
+                });
+  // FSgnjn.D
+  InterpretOpFp(0x223110d3,
+                {
+                    std::tuple{1.0, 2.0, -1.0},
+                    {1.0, 2.0, -1.0},
+                    {1.0, -2.0, 1.0},
+                    {-1.0, -2.0, 1.0},
+                });
+  // FSgnjx.S
+  InterpretOpFp(0x203120d3,
+                {
+                    std::tuple{1.0f, 2.0f, 1.0f},
+                    {-1.0f, 2.0f, -1.0f},
+                    {1.0f, -2.0f, -1.0f},
+                    {-1.0f, -2.0f, 1.0f},
+                });
+  // FSgnjx.D
+  InterpretOpFp(0x223120d3,
+                {
+                    std::tuple{1.0, 2.0, 1.0},
+                    {-1.0, 2.0, -1.0},
+                    {1.0, -2.0, -1.0},
+                    {-1.0, -2.0, 1.0},
+                });
+  // FMin.S
+  InterpretOpFp(0x283100d3,
+                {std::tuple{+0.f, +0.f, +0.f},
+                 {+0.f, -0.f, -0.f},
+                 {-0.f, +0.f, -0.f},
+                 {-0.f, -0.f, -0.f},
+                 {+0.f, 1.f, +0.f},
+                 {-0.f, 1.f, -0.f}});
+  // FMin.D
+  InterpretOpFp(0x2a3100d3,
+                {std::tuple{+0.0, +0.0, +0.0},
+                 {+0.0, -0.0, -0.0},
+                 {-0.0, +0.0, -0.0},
+                 {-0.0, -0.0, -0.0},
+                 {+0.0, 1.0, +0.0},
+                 {-0.0, 1.0, -0.0}});
+  // FMax.S
+  InterpretOpFp(0x283110d3,
+                {std::tuple{+0.f, +0.f, +0.f},
+                 {+0.f, -0.f, +0.f},
+                 {-0.f, +0.f, +0.f},
+                 {-0.f, -0.f, -0.f},
+                 {+0.f, 1.f, 1.f},
+                 {-0.f, 1.f, 1.f}});
+  // FMax.D
+  InterpretOpFp(0x2a3110d3,
+                {std::tuple{+0.0, +0.0, +0.0},
+                 {+0.0, -0.0, +0.0},
+                 {-0.0, +0.0, +0.0},
+                 {-0.0, -0.0, -0.0},
+                 {+0.0, 1.0, 1.0},
+                 {-0.0, 1.0, 1.0}});
+}
+
+TEST_F(Riscv64InterpreterTest, OpFpSingleInputInstructions) {
+  // FSqrt.S
+  InterpretOpFpSingleInput(0x580170d3, {std::tuple{4.0f, 2.0f}});
+  // FSqrt.D
+  InterpretOpFpSingleInput(0x5a0170d3, {std::tuple{16.0, 4.0}});
+}
+
+TEST_F(Riscv64InterpreterTest, OpFpFcvt) {
+  // Fcvt.S.D
+  InterpretOpFpSingleInput(0x401170d3, {std::tuple{1.0, 1.0f}});
+  // Fcvt.D.S
+  InterpretOpFpSingleInput(0x420100d3, {std::tuple{2.0f, 2.0}});
+  // Fcvt.W.S
+  InterpretOpFpGpRegisterTargetSingleInput(0xc00170d3, {std::tuple{3.0f, 3UL}});
+  // Fcvt.WU.S
+  InterpretOpFpGpRegisterTargetSingleInput(0xc01170d3, {std::tuple{3.0f, 3UL}});
+  // Fcvt.L.S
+  InterpretOpFpGpRegisterTargetSingleInput(0xc02170d3, {std::tuple{3.0f, 3UL}});
+  // Fcvt.LU.S
+  InterpretOpFpGpRegisterTargetSingleInput(0xc03170d3, {std::tuple{3.0f, 3UL}});
+  // Fcvt.W.D
+  InterpretOpFpGpRegisterTargetSingleInput(0xc20170d3, {std::tuple{3.0, 3UL}});
+  // Fcvt.WU.D
+  InterpretOpFpGpRegisterTargetSingleInput(0xc21170d3, {std::tuple{3.0, 3UL}});
+  // Fcvt.L.D
+  InterpretOpFpGpRegisterTargetSingleInput(0xc22170d3, {std::tuple{3.0, 3UL}});
+  // Fcvt.LU.D
+  InterpretOpFpGpRegisterTargetSingleInput(0xc23170d3, {std::tuple{3.0, 3UL}});
+  // Fcvt.S.W
+  InterpretOpFpGpRegisterSourceSingleInput(0xd00170d3, {std::tuple{3UL, 3.0f}});
+  // Fcvt.S.WU
+  InterpretOpFpGpRegisterSourceSingleInput(0xd01170d3, {std::tuple{3UL, 3.0f}});
+  // Fcvt.S.L
+  InterpretOpFpGpRegisterSourceSingleInput(0xd02170d3, {std::tuple{3UL, 3.0f}});
+  // Fcvt.S.LU
+  InterpretOpFpGpRegisterSourceSingleInput(0xd03170d3, {std::tuple{3UL, 3.0f}});
+  // Fcvt.D.W
+  InterpretOpFpGpRegisterSourceSingleInput(0xd20170d3, {std::tuple{3UL, 3.0}});
+  // Fcvt.D.Wu
+  InterpretOpFpGpRegisterSourceSingleInput(0xd21170d3, {std::tuple{3UL, 3.0}});
+  // Fcvt.D.L
+  InterpretOpFpGpRegisterSourceSingleInput(0xd22170d3, {std::tuple{3UL, 3.0}});
+  // Fcvt.D.LU
+  InterpretOpFpGpRegisterSourceSingleInput(0xd23170d3, {std::tuple{3UL, 3.0}});
+}
+
+TEST_F(Riscv64InterpreterTest, OpFpGpRegisterTargetInstructions) {
+  // Fle.S
+  InterpretOpFpGpRegisterTarget(
+      0xa03100d3, {std::tuple{1.0f, 2.0f, 1UL}, {2.0f, 1.0f, 0UL}, {0.0f, 0.0f, 1UL}});
+  // Fle.D
+  InterpretOpFpGpRegisterTarget(0xa23100d3,
+                                {std::tuple{1.0, 2.0, 1UL}, {2.0, 1.0, 0UL}, {0.0, 0.0, 1UL}});
+  // Flt.S
+  InterpretOpFpGpRegisterTarget(
+      0xa03110d3, {std::tuple{1.0f, 2.0f, 1UL}, {2.0f, 1.0f, 0UL}, {0.0f, 0.0f, 0UL}});
+  // Flt.D
+  InterpretOpFpGpRegisterTarget(0xa23110d3,
+                                {std::tuple{1.0, 2.0, 1UL}, {2.0, 1.0, 0UL}, {0.0, 0.0, 0UL}});
+  // Feq.S
+  InterpretOpFpGpRegisterTarget(
+      0xa03120d3, {std::tuple{1.0f, 2.0f, 0UL}, {2.0f, 1.0f, 0UL}, {0.0f, 0.0f, 1UL}});
+  // Feq.D
+  InterpretOpFpGpRegisterTarget(0xa23120d3,
+                                {std::tuple{1.0, 2.0, 0UL}, {2.0, 1.0, 0UL}, {0.0, 0.0, 1UL}});
+}
+
+TEST_F(Riscv64InterpreterTest, InterpretOpFpGpRegisterTargetSingleInput) {
+  // Fclass.S
+  InterpretOpFpGpRegisterTargetSingleInput(
+      0xe00110d3,
+      {std::tuple{-std::numeric_limits<float>::infinity(), 0b00'0000'0001UL},
+       {-1.0f, 0b00'0000'0010UL},
+       {-std::numeric_limits<float>::denorm_min(), 0b00'0000'0100UL},
+       {-0.0f, 0b00'0000'1000UL},
+       {0.0f, 0b00'0001'0000UL},
+       {std::numeric_limits<float>::denorm_min(), 0b00'0010'0000UL},
+       {1.0f, 0b00'0100'0000UL},
+       {std::numeric_limits<float>::infinity(), 0b00'1000'0000UL},
+       {std::numeric_limits<float>::signaling_NaN(), 0b01'0000'0000UL},
+       {std::numeric_limits<float>::quiet_NaN(), 0b10'0000'0000UL}});
+  // Fclass.D
+  InterpretOpFpGpRegisterTargetSingleInput(
+      0xe20110d3,
+      {std::tuple{-std::numeric_limits<double>::infinity(), 0b00'0000'0001UL},
+       {-1.0, 0b00'0000'0010UL},
+       {-std::numeric_limits<double>::denorm_min(), 0b00'0000'0100UL},
+       {-0.0, 0b00'0000'1000UL},
+       {0.0, 0b00'0001'0000UL},
+       {std::numeric_limits<double>::denorm_min(), 0b00'0010'0000UL},
+       {1.0, 0b00'0100'0000UL},
+       {std::numeric_limits<double>::infinity(), 0b00'1000'0000UL},
+       {std::numeric_limits<double>::signaling_NaN(), 0b01'0000'0000UL},
+       {std::numeric_limits<double>::quiet_NaN(), 0b10'0000'0000UL}});
 }
 
 TEST_F(Riscv64InterpreterTest, RoundingModeTest) {
   // FAdd.S
   InterpretOpFp(0x003100d3,
                 // Test RNE
-                {{bit_cast<uint32_t>(1.0000001f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(1.0000004f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000005f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000001f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000004f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000005f) | 0xffff'ffff'0000'0000}});
+                {std::tuple{1.0000001f, 0.000000059604645f, 1.0000002f},
+                 {1.0000002f, 0.000000059604645f, 1.0000002f},
+                 {1.0000004f, 0.000000059604645f, 1.0000005f},
+                 {-1.0000001f, -0.000000059604645f, -1.0000002f},
+                 {-1.0000002f, -0.000000059604645f, -1.0000002f},
+                 {-1.0000004f, -0.000000059604645f, -1.0000005f}});
   // FAdd.S
   InterpretOpFp(0x003110d3,
                 // Test RTZ
-                {{bit_cast<uint32_t>(1.0000001f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000001f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(1.0000004f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000004f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000001f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000001f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000004f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000004f) | 0xffff'ffff'0000'0000}});
+                {std::tuple{1.0000001f, 0.000000059604645f, 1.0000001f},
+                 {1.0000002f, 0.000000059604645f, 1.0000002f},
+                 {1.0000004f, 0.000000059604645f, 1.0000004f},
+                 {-1.0000001f, -0.000000059604645f, -1.0000001f},
+                 {-1.0000002f, -0.000000059604645f, -1.0000002f},
+                 {-1.0000004f, -0.000000059604645f, -1.0000004f}});
   // FAdd.S
   InterpretOpFp(0x003120d3,
                 // Test RDN
-                {{bit_cast<uint32_t>(1.0000001f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000001f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(1.0000004f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000004f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000001f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000004f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000004f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000005f) | 0xffff'ffff'0000'0000}});
+                {std::tuple{1.0000001f, 0.000000059604645f, 1.0000001f},
+                 {1.0000002f, 0.000000059604645f, 1.0000002f},
+                 {1.0000004f, 0.000000059604645f, 1.0000004f},
+                 {-1.0000001f, -0.000000059604645f, -1.0000002f},
+                 {-1.0000002f, -0.000000059604645f, -1.0000004f},
+                 {-1.0000004f, -0.000000059604645f, -1.0000005f}});
   // FAdd.S
   InterpretOpFp(0x003130d3,
                 // Test RUP
-                {{bit_cast<uint32_t>(1.0000001f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000004f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(1.0000004f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000005f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000001f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000001f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000004f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000004f) | 0xffff'ffff'0000'0000}});
+                {std::tuple{1.0000001f, 0.000000059604645f, 1.0000002f},
+                 {1.0000002f, 0.000000059604645f, 1.0000004f},
+                 {1.0000004f, 0.000000059604645f, 1.0000005f},
+                 {-1.0000001f, -0.000000059604645f, -1.0000001f},
+                 {-1.0000002f, -0.000000059604645f, -1.0000002f},
+                 {-1.0000004f, -0.000000059604645f, -1.0000004f}});
   // FAdd.S
   InterpretOpFp(0x003140d3,
                 // Test RMM
-                {{bit_cast<uint32_t>(1.0000001f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(1.0000002f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000004f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(1.0000004f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(1.0000005f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000001f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000002f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000004f) | 0xffff'ffff'0000'0000},
-                 {bit_cast<uint32_t>(-1.0000004f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-0.000000059604645f) | 0xffff'ffff'0000'0000,
-                  bit_cast<uint32_t>(-1.0000005f) | 0xffff'ffff'0000'0000}});
+                {std::tuple{1.0000001f, 0.000000059604645f, 1.0000002f},
+                 {1.0000002f, 0.000000059604645f, 1.0000004f},
+                 {1.0000004f, 0.000000059604645f, 1.0000005f},
+                 {-1.0000001f, -0.000000059604645f, -1.0000002f},
+                 {-1.0000002f, -0.000000059604645f, -1.0000004f},
+                 {-1.0000004f, -0.000000059604645f, -1.0000005f}});
 
   // FAdd.D
-  InterpretOpFp(0x023100d3,
-                // Test RNE
-                {{bit_cast<uint64_t>(1.0000000000000002),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000004)},
-                 {bit_cast<uint64_t>(1.0000000000000004),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000004)},
-                 {bit_cast<uint64_t>(1.0000000000000007),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000009)},
-                 {bit_cast<uint64_t>(-1.0000000000000002),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000004)},
-                 {bit_cast<uint64_t>(-1.0000000000000004),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000004)},
-                 {bit_cast<uint64_t>(-1.0000000000000007),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000009)}});
+  InterpretOpFp(
+      0x023100d3,
+      // Test RNE
+      {std::tuple{1.0000000000000002, 0.00000000000000011102230246251565, 1.0000000000000004},
+       {1.0000000000000004, 0.00000000000000011102230246251565, 1.0000000000000004},
+       {1.0000000000000007, 0.00000000000000011102230246251565, 1.0000000000000009},
+       {-1.0000000000000002, -0.00000000000000011102230246251565, -1.0000000000000004},
+       {-1.0000000000000004, -0.00000000000000011102230246251565, -1.0000000000000004},
+       {-1.0000000000000007, -0.00000000000000011102230246251565, -1.0000000000000009}});
   // FAdd.D
-  InterpretOpFp(0x023110d3,
-                // Test RTZ
-                {{bit_cast<uint64_t>(1.0000000000000002),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000002)},
-                 {bit_cast<uint64_t>(1.0000000000000004),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000004)},
-                 {bit_cast<uint64_t>(1.0000000000000007),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000007)},
-                 {bit_cast<uint64_t>(-1.0000000000000002),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000002)},
-                 {bit_cast<uint64_t>(-1.0000000000000004),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000004)},
-                 {bit_cast<uint64_t>(-1.0000000000000007),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000007)}});
+  InterpretOpFp(
+      0x023110d3,
+      // Test RTZ
+      {std::tuple{1.0000000000000002, 0.00000000000000011102230246251565, 1.0000000000000002},
+       {1.0000000000000004, 0.00000000000000011102230246251565, 1.0000000000000004},
+       {1.0000000000000007, 0.00000000000000011102230246251565, 1.0000000000000007},
+       {-1.0000000000000002, -0.00000000000000011102230246251565, -1.0000000000000002},
+       {-1.0000000000000004, -0.00000000000000011102230246251565, -1.0000000000000004},
+       {-1.0000000000000007, -0.00000000000000011102230246251565, -1.0000000000000007}});
   // FAdd.D
-  InterpretOpFp(0x023120d3,
-                // Test RDN
-                {{bit_cast<uint64_t>(1.0000000000000002),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000002)},
-                 {bit_cast<uint64_t>(1.0000000000000004),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000004)},
-                 {bit_cast<uint64_t>(1.0000000000000007),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000007)},
-                 {bit_cast<uint64_t>(-1.0000000000000002),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000004)},
-                 {bit_cast<uint64_t>(-1.0000000000000004),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000007)},
-                 {bit_cast<uint64_t>(-1.0000000000000007),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000009)}});
+  InterpretOpFp(
+      0x023120d3,
+      // Test RDN
+      {std::tuple{1.0000000000000002, 0.00000000000000011102230246251565, 1.0000000000000002},
+       {1.0000000000000004, 0.00000000000000011102230246251565, 1.0000000000000004},
+       {1.0000000000000007, 0.00000000000000011102230246251565, 1.0000000000000007},
+       {-1.0000000000000002, -0.00000000000000011102230246251565, -1.0000000000000004},
+       {-1.0000000000000004, -0.00000000000000011102230246251565, -1.0000000000000007},
+       {-1.0000000000000007, -0.00000000000000011102230246251565, -1.0000000000000009}});
   // FAdd.D
-  InterpretOpFp(0x023130d3,
-                // Test RUP
-                {{bit_cast<uint64_t>(1.0000000000000002),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000004)},
-                 {bit_cast<uint64_t>(1.0000000000000004),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000007)},
-                 {bit_cast<uint64_t>(1.0000000000000007),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000009)},
-                 {bit_cast<uint64_t>(-1.0000000000000002),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000002)},
-                 {bit_cast<uint64_t>(-1.0000000000000004),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000004)},
-                 {bit_cast<uint64_t>(-1.0000000000000007),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000007)}});
+  InterpretOpFp(
+      0x023130d3,
+      // Test RUP
+      {std::tuple{1.0000000000000002, 0.00000000000000011102230246251565, 1.0000000000000004},
+       {1.0000000000000004, 0.00000000000000011102230246251565, 1.0000000000000007},
+       {1.0000000000000007, 0.00000000000000011102230246251565, 1.0000000000000009},
+       {-1.0000000000000002, -0.00000000000000011102230246251565, -1.0000000000000002},
+       {-1.0000000000000004, -0.00000000000000011102230246251565, -1.0000000000000004},
+       {-1.0000000000000007, -0.00000000000000011102230246251565, -1.0000000000000007}});
   // FAdd.D
-  InterpretOpFp(0x023140d3,
-                // Test RMM
-                {{bit_cast<uint64_t>(1.0000000000000002),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000004)},
-                 {bit_cast<uint64_t>(1.0000000000000004),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000007)},
-                 {bit_cast<uint64_t>(1.0000000000000007),
-                  bit_cast<uint64_t>(0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(1.0000000000000009)},
-                 {bit_cast<uint64_t>(-1.0000000000000002),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000004)},
-                 {bit_cast<uint64_t>(-1.0000000000000004),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000007)},
-                 {bit_cast<uint64_t>(-1.0000000000000007),
-                  bit_cast<uint64_t>(-0.00000000000000011102230246251565),
-                  bit_cast<uint64_t>(-1.0000000000000009)}});
+  InterpretOpFp(
+      0x023140d3,
+      // Test RMM
+      {std::tuple{1.0000000000000002, 0.00000000000000011102230246251565, 1.0000000000000004},
+       {1.0000000000000004, 0.00000000000000011102230246251565, 1.0000000000000007},
+       {1.0000000000000007, 0.00000000000000011102230246251565, 1.0000000000000009},
+       {-1.0000000000000002, -0.00000000000000011102230246251565, -1.0000000000000004},
+       {-1.0000000000000004, -0.00000000000000011102230246251565, -1.0000000000000007},
+       {-1.0000000000000007, -0.00000000000000011102230246251565, -1.0000000000000009}});
 }
 
 TEST_F(Riscv64InterpreterTest, LoadInstructions) {

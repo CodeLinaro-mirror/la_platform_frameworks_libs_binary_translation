@@ -19,7 +19,7 @@
 
 #include <stdint.h>
 
-#include "berberis/intrinsics/intrinsics_float.h"
+#include "berberis/intrinsics/common/intrinsics_float.h"
 
 namespace berberis {
 
@@ -100,13 +100,18 @@ template <>
 struct TypeTraits<intrinsics::Float64> {
   using Int = int64_t;
   using Narrow = intrinsics::Float32;
-#if defined(__i386__) || defined(__x86_64__)
+#if defined(__x86_64__)
   static_assert(sizeof(long double) > sizeof(intrinsics::Float64));
   using Wide = long double;
 #endif
 };
 
 #if defined(__x86_64__)
+
+template <>
+struct TypeTraits<long double> {
+  using Narrow = intrinsics::Float64;
+};
 
 template <>
 struct TypeTraits<__uint128_t> {

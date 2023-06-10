@@ -37,6 +37,7 @@ class LiteTranslator {
   using Decoder = Decoder<SemanticsPlayer<LiteTranslator>>;
   using Register = x86_64::Assembler::Register;
   using FpRegister = x86_64::Assembler::XMMRegister;
+  using Condition = x86_64::Assembler::Condition;
 
   explicit LiteTranslator(MachineCode* machine_code)
       : as_(machine_code), success_(true), next_gp_reg_for_alloc_(0){};
@@ -46,27 +47,93 @@ class LiteTranslator {
   //
 
   Register Op(Decoder::OpOpcode opcode, Register arg1, Register arg2) {
+    using OpOpcode = Decoder::OpOpcode;
     Register res = AllocTempReg();
-    as_.Movq(res, arg1);
     switch (opcode) {
-      case Decoder::OpOpcode::kAdd:
+      case OpOpcode::kAdd:
+        as_.Movq(res, arg1);
         as_.Addq(res, arg2);
         break;
-      case Decoder::OpOpcode::kSub:
+      case OpOpcode::kSub:
+        as_.Movq(res, arg1);
         as_.Subq(res, arg2);
         break;
-      case Decoder::OpOpcode::kAnd:
+      case OpOpcode::kAnd:
+        as_.Movq(res, arg1);
         as_.Andq(res, arg2);
         break;
-      case Decoder::OpOpcode::kOr:
+      case OpOpcode::kOr:
+        as_.Movq(res, arg1);
         as_.Orq(res, arg2);
         break;
-      case Decoder::OpOpcode::kXor:
+      case OpOpcode::kXor:
+        as_.Movq(res, arg1);
         as_.Xorq(res, arg2);
         break;
-      case Decoder::OpOpcode::kSll:
-        as_.Movl(as_.rcx, arg2);
-        as_.ShlqByCl(res);
+      case OpOpcode::kSll:
+      case OpOpcode::kSrl:
+      case OpOpcode::kSra:
+        as_.Movq(res, arg1);
+        as_.Movq(as_.rcx, arg2);
+        if (opcode == OpOpcode::kSrl) {
+          as_.ShrqByCl(res);
+        } else if (opcode == OpOpcode::kSll) {
+          as_.ShlqByCl(res);
+        } else if (opcode == OpOpcode::kSra) {
+          as_.SarqByCl(res);
+        } else {
+          FATAL("Unexpected OpOpcode");
+        }
+        break;
+      case OpOpcode::kSlt:
+        as_.Xorq(res, res);
+        as_.Cmpq(arg1, arg2);
+        as_.Setcc(Condition::kLess, res);
+        break;
+      case OpOpcode::kSltu:
+        as_.Xorq(res, res);
+        as_.Cmpq(arg1, arg2);
+        as_.Setcc(Condition::kBelow, res);
+        break;
+      case OpOpcode::kMul:
+        as_.Movq(res, arg1);
+        as_.Imulq(res, arg2);
+        break;
+      case OpOpcode::kMulh:
+        as_.Movq(res, arg1);
+        as_.Movq(as_.rax, arg1);
+        as_.Imulq(arg2);
+        as_.Movq(res, as_.rdx);
+        break;
+      case OpOpcode::kMulhsu: {
+        as_.Movq(res, arg1);
+        as_.Movq(as_.rax, arg2);
+        as_.Movq(res, arg1);
+        as_.Mulq(res);
+        as_.Sarq(res, int8_t{63});
+        as_.Imulq(res, arg2);
+        as_.Addq(res, as_.rdx);
+        break;
+      }
+      case OpOpcode::kMulhu:
+        as_.Movq(as_.rax, arg1);
+        as_.Mulq(arg2);
+        as_.Movq(res, as_.rdx);
+        break;
+      case OpOpcode::kDiv:
+      case OpOpcode::kRem:
+        as_.Movq(as_.rax, arg1);
+        as_.Movq(as_.rdx, as_.rax);
+        as_.Sarq(as_.rdx, int8_t{63});
+        as_.Idivq(arg2);
+        as_.Movq(res, opcode == OpOpcode::kDiv ? as_.rax : as_.rdx);
+        break;
+      case OpOpcode::kDivu:
+      case OpOpcode::kRemu:
+        as_.Movq(as_.rax, arg1);
+        as_.Xorq(as_.rdx, as_.rdx);
+        as_.Divq(arg2);
+        as_.Movq(res, opcode == OpOpcode::kDivu ? as_.rax : as_.rdx);
         break;
       default:
         Unimplemented();
@@ -76,33 +143,149 @@ class LiteTranslator {
   }
 
   Register Op32(Decoder::Op32Opcode opcode, Register arg1, Register arg2) {
-    UNUSED(opcode, arg1, arg2);
-    Unimplemented();
-    return {};
+    using Op32Opcode = Decoder::Op32Opcode;
+    Register res = AllocTempReg();
+    switch (opcode) {
+      case Op32Opcode::kAddw:
+        as_.Movl(res, arg1);
+        as_.Addl(res, arg2);
+        as_.Movsxlq(res, res);
+        break;
+      case Op32Opcode::kSubw:
+        as_.Movl(res, arg1);
+        as_.Subl(res, arg2);
+        as_.Movsxlq(res, res);
+        break;
+      case Op32Opcode::kSllw:
+      case Op32Opcode::kSrlw:
+      case Op32Opcode::kSraw:
+        as_.Movl(res, arg1);
+        as_.Movl(as_.rcx, arg2);
+        if (opcode == Op32Opcode::kSrlw) {
+          as_.ShrlByCl(res);
+        } else if (opcode == Op32Opcode::kSllw) {
+          as_.ShllByCl(res);
+        } else if (opcode == Op32Opcode::kSraw) {
+          as_.SarlByCl(res);
+        } else {
+          FATAL("Unexpected Op32Opcode");
+        }
+        as_.Movsxlq(res, res);
+        break;
+      case Op32Opcode::kMulw:
+        as_.Movl(res, arg1);
+        as_.Imull(res, arg2);
+        as_.Movsxlq(res, res);
+        break;
+      case Op32Opcode::kDivw:
+      case Op32Opcode::kRemw:
+        as_.Movl(as_.rax, arg1);
+        as_.Movl(as_.rdx, as_.rax);
+        as_.Sarl(as_.rdx, int8_t{31});
+        as_.Idivl(arg2);
+        as_.Movsxlq(res, opcode == Op32Opcode::kDivw ? as_.rax : as_.rdx);
+        break;
+      case Op32Opcode::kDivuw:
+      case Op32Opcode::kRemuw:
+        as_.Movl(as_.rax, arg1);
+        as_.Xorl(as_.rdx, as_.rdx);
+        as_.Divl(arg2);
+        as_.Movsxlq(res, opcode == Op32Opcode::kDivuw ? as_.rax : as_.rdx);
+        break;
+      default:
+        Unimplemented();
+        return {};
+    }
+    return res;
   }
 
   Register OpImm(Decoder::OpImmOpcode opcode, Register arg, int16_t imm) {
-    UNUSED(opcode, arg, imm);
-    Unimplemented();
-    return {};
+    using OpImmOpcode = Decoder::OpImmOpcode;
+    Register res = AllocTempReg();
+    switch (opcode) {
+      case OpImmOpcode::kAddi:
+        as_.Movq(res, arg);
+        as_.Addq(res, imm);
+        break;
+      case OpImmOpcode::kSlti:
+        as_.Xorq(res, res);
+        as_.Cmpq(arg, imm);
+        as_.Setcc(Condition::kLess, res);
+        break;
+      case OpImmOpcode::kSltiu:
+        as_.Xorq(res, res);
+        as_.Cmpq(arg, imm);
+        as_.Setcc(Condition::kBelow, res);
+        break;
+      case OpImmOpcode::kXori:
+        as_.Movq(res, arg);
+        as_.Xorq(res, imm);
+        break;
+      case OpImmOpcode::kOri:
+        as_.Movq(res, arg);
+        as_.Orq(res, imm);
+        break;
+      case OpImmOpcode::kAndi:
+        as_.Movq(res, arg);
+        as_.Andq(res, imm);
+        break;
+      default:
+        Unimplemented();
+        return {};
+    }
+    return res;
   }
 
   Register OpImm32(Decoder::OpImm32Opcode opcode, Register arg, int16_t imm) {
-    UNUSED(opcode, arg, imm);
-    Unimplemented();
-    return {};
+    Register res = AllocTempReg();
+    switch (opcode) {
+      case Decoder::OpImm32Opcode::kAddiw:
+        as_.Movl(res, arg);
+        as_.Addl(res, imm);
+        as_.Movsxlq(res, res);
+        break;
+      default:
+        Unimplemented();
+        return {};
+    }
+    return res;
   }
 
   Register ShiftImm(Decoder::ShiftImmOpcode opcode, Register arg, uint16_t imm) {
-    UNUSED(opcode, arg, imm);
-    Unimplemented();
-    return {};
+    using ShiftImmOpcode = Decoder::ShiftImmOpcode;
+    Register res = AllocTempReg();
+    as_.Movq(res, arg);
+    as_.Movq(as_.rcx, imm);
+    if (opcode == ShiftImmOpcode::kSrli) {
+      as_.ShrqByCl(res);
+    } else if (opcode == ShiftImmOpcode::kSlli) {
+      as_.ShlqByCl(res);
+    } else if (opcode == ShiftImmOpcode::kSrai) {
+      as_.SarqByCl(res);
+    } else {
+      Unimplemented();
+      return {};
+    }
+    return res;
   }
 
   Register ShiftImm32(Decoder::ShiftImm32Opcode opcode, Register arg, uint16_t imm) {
-    UNUSED(opcode, arg, imm);
-    Unimplemented();
-    return {};
+    using ShiftImm32Opcode = Decoder::ShiftImm32Opcode;
+    Register res = AllocTempReg();
+    as_.Movl(res, arg);
+    as_.Movl(as_.rcx, imm);
+    if (opcode == ShiftImm32Opcode::kSrliw) {
+      as_.ShrlByCl(res);
+    } else if (opcode == ShiftImm32Opcode::kSlliw) {
+      as_.ShllByCl(res);
+    } else if (opcode == ShiftImm32Opcode::kSraiw) {
+      as_.SarlByCl(res);
+    } else {
+      Unimplemented();
+      return {};
+    }
+    as_.Movsxlq(res, res);
+    return res;
   }
 
   Register Lui(int32_t imm) {
@@ -370,8 +553,9 @@ class LiteTranslator {
 
  private:
   Register AllocTempReg() {
-    static constexpr x86_64::Assembler::Register kRegs[] = {x86_64::Assembler::rdx,
-                                                            x86_64::Assembler::rbx,
+    // TODO(286261771): Add rdx to registers, push it on stack in all instances that are clobbering
+    // it.
+    static constexpr x86_64::Assembler::Register kRegs[] = {x86_64::Assembler::rbx,
                                                             x86_64::Assembler::rsi,
                                                             x86_64::Assembler::rdi,
                                                             x86_64::Assembler::r8,

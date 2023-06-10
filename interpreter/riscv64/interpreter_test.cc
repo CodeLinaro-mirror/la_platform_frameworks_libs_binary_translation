@@ -1082,6 +1082,8 @@ TEST_F(Riscv64InterpreterTest, OpInstructions) {
   // Div
   InterpretOp(0x23140b3, {{0x9999'9999'9999'9999, 0x3333, 0xfffd'fffd'fffd'fffe}});
   // Div
+  InterpretOp(0x23140b3, {{42, 2, 21}});
+  // Div
   InterpretOp(0x23150b3, {{0x9999'9999'9999'9999, 0x3333, 0x0003'0003'0003'0003}});
   // Rem
   InterpretOp(0x23160b3, {{0x9999'9999'9999'9999, 0x3333, 0xffff'ffff'ffff'ffff}});
@@ -1091,9 +1093,9 @@ TEST_F(Riscv64InterpreterTest, OpInstructions) {
 
 TEST_F(Riscv64InterpreterTest, Op32Instructions) {
   // Addw
-  InterpretOp(0x003100bb, {{19, 23, 42}});
+  InterpretOp(0x003100bb, {{19, 23, 42}, {0x8000'0000, 0, 0xffff'ffff'8000'0000}});
   // Subw
-  InterpretOp(0x403100bb, {{42, 23, 19}});
+  InterpretOp(0x403100bb, {{42, 23, 19}, {0x8000'0000, 0, 0xffff'ffff'8000'0000}});
   // Sllw
   InterpretOp(0x003110bb, {{0b1010, 3, 0b1010'000}});
   // Srlw

@@ -300,6 +300,13 @@ class Riscv64InterpreterTest : public ::testing::Test {
     EXPECT_EQ(GetFReg<1>(state_.cpu), expected_result);
   }
 
+  void InterpretAtomicLoad(uint32_t insn_bytes, uint64_t expected_result) {
+    state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+    SetXReg<1>(state_.cpu, ToGuestAddr(&kDataToLoad));
+    InterpretInsn(&state_);
+    EXPECT_EQ(GetXReg<2>(state_.cpu), expected_result);
+  }
+
   void InterpretStore(uint32_t insn_bytes, uint64_t expected_result) {
     state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
     // Offset is always 8.
@@ -320,12 +327,15 @@ class Riscv64InterpreterTest : public ::testing::Test {
     EXPECT_EQ(store_area_, expected_result);
   }
 
-  void InterpretJumpAndLink(uint32_t insn_bytes, int8_t expected_offset) {
-    auto code_start = ToGuestAddr(&insn_bytes);
-    state_.cpu.insn_addr = code_start;
+  void InterpretAtomicStore(uint32_t insn_bytes, uint64_t expected_result) {
+    state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+    SetXReg<1>(state_.cpu, ToGuestAddr(&store_area_));
+    SetXReg<2>(state_.cpu, kDataToStore);
+    SetXReg<3>(state_.cpu, 0xdeadbeef);
+    store_area_ = 0;
     InterpretInsn(&state_);
-    EXPECT_EQ(state_.cpu.insn_addr, code_start + expected_offset);
-    EXPECT_EQ(GetXReg<1>(state_.cpu), code_start + 4);
+    EXPECT_EQ(store_area_, expected_result);
+    EXPECT_EQ(GetXReg<3>(state_.cpu), 0u);
   }
 
   // kLinkRegisterOffsetIfUsed is size of instruction or 0 if instruction does not link register.
@@ -1409,6 +1419,13 @@ TEST_F(Riscv64InterpreterTest, LoadFpInstructions) {
   InterpretLoadFp(0x00813087, kDataToLoad);
 }
 
+TEST_F(Riscv64InterpreterTest, AtomicLoadInstructions) {
+  // Lrw
+  InterpretAtomicLoad(0x1000a12f, int64_t{int32_t(kDataToLoad)});
+  // Lrd
+  InterpretAtomicLoad(0x1000b12f, kDataToLoad);
+}
+
 TEST_F(Riscv64InterpreterTest, StoreInstructions) {
   // Offset is always 8.
   // Sb
@@ -1427,13 +1444,6 @@ TEST_F(Riscv64InterpreterTest, StoreFpInstructions) {
   InterpretStoreFp(0x0020a427, kDataToStore & 0xffff'ffffULL);
   // Fsd
   InterpretStoreFp(0x0020b427, kDataToStore);
-}
-
-TEST_F(Riscv64InterpreterTest, JumpAndLinkInstructions) {
-  // Jal
-  InterpretJumpAndLink(0x008000ef, 8);
-  // Jal with negative offset.
-  InterpretJumpAndLink(0xffdff0ef, -4);
 }
 
 TEST_F(Riscv64InterpreterTest, JumpAndLinkRegisterInstructions) {

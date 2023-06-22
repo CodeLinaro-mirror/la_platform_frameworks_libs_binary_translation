@@ -27,6 +27,7 @@
 #include "berberis/decoder/riscv64/semantics_player.h"
 #include "berberis/guest_state/guest_addr.h"
 #include "berberis/guest_state/guest_state_riscv64.h"
+#include "berberis/lite_translator/lite_translate_region.h"
 
 namespace berberis {
 
@@ -39,8 +40,8 @@ class LiteTranslator {
   using FpRegister = x86_64::Assembler::XMMRegister;
   using Condition = x86_64::Assembler::Condition;
 
-  explicit LiteTranslator(MachineCode* machine_code, GuestAddr pc)
-      : as_(machine_code), success_(true), next_gp_reg_for_alloc_(0), pc_(pc){};
+  explicit LiteTranslator(MachineCode* machine_code, GuestAddr pc, LiteTranslateParams& params)
+      : as_(machine_code), success_(true), next_gp_reg_for_alloc_(0), pc_(pc), params_(params){};
 
   //
   // Instruction implementations.
@@ -57,17 +58,10 @@ class LiteTranslator {
   void CompareAndBranch(Decoder::BranchOpcode opcode, Register arg1, Register arg2, int16_t offset);
   void Branch(int32_t offset);
   void BranchRegister(Register base, int16_t offset);
-
-  Register Load(Decoder::LoadOperandType operand_type, Register arg, int16_t offset) {
-    UNUSED(operand_type, arg, offset);
-    Unimplemented();
-    return {};
-  }
-
-  void Store(Decoder::StoreOperandType operand_type, Register arg, int16_t offset, Register data) {
-    UNUSED(operand_type, arg, offset, data);
-    Unimplemented();
-  }
+  void ExitRegion(GuestAddr target);
+  void ExitRegionIndirect(Register target);
+  void Store(Decoder::StoreOperandType operand_type, Register arg, int16_t offset, Register data);
+  Register Load(Decoder::LoadOperandType operand_type, Register arg, int16_t offset);
 
   Register Amo(Decoder::AmoOpcode opcode, Register arg1, Register arg2, bool aq, bool rl) {
     UNUSED(opcode, arg1, arg2, aq, rl);
@@ -314,14 +308,11 @@ class LiteTranslator {
     return kRegs[next_gp_reg_for_alloc_++];
   }
 
-  void BranchToGuestAddr(GuestAddr target);
-
-  void BranchToGuestAddr(Register target);
-
   x86_64::Assembler as_;
   bool success_;
   uint8_t next_gp_reg_for_alloc_;
   GuestAddr pc_;
+  const LiteTranslateParams& params_;
 };
 
 }  // namespace berberis

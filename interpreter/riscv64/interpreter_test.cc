@@ -284,14 +284,6 @@ class Riscv64InterpreterTest : public ::testing::Test {
     }
   }
 
-  void InterpretLoad(uint32_t insn_bytes, uint64_t expected_result) {
-    state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
-    // Offset is always 8.
-    SetXReg<2>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&kDataToLoad) - 8));
-    InterpretInsn(&state_);
-    EXPECT_EQ(GetXReg<1>(state_.cpu), expected_result);
-  }
-
   void InterpretLoadFp(uint32_t insn_bytes, uint64_t expected_result) {
     state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
     // Offset is always 8.
@@ -305,16 +297,6 @@ class Riscv64InterpreterTest : public ::testing::Test {
     SetXReg<1>(state_.cpu, ToGuestAddr(&kDataToLoad));
     InterpretInsn(&state_);
     EXPECT_EQ(GetXReg<2>(state_.cpu), expected_result);
-  }
-
-  void InterpretStore(uint32_t insn_bytes, uint64_t expected_result) {
-    state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
-    // Offset is always 8.
-    SetXReg<1>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&store_area_) - 8));
-    SetXReg<2>(state_.cpu, kDataToStore);
-    store_area_ = 0;
-    InterpretInsn(&state_);
-    EXPECT_EQ(store_area_, expected_result);
   }
 
   void InterpretStoreFp(uint32_t insn_bytes, uint64_t expected_result) {
@@ -1393,24 +1375,6 @@ TEST_F(Riscv64InterpreterTest, RoundingModeTest) {
        {-1.0000000000000007, -0.00000000000000011102230246251565, -1.0000000000000009}});
 }
 
-TEST_F(Riscv64InterpreterTest, LoadInstructions) {
-  // Offset is always 8.
-  // Lbu
-  InterpretLoad(0x00814083, kDataToLoad & 0xffULL);
-  // Lhu
-  InterpretLoad(0x00815083, kDataToLoad & 0xffffULL);
-  // Lwu
-  InterpretLoad(0x00816083, kDataToLoad & 0xffff'ffffULL);
-  // Ldu
-  InterpretLoad(0x00813083, kDataToLoad);
-  // Lb
-  InterpretLoad(0x00810083, int64_t{int8_t(kDataToLoad)});
-  // Lh
-  InterpretLoad(0x00811083, int64_t{int16_t(kDataToLoad)});
-  // Lw
-  InterpretLoad(0x00812083, int64_t{int32_t(kDataToLoad)});
-}
-
 TEST_F(Riscv64InterpreterTest, LoadFpInstructions) {
   // Offset is always 8.
   // Flw
@@ -1424,18 +1388,6 @@ TEST_F(Riscv64InterpreterTest, AtomicLoadInstructions) {
   InterpretAtomicLoad(0x1000a12f, int64_t{int32_t(kDataToLoad)});
   // Lrd
   InterpretAtomicLoad(0x1000b12f, kDataToLoad);
-}
-
-TEST_F(Riscv64InterpreterTest, StoreInstructions) {
-  // Offset is always 8.
-  // Sb
-  InterpretStore(0x00208423, kDataToStore & 0xffULL);
-  // Sh
-  InterpretStore(0x00209423, kDataToStore & 0xffffULL);
-  // Sw
-  InterpretStore(0x0020a423, kDataToStore & 0xffff'ffffULL);
-  // Sd
-  InterpretStore(0x0020b423, kDataToStore);
 }
 
 TEST_F(Riscv64InterpreterTest, StoreFpInstructions) {

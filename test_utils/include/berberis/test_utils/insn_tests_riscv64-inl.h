@@ -97,6 +97,14 @@ class TESTSUITE : public ::testing::Test {
     EXPECT_EQ(GetXReg<1>(state_.cpu), code_start + 4);
   }
 
+  void TestLoad(uint32_t insn_bytes, uint64_t expected_result) {
+    state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+    // Offset is always 8.
+    SetXReg<2>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&kDataToLoad) - 8));
+    EXPECT_TRUE(RunOneInstruction(&state_, state_.cpu.insn_addr + 4));
+    EXPECT_EQ(GetXReg<1>(state_.cpu), expected_result);
+  }
+
   // kLinkRegisterOffsetIfUsed is size of instruction or 0 if instruction does not link register.
   template <uint8_t kLinkRegisterOffsetIfUsed>
   void TestJumpAndLinkRegister(uint32_t insn_bytes, uint64_t base_disp, int64_t expected_offset) {
@@ -112,6 +120,21 @@ class TESTSUITE : public ::testing::Test {
       EXPECT_EQ(GetXReg<1>(state_.cpu), code_start + kLinkRegisterOffsetIfUsed);
     }
   }
+
+  void TestStore(uint32_t insn_bytes, uint64_t expected_result) {
+    state_.cpu.insn_addr = ToGuestAddr(&insn_bytes);
+    // Offset is always 8.
+    SetXReg<1>(state_.cpu, ToGuestAddr(bit_cast<uint8_t*>(&store_area_) - 8));
+    SetXReg<2>(state_.cpu, kDataToStore);
+    store_area_ = 0;
+    EXPECT_TRUE(RunOneInstruction(&state_, state_.cpu.insn_addr + 4));
+    EXPECT_EQ(store_area_, expected_result);
+  }
+
+ protected:
+  static constexpr uint64_t kDataToLoad{0xffffeeeeddddccccULL};
+  static constexpr uint64_t kDataToStore = kDataToLoad;
+  uint64_t store_area_;
 
  private:
   ThreadState state_;
@@ -322,4 +345,34 @@ TEST_F(TESTSUITE, JumpAndLinkRegisterInstructions) {
   TestJumpAndLinkRegister<0>(0xffc10067, 42, 38);
   // Jr offset=5 - must properly align the target to even.
   TestJumpAndLinkRegister<0>(0x00510067, 38, 42);
+}
+
+TEST_F(TESTSUITE, LoadInstructions) {
+  // Offset is always 8.
+  // Lbu
+  TestLoad(0x00814083, kDataToLoad & 0xffULL);
+  // Lhu
+  TestLoad(0x00815083, kDataToLoad & 0xffffULL);
+  // Lwu
+  TestLoad(0x00816083, kDataToLoad & 0xffff'ffffULL);
+  // Ldu
+  TestLoad(0x00813083, kDataToLoad);
+  // Lb
+  TestLoad(0x00810083, int64_t{int8_t(kDataToLoad)});
+  // Lh
+  TestLoad(0x00811083, int64_t{int16_t(kDataToLoad)});
+  // Lw
+  TestLoad(0x00812083, int64_t{int32_t(kDataToLoad)});
+}
+
+TEST_F(TESTSUITE, StoreInstructions) {
+  // Offset is always 8.
+  // Sb
+  TestStore(0x00208423, kDataToStore & 0xffULL);
+  // Sh
+  TestStore(0x00209423, kDataToStore & 0xffffULL);
+  // Sw
+  TestStore(0x0020a423, kDataToStore & 0xffff'ffffULL);
+  // Sd
+  TestStore(0x0020b423, kDataToStore);
 }

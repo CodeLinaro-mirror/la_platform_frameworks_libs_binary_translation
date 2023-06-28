@@ -22,6 +22,7 @@ from collections import OrderedDict
 import asm_defs
 import json
 import os
+import re
 import sys
 
 # C-level intrinsic calling convention:
@@ -108,6 +109,13 @@ def _is_imm_type(arg_type):
   return 'imm' in arg_type
 
 
+def _is_template_type(arg_type):
+  if not arg_type.startswith('Type'):
+    return False
+  assert isinstance(int(arg_type[4:]), int)
+  return True
+
+
 def _get_imm_c_type(arg_type):
   return {
       'imm8' : 'int8_t',
@@ -117,9 +125,10 @@ def _get_imm_c_type(arg_type):
 
 
 def _get_c_type(arg_type):
-  if arg_type in ('Float32', 'Float64', 'int8_t', 'uint8_t', 'int16_t',
+  if (arg_type in ('Float32', 'Float64', 'int8_t', 'uint8_t', 'int16_t',
                   'uint16_t', 'int32_t', 'uint32_t', 'int64_t', 'uint64_t',
-                  'volatile uint8_t*', 'volatile uint32_t*'):
+                  'volatile uint8_t*', 'volatile uint32_t*') or
+      _is_template_type(arg_type)):
     return arg_type
   if arg_type in ('fp_flags', 'fp_control', 'int', 'flag', 'flags', 'vec32'):
     return 'uint32_t'
@@ -130,7 +139,9 @@ def _get_c_type(arg_type):
   raise Exception('Type %s not supported' % (arg_type))
 
 
-def _get_semantic_player_type(arg_type):
+def _get_semantic_player_type(arg_type, type_map):
+  if _is_template_type(arg_type):
+    return type_map[arg_type]
   if arg_type in ('Float32', 'Float64', 'vec'):
     return 'SimdRegister'
   if _is_imm_type(arg_type):
@@ -151,9 +162,43 @@ def _gen_scalar_intr_decl(f, name, intr):
     print('// %s.' % (comment), file=f)
   if intr.get('precise_nans', False):
     print('template <bool precise_nan_operations_handling, '
-          'enum PreferCppImplementation = kUseAssemblerImplementationIfPossible>',
+          'enum PreferredIntrinsicsImplementation = kUseAssemblerImplementationIfPossible>',
           file=f)
   print('%s %s(%s);' % (retval, name, ', '.join(params)), file=f)
+
+
+def _gen_template_intr_decl(f, name, intr):
+  ins = intr.get('in')
+  outs = intr.get('out')
+  params = [_get_c_type(op) for op in ins]
+  if len(outs) > 0:
+    retval = 'std::tuple<' + ', '.join(_get_c_type(out) for out in outs) + '>'
+  else:
+    retval = 'void'
+  comment = intr.get('comment')
+  if comment:
+    print('// %s.' % (comment), file=f)
+  print('template <%s>' % _get_template_arguments(intr.get('variants')), file=f)
+  print('%s %s(%s);' % (retval, name, ', '.join(params)), file=f)
+
+
+def _get_template_arguments(variants,
+    extra = ['enum PreferredIntrinsicsImplementation = kUseAssemblerImplementationIfPossible']):
+  template = None
+  for variant in variants:
+    counter = -1
+    def get_counter():
+      nonlocal counter
+      counter += 1
+      return counter
+    new_template = ', '.join([
+      'bool kBool%s' % get_counter() if param.strip() in ('true', 'false') else
+      'typename Type%d' % get_counter() if re.search('[_a-zA-Z]', param) else
+      'int kInt%s' % get_counter()
+      for param in variant.split(',')] + extra)
+    assert template is None or template == new_template
+    template = new_template
+  return template
 
 
 def _is_vector_class(intr):
@@ -162,8 +207,8 @@ def _is_vector_class(intr):
                                'vector_8/single', 'vector_16/single')
 
 
-def _is_simd128_conversion_required(t):
-  return (_get_semantic_player_type(t) == 'SimdRegister' and
+def _is_simd128_conversion_required(t, type_map=None):
+  return (_get_semantic_player_type(t, type_map) == 'SimdRegister' and
           _get_c_type(t) != 'SIMD128Register')
 
 
@@ -173,9 +218,10 @@ def _get_semantics_player_hook_result(intr):
     return 'void'
   elif len(outs) == 1:
     # No tuple for single result.
-    return _get_semantic_player_type(outs[0])
+    return _get_semantic_player_type(outs[0], intr.get('sem-player-types'))
   return 'std::tuple<' + ', '.join(
-      _get_semantic_player_type(out) for out in outs) + '>'
+      _get_semantic_player_type(out, intr.get('sem-player-types'))
+      for out in outs) + '>'
 
 
 def _get_semantics_player_hook_proto_components(name, intr):
@@ -192,7 +238,8 @@ def _get_semantics_player_hook_proto_components(name, intr):
         args += ['bool is_signed']
 
   args += [
-      '%s arg%d' % (_get_semantic_player_type(op), num)
+      '%s arg%d' % (
+          _get_semantic_player_type(op, intr.get('sem-player-types')), num)
       for num, op in enumerate(ins)
   ]
 
@@ -203,6 +250,9 @@ def _get_semantics_player_hook_proto_components(name, intr):
 
 def _get_semantics_player_hook_proto(name, intr):
   result, name, args = _get_semantics_player_hook_proto_components(name, intr)
+  if intr.get('class') == 'template':
+    return 'template<%s>\n%s %s(%s)' % (
+      _get_template_arguments(intr.get('variants'), []), result, name, args)
   return '%s %s(%s)' % (result, name, args)
 
 
@@ -213,7 +263,12 @@ def _get_interpreter_hook_call_expr(name, intr, desc=None):
   call_params = []
   for num, op in enumerate(ins):
     arg = 'arg%d' % (num)
-    if _get_semantic_player_type(op) == 'SimdRegister':
+    semantic_player_type = _get_semantic_player_type(
+        op, intr.get('sem-player-types'))
+    print(op, semantic_player_type, intr.get('sem-player-types'))
+    if semantic_player_type == 'FpRegister':
+      call_params.append('FPRegToFloat<%s>(%s)' % (op, arg))
+    elif semantic_player_type == 'SimdRegister':
       call_params.append(_get_cast_from_simd128(arg, op, ptr_bits=64))
     elif '*' in _get_c_type(op):
       call_params.append('bit_cast<%s>(%s)' % (_get_c_type(op), arg))
@@ -224,19 +279,29 @@ def _get_interpreter_hook_call_expr(name, intr, desc=None):
       name, _get_desc_specializations(intr, desc).replace(
           'Float', 'intrinsics::Float'), ', '.join(call_params))
 
-  if (len(outs) == 1):
+  if 'sem-player-types' in intr:
+    assert len(outs) == 1
+    out_type = _get_semantic_player_type(outs[0], intr.get('sem-player-types'))
+    if out_type == "FpRegister":
+      call_expr = 'FloatToFPReg(std::get<0>(%s))' % call_expr
+    else:
+      assert out_type == "Register"
+      assert not _is_simd128_conversion_required(
+        outs[0], intr.get('sem-player-types'))
+      call_expr = 'std::make_signed_t<%s>(std::get<0>(%s))' % (outs[0], call_expr)
+  elif len(outs) == 1:
     # Unwrap tuple for single result.
     call_expr = 'std::get<0>(%s)' % call_expr
     # Currently this kind of mismatch can only happen for single result, so we
     # can keep simple code here for now.
-    if (_is_simd128_conversion_required(outs[0])):
+    if _is_simd128_conversion_required(outs[0]):
       out_type = _get_c_type(outs[0])
       if out_type in ('Float32', 'Float64'):
         call_expr = 'SimdRegister(%s)' % call_expr
       else:
         raise Exception('Type %s is not supported' % (out_type))
   else:
-    if (any(_is_simd128_conversion_required(out) for out in outs)):
+    if any(_is_simd128_conversion_required(out) for out in outs):
       raise Exception(
           'Unsupported SIMD128Register conversion with multiple results')
 
@@ -512,7 +577,9 @@ def _get_cast_from_simd128(var, target_type, ptr_bits):
 
 
 def _get_desc_specializations(intr, desc=None):
-  if hasattr(desc, 'c_type'):
+  if intr.get('class') == 'template':
+    spec = _get_template_spec_arguments(intr.get('variants'))
+  elif hasattr(desc, 'c_type'):
     spec = [desc.c_type, str(desc.num_elements)]
   elif hasattr(desc, 'num_elements'):
     spec = [str(desc.num_elements)]
@@ -523,6 +590,24 @@ def _get_desc_specializations(intr, desc=None):
   if not len(spec):
     return ''
   return '<%s>' % ', '.join(spec)
+
+
+def _get_template_spec_arguments(variants):
+  spec = None
+  for variant in variants:
+    counter = -1
+    def get_counter():
+      nonlocal counter
+      counter += 1
+      return counter
+    new_spec = [
+      'kBool%s' % get_counter() if param.strip() in ('true', 'false') else
+      'Type%d' % get_counter() if re.search('[_a-zA-Z]', param) else
+      'kInt%s' % get_counter()
+      for param in variant.split(',')]
+    assert spec is None or spec == new_spec
+    spec = new_spec
+  return spec
 
 
 def _intr_has_side_effects(intr, fmt=None):
@@ -545,6 +630,31 @@ def _gen_intrinsics_inl_h(f, intrs):
   for name, intr in intrs:
     if intr.get('class') == 'scalar':
       _gen_scalar_intr_decl(f, name, intr)
+    elif intr.get('class') == 'template':
+      _gen_template_intr_decl(f, name, intr)
+
+
+def _gen_semantic_player_types(intrs):
+  for name, intr in intrs:
+    if intr.get('class') == 'template':
+      map = None
+      for variant in intr.get('variants'):
+        counter = -1
+        def get_counter():
+          nonlocal counter
+          counter += 1
+          return counter
+        new_map = {}
+        for type in filter(
+              lambda param: param.strip() not in ('true', 'false') and
+                            re.search('[_a-zA-Z]', param),
+            variant.split(',')):
+          new_map['Type%d' % get_counter()] = (
+              'FpRegister' if type.strip() in ('Float32', 'Float64') else
+              _get_semantic_player_type(type, None))
+        assert map is None or map == new_map
+        map = new_map
+      intr['sem-player-types'] = map
 
 
 def _gen_interpreter_intrinsics_hooks_impl_inl_h(f, intrs):
@@ -826,6 +936,7 @@ def main(argv):
   if mode == '--public_headers':
     intrs = sorted(_load_intrs_def_files(argv[6:]).items())
     _gen_intrinsics_inl_h(open_out_file(argv[2]), intrs)
+    _gen_semantic_player_types(intrs)
     _gen_interpreter_intrinsics_hooks_impl_inl_h(open_out_file(argv[3]), intrs)
     _gen_translator_intrinsics_hooks_impl_inl_h(
         open_out_file(argv[4]), intrs)

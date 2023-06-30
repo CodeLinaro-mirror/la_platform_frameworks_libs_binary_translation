@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-#include "berberis/guest_state/guest_state.h"
+#include "berberis/guest_state/guest_state_opaque.h"
 
 #include "berberis/base/checks.h"
 #include "berberis/base/mmap.h"
+#include "berberis/guest_state/guest_addr.h"
+#include "berberis/guest_state/guest_state.h"
 
 #include <atomic>   // std::memory_order_relaxed
 #include <cstddef>  // size_t
@@ -97,12 +99,16 @@ void SetStackRegister(CPUState* cpu, GuestAddr val) {
   SetXReg<SP>(*cpu, val);
 }
 
+GuestAddr GetStackRegister(CPUState* cpu) {
+  return GetXReg<SP>(*cpu);
+}
+
 void SetLinkRegister(CPUState* cpu, GuestAddr val) {
   SetXReg<RA>(*cpu, val);
 }
 
-GuestAddr GetLinkRegister(const CPUState* cpu) {
-  return GetXReg<RA>(*cpu);
+GuestAddr GetLinkRegister(const CPUState& cpu) {
+  return GetXReg<RA>(cpu);
 }
 
 void SetInsnAddr(CPUState* cpu, GuestAddr addr) {

@@ -342,6 +342,7 @@ void LiteTranslator::ExitRegionIndirect(Register target) {
 }
 
 void LiteTranslator::Branch(int32_t offset) {
+  is_region_end_reached_ = true;
   ExitRegion(GetInsnAddr() + offset);
 }
 
@@ -351,7 +352,63 @@ void LiteTranslator::BranchRegister(Register base, int16_t offset) {
   as_.Addq(res, offset);
   // Zeroing out the last bit.
   as_.Andq(res, ~int32_t{1});
+  is_region_end_reached_ = true;
   ExitRegionIndirect(res);
+}
+
+Register LiteTranslator::Load(Decoder::LoadOperandType operand_type, Register arg, int16_t offset) {
+  Register res = AllocTempReg();
+  x86_64::Assembler::Operand asm_memop{.base = arg, .disp = offset};
+  switch (operand_type) {
+    case Decoder::LoadOperandType::k8bitUnsigned:
+      as_.Movzxbl(res, asm_memop);
+      break;
+    case Decoder::LoadOperandType::k16bitUnsigned:
+      as_.Movzxwl(res, asm_memop);
+      break;
+    case Decoder::LoadOperandType::k32bitUnsigned:
+      as_.Movl(res, asm_memop);
+      break;
+    case Decoder::LoadOperandType::k64bit:
+      as_.Movq(res, asm_memop);
+      break;
+    case Decoder::LoadOperandType::k8bitSigned:
+      as_.Movsxbq(res, asm_memop);
+      break;
+    case Decoder::LoadOperandType::k16bitSigned:
+      as_.Movsxwq(res, asm_memop);
+      break;
+    case Decoder::LoadOperandType::k32bitSigned:
+      as_.Movsxlq(res, asm_memop);
+      break;
+    default:
+      Unimplemented();
+      return {};
+  }
+  return res;
+}
+
+void LiteTranslator::Store(Decoder::StoreOperandType operand_type,
+                           Register arg,
+                           int16_t offset,
+                           Register data) {
+  x86_64::Assembler::Operand asm_memop{.base = arg, .disp = offset};
+  switch (operand_type) {
+    case Decoder::StoreOperandType::k8bit:
+      as_.Movb(asm_memop, data);
+      break;
+    case Decoder::StoreOperandType::k16bit:
+      as_.Movw(asm_memop, data);
+      break;
+    case Decoder::StoreOperandType::k32bit:
+      as_.Movl(asm_memop, data);
+      break;
+    case Decoder::StoreOperandType::k64bit:
+      as_.Movq(asm_memop, data);
+      break;
+    default:
+      return Unimplemented();
+  }
 }
 
 }  // namespace berberis

@@ -52,6 +52,24 @@ enum PreferredIntrinsicsImplementation {
 
 #include "berberis/intrinsics/intrinsics-inl.h"  // NOLINT: generated file!
 
+template <typename FloatType,
+          enum PreferredIntrinsicsImplementation kPreferredIntrinsicsImplementation>
+std::tuple<FloatType> FAdd(uint8_t rm, uint8_t frm, FloatType arg1, FloatType arg2) {
+  return intrinsics::ExecuteFloatOperation<FloatType>(
+      rm,
+      frm,
+      [](auto x, auto y) {
+        return std::get<0>(FAddDyn<decltype(x), kPreferredIntrinsicsImplementation>(x, y));
+      },
+      arg1,
+      arg2);
+}
+
+template <typename FloatType, enum PreferredIntrinsicsImplementation>
+std::tuple<FloatType> FAddDyn(FloatType arg1, FloatType arg2) {
+  return {arg1 + arg2};
+}
+
 template <typename FloatType, enum PreferredIntrinsicsImplementation>
 std::tuple<uint64_t> FClass(FloatType arg) {
   using IntType = std::make_unsigned_t<typename TypeTraits<FloatType>::Int>;
@@ -120,7 +138,26 @@ std::tuple<TargetOperandType> FCvtIntegerToFloat(uint8_t /*rm*/,
   return result;
 }
 
+template <typename FloatType,
+          enum PreferredIntrinsicsImplementation kPreferredIntrinsicsImplementation>
+std::tuple<FloatType> FDiv(uint8_t rm, uint8_t frm, FloatType arg1, FloatType arg2) {
+  return intrinsics::ExecuteFloatOperation<FloatType>(
+      rm,
+      frm,
+      [](auto x, auto y) {
+        return std::get<0>(FDivDyn<decltype(x), kPreferredIntrinsicsImplementation>(x, y));
+      },
+      arg1,
+      arg2);
+}
+
 template <typename FloatType, enum PreferredIntrinsicsImplementation>
+std::tuple<FloatType> FDivDyn(FloatType arg1, FloatType arg2) {
+  return {arg1 / arg2};
+}
+
+template <typename FloatType,
+          enum PreferredIntrinsicsImplementation kPreferredIntrinsicsImplementation>
 std::tuple<FloatType> FMAdd(uint8_t rm,
                             uint8_t frm,
                             FloatType arg1,
@@ -129,10 +166,17 @@ std::tuple<FloatType> FMAdd(uint8_t rm,
   return intrinsics::ExecuteFloatOperation<FloatType>(
       rm,
       frm,
-      [](auto x, auto y, auto z) { return intrinsics::MulAdd(x, y, z); },
+      [](auto x, auto y, auto z) {
+        return std::get<0>(FMAddDyn<decltype(x), kPreferredIntrinsicsImplementation>(x, y, z));
+      },
       arg1,
       arg2,
       arg3);
+}
+
+template <typename FloatType, enum PreferredIntrinsicsImplementation>
+std::tuple<FloatType> FMAddDyn(FloatType arg1, FloatType arg2, FloatType arg3) {
+  return {intrinsics::MulAdd(arg1, arg2, arg3)};
 }
 
 template <typename FloatType, enum PreferredIntrinsicsImplementation>
@@ -145,7 +189,49 @@ std::tuple<FloatType> FMin(FloatType x, FloatType y) {
   return {Min(x, y)};
 }
 
+template <typename FloatType,
+          enum PreferredIntrinsicsImplementation kPreferredIntrinsicsImplementation>
+std::tuple<FloatType> FMSub(uint8_t rm,
+                            uint8_t frm,
+                            FloatType arg1,
+                            FloatType arg2,
+                            FloatType arg3) {
+  return intrinsics::ExecuteFloatOperation<FloatType>(
+      rm,
+      frm,
+      [](auto x, auto y, auto z) {
+        return std::get<0>(FMSubDyn<decltype(x), kPreferredIntrinsicsImplementation>(x, y, z));
+      },
+      arg1,
+      arg2,
+      arg3);
+}
+
 template <typename FloatType, enum PreferredIntrinsicsImplementation>
+std::tuple<FloatType> FMSubDyn(FloatType arg1, FloatType arg2, FloatType arg3) {
+  return {intrinsics::MulAdd(arg1, arg2, intrinsics::Negative(arg3))};
+}
+
+template <typename FloatType,
+          enum PreferredIntrinsicsImplementation kPreferredIntrinsicsImplementation>
+std::tuple<FloatType> FMul(uint8_t rm, uint8_t frm, FloatType arg1, FloatType arg2) {
+  return intrinsics::ExecuteFloatOperation<FloatType>(
+      rm,
+      frm,
+      [](auto x, auto y) {
+        return std::get<0>(FMulDyn<decltype(x), kPreferredIntrinsicsImplementation>(x, y));
+      },
+      arg1,
+      arg2);
+}
+
+template <typename FloatType, enum PreferredIntrinsicsImplementation>
+std::tuple<FloatType> FMulDyn(FloatType arg1, FloatType arg2) {
+  return {arg1 * arg2};
+}
+
+template <typename FloatType,
+          enum PreferredIntrinsicsImplementation kPreferredIntrinsicsImplementation>
 std::tuple<FloatType> FNMAdd(uint8_t rm,
                              uint8_t frm,
                              FloatType arg1,
@@ -154,13 +240,21 @@ std::tuple<FloatType> FNMAdd(uint8_t rm,
   return intrinsics::ExecuteFloatOperation<FloatType>(
       rm,
       frm,
-      [](auto x, auto y, auto z) { return intrinsics::MulAdd(intrinsics::Negative(x), y, z); },
+      [](auto x, auto y, auto z) {
+        return std::get<0>(FNMAddDyn<decltype(x), kPreferredIntrinsicsImplementation>(x, y, z));
+      },
       arg1,
       arg2,
       arg3);
 }
 
 template <typename FloatType, enum PreferredIntrinsicsImplementation>
+std::tuple<FloatType> FNMAddDyn(FloatType arg1, FloatType arg2, FloatType arg3) {
+  return {intrinsics::MulAdd(intrinsics::Negative(arg1), arg2, arg3)};
+}
+
+template <typename FloatType,
+          enum PreferredIntrinsicsImplementation kPreferredIntrinsicsImplementation>
 std::tuple<FloatType> FNMSub(uint8_t rm,
                              uint8_t frm,
                              FloatType arg1,
@@ -170,11 +264,16 @@ std::tuple<FloatType> FNMSub(uint8_t rm,
       rm,
       frm,
       [](auto x, auto y, auto z) {
-        return intrinsics::MulAdd(intrinsics::Negative(x), y, intrinsics::Negative(z));
+        return std::get<0>(FNMSubDyn<decltype(x), kPreferredIntrinsicsImplementation>(x, y, z));
       },
       arg1,
       arg2,
       arg3);
+}
+
+template <typename FloatType, enum PreferredIntrinsicsImplementation>
+std::tuple<FloatType> FNMSubDyn(FloatType arg1, FloatType arg2, FloatType arg3) {
+  return {intrinsics::MulAdd(intrinsics::Negative(arg1), arg2, intrinsics::Negative(arg3))};
 }
 
 template <typename FloatType, enum PreferredIntrinsicsImplementation>
@@ -199,19 +298,39 @@ std::tuple<FloatType> FSgnjx(FloatType x, FloatType y) {
   return {bit_cast<FloatType>(bit_cast<UInt>(x) ^ (bit_cast<UInt>(y) & sign_bit))};
 }
 
-template <typename FloatType, enum PreferredIntrinsicsImplementation>
-std::tuple<FloatType> FMSub(uint8_t rm,
-                            uint8_t frm,
-                            FloatType arg1,
-                            FloatType arg2,
-                            FloatType arg3) {
+template <typename FloatType,
+          enum PreferredIntrinsicsImplementation kPreferredIntrinsicsImplementation>
+std::tuple<FloatType> FSqrt(uint8_t rm, uint8_t frm, FloatType arg) {
   return intrinsics::ExecuteFloatOperation<FloatType>(
       rm,
       frm,
-      [](auto x, auto y, auto z) { return intrinsics::MulAdd(x, y, intrinsics::Negative(z)); },
+      [](auto x) {
+        return std::get<0>(FSqrtDyn<decltype(x), kPreferredIntrinsicsImplementation>(x));
+      },
+      arg);
+}
+
+template <typename FloatType, enum PreferredIntrinsicsImplementation>
+std::tuple<FloatType> FSqrtDyn(FloatType arg) {
+  return {Sqrt(arg)};
+}
+
+template <typename FloatType,
+          enum PreferredIntrinsicsImplementation kPreferredIntrinsicsImplementation>
+std::tuple<FloatType> FSub(uint8_t rm, uint8_t frm, FloatType arg1, FloatType arg2) {
+  return intrinsics::ExecuteFloatOperation<FloatType>(
+      rm,
+      frm,
+      [](auto x, auto y) {
+        return std::get<0>(FSubDyn<decltype(x), kPreferredIntrinsicsImplementation>(x, y));
+      },
       arg1,
-      arg2,
-      arg3);
+      arg2);
+}
+
+template <typename FloatType, enum PreferredIntrinsicsImplementation>
+std::tuple<FloatType> FSubDyn(FloatType arg1, FloatType arg2) {
+  return {arg1 - arg2};
 }
 
 }  // namespace intrinsics

@@ -26,6 +26,7 @@ namespace berberis {
 extern "C" {
 
 void berberis_RunGeneratedCode(ThreadState* state, HostCode code);
+void berberis_entry_Interpret();
 void berberis_entry_ExitGeneratedCode();
 void berberis_entry_Stop();
 void berberis_entry_NoExec();
@@ -39,9 +40,12 @@ void berberis_entry_Wrapping();
 static_assert(berberis_entry_NotTranslated != berberis_entry_Translating,
               "code to distinguish entry status got optimized");
 
+__attribute__((__visibility__("hidden"))) void berberis_HandleNoExec(ThreadState* state);
+
 }  // extern "C"
 
 // Inline const since we cannot use constexpr because of reinterpret_cast.
+inline const auto kEntryInterpret = AsHostCode(berberis_entry_Interpret);
 inline const auto kEntryExitGeneratedCode = AsHostCode(berberis_entry_ExitGeneratedCode);
 inline const auto kEntryStop = AsHostCode(berberis_entry_Stop);
 inline const auto kEntryNoExec = AsHostCode(berberis_entry_NoExec);

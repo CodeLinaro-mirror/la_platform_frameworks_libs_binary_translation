@@ -215,18 +215,17 @@ class Interpreter {
 
   Register Amo(Decoder::AmoOpcode opcode, Register arg1, Register arg2, bool aq, bool rl) {
     switch (opcode) {
+      // TODO(b/287347834): Implement reservation semantics when it's added to runtime_primitives.
       case Decoder::AmoOpcode::kLrW:
-        Unimplemented();
-        return {};
+        return Load<int32_t>(ToHostAddr<void>(arg1));
       case Decoder::AmoOpcode::kLrD:
-        Unimplemented();
-        return {};
+        return Load<uint64_t>(ToHostAddr<void>(arg1));
       case Decoder::AmoOpcode::kScW:
-        Unimplemented();
-        return {};
+        Store<uint32_t>(ToHostAddr<void>(arg1), arg2);
+        return 0;
       case Decoder::AmoOpcode::kScD:
-        Unimplemented();
-        return {};
+        Store<uint64_t>(ToHostAddr<void>(arg1), arg2);
+        return 0;
 
       case Decoder::AmoOpcode::kAmoswapW:
         return AtomicExchange<int32_t>(arg1, arg2, aq, rl);
@@ -353,10 +352,10 @@ class Interpreter {
     return {};
   }
 
-  FpRegister Fcvt(Decoder::FcvtOperandType target_operand_size,
-                  Decoder::FloatOperandType source_operand_size,
-                  uint8_t rm,
-                  FpRegister arg) {
+  Register Fcvt(Decoder::FcvtOperandType target_operand_size,
+                Decoder::FloatOperandType source_operand_size,
+                uint8_t rm,
+                FpRegister arg) {
     switch (source_operand_size) {
       case Decoder::FloatOperandType::kFloat:
         switch (target_operand_size) {
@@ -395,7 +394,7 @@ class Interpreter {
   FpRegister Fcvt(Decoder::FloatOperandType target_operand_size,
                   Decoder::FcvtOperandType source_operand_size,
                   uint8_t rm,
-                  FpRegister arg) {
+                  Register arg) {
     switch (target_operand_size) {
       case Decoder::FloatOperandType::kFloat:
         switch (source_operand_size) {
@@ -586,16 +585,31 @@ class Interpreter {
     }
   }
 
-  Register OpFpGpRegisterTarget(Decoder::OpFpGpRegisterTargetOpcode opcode,
-                                Decoder::FloatOperandType float_size,
-                                FpRegister arg1,
-                                FpRegister arg2) {
+  // In 32-bit case we don't care about the upper 32-bits because nan-boxing will clobber them.
+  FpRegister Fmv(Register arg) { return arg; }
+
+  Register Fmv(Decoder::FloatOperandType float_size, FpRegister arg) {
     switch (float_size) {
       case Decoder::FloatOperandType::kFloat:
-        return OpFpGpRegisterTarget<Float32>(
+        return static_cast<int64_t>(static_cast<int32_t>(arg));
+      case Decoder::FloatOperandType::kDouble:
+        return arg;
+      default:
+        Unimplemented();
+        return {};
+    }
+  }
+
+  Register OpFpGpRegisterTargetNoRounding(Decoder::OpFpGpRegisterTargetNoRoundingOpcode opcode,
+                                          Decoder::FloatOperandType float_size,
+                                          FpRegister arg1,
+                                          FpRegister arg2) {
+    switch (float_size) {
+      case Decoder::FloatOperandType::kFloat:
+        return OpFpGpRegisterTargetNoRounding<Float32>(
             opcode, FPRegToFloat<Float32>(arg1), FPRegToFloat<Float32>(arg2));
       case Decoder::FloatOperandType::kDouble:
-        return OpFpGpRegisterTarget<Float64>(
+        return OpFpGpRegisterTargetNoRounding<Float64>(
             opcode, FPRegToFloat<Float64>(arg1), FPRegToFloat<Float64>(arg2));
       default:
         Unimplemented();
@@ -684,15 +698,15 @@ class Interpreter {
   }
 
   template <typename FloatType>
-  Register OpFpGpRegisterTarget(Decoder::OpFpGpRegisterTargetOpcode opcode,
-                                FloatType arg1,
-                                FloatType arg2) {
+  Register OpFpGpRegisterTargetNoRounding(Decoder::OpFpGpRegisterTargetNoRoundingOpcode opcode,
+                                          FloatType arg1,
+                                          FloatType arg2) {
     switch (opcode) {
-      case Decoder::OpFpGpRegisterTargetOpcode::kFle:
+      case Decoder::OpFpGpRegisterTargetNoRoundingOpcode::kFle:
         return arg1 <= arg2;
-      case Decoder::OpFpGpRegisterTargetOpcode::kFlt:
+      case Decoder::OpFpGpRegisterTargetNoRoundingOpcode::kFlt:
         return arg1 < arg2;
-      case Decoder::OpFpGpRegisterTargetOpcode::kFeq:
+      case Decoder::OpFpGpRegisterTargetNoRoundingOpcode::kFeq:
         return arg1 == arg2;
       default:
         Unimplemented();
@@ -805,7 +819,10 @@ class Interpreter {
     }
   }
 
-  void Branch(Decoder::BranchOpcode opcode, Register arg1, Register arg2, int16_t offset) {
+  void CompareAndBranch(Decoder::BranchOpcode opcode,
+                        Register arg1,
+                        Register arg2,
+                        int16_t offset) {
     bool cond_value;
     switch (opcode) {
       case Decoder::BranchOpcode::kBeq:
@@ -836,19 +853,14 @@ class Interpreter {
     }
   }
 
-  Register JumpAndLink(int32_t offset, uint8_t insn_len) {
-    uint64_t pc = state_->cpu.insn_addr;
+  void Branch(int32_t offset) {
     state_->cpu.insn_addr += offset;
     branch_taken_ = true;
-    return pc + insn_len;
   }
 
-  Register JumpAndLinkRegister(Register base, int16_t offset, uint8_t insn_len) {
-    uint64_t pc = state_->cpu.insn_addr;
-    // The lowest bit is always zeroed out.
+  void BranchRegister(Register base, int16_t offset) {
     state_->cpu.insn_addr = (base + offset) & ~uint64_t{1};
     branch_taken_ = true;
-    return pc + insn_len;
   }
 
   void Nop() {}
@@ -936,6 +948,8 @@ class Interpreter {
   //
 
   uint64_t GetImm(uint64_t imm) const { return imm; }
+
+  GuestAddr GetInsnAddr() const { return state_->cpu.insn_addr; }
 
   void FinalizeInsn(uint8_t insn_len) {
     if (!branch_taken_) {

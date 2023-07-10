@@ -22,6 +22,7 @@
 #include "berberis/assembler/common.h"
 #include "berberis/assembler/x86_64.h"
 #include "berberis/base/checks.h"
+#include "berberis/base/dependent_false.h"
 #include "berberis/base/macros.h"
 #include "berberis/decoder/riscv64/decoder.h"
 #include "berberis/decoder/riscv64/semantics_player.h"
@@ -31,8 +32,10 @@
 #include "berberis/intrinsics/intrinsics_float.h"
 #include "berberis/intrinsics/macro_assembler.h"
 #include "berberis/lite_translator/lite_translate_region.h"
+#include "berberis/runtime_primitives/platform.h"
 
 #include "allocator.h"
+#include "call_intrinsic.h"
 
 namespace berberis {
 
@@ -139,15 +142,16 @@ class LiteTranslator {
     return {};
   }
 
-  FpRegister LoadFp(Decoder::FloatOperandType opcode, Register arg, int16_t offset) {
-    UNUSED(opcode, arg, offset);
-    Unimplemented();
-    return {};
+  template <typename DataType>
+  FpRegister LoadFp(Register arg, int16_t offset) {
+    FpRegister res = AllocTempSimdReg();
+    as_.Movs<DataType>(res, {.base = arg, .disp = offset});
+    return res;
   }
 
-  void StoreFp(Decoder::FloatOperandType opcode, Register arg, int16_t offset, FpRegister data) {
-    UNUSED(opcode, arg, offset, data);
-    Unimplemented();
+  template <typename DataType>
+  void StoreFp(Register arg, int16_t offset, FpRegister data) {
+    as_.Movs<DataType>({.base = arg, .disp = offset}, data);
   }
 
   Register Csr(Decoder::CsrOpcode opcode, Register arg, Decoder::CsrRegister csr) {
@@ -299,9 +303,21 @@ class LiteTranslator {
 
  private:
   template <auto kFunction, typename AssemblerResType, typename... AssemblerArgType>
-  AssemblerResType CallIntrinsic(AssemblerArgType...) {
-    Unimplemented();
-    return {};
+  AssemblerResType CallIntrinsic(AssemblerArgType... args) {
+    AssemblerResType result;
+    if constexpr (std::is_same_v<AssemblerResType, Register>) {
+      result = AllocTempReg();
+    } else if constexpr (std::is_same_v<AssemblerResType, SimdRegister>) {
+      result = AllocTempSimdReg();
+    } else {
+      // This should not be reached by the compiler. If it is - there is a new result type that
+      // needs to be supported.
+      static_assert(kDependentTypeFalse<AssemblerResType>, "Unsupported result type");
+    }
+
+    call_intrinsic::CallIntrinsic<AssemblerResType>(as_, kFunction, result, args...);
+
+    return result;
   }
 
   Register AllocTempReg() {

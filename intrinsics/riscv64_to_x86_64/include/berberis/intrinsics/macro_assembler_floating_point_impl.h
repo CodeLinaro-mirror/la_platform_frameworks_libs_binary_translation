@@ -14,36 +14,14 @@
  * limitations under the License.
  */
 
-#ifndef RISCV64_TO_X86_64_BERBERIS_INTRINSICS_MACRO_ASSEMBLER_IMPL_H_
-#define RISCV64_TO_X86_64_BERBERIS_INTRINSICS_MACRO_ASSEMBLER_IMPL_H_
+#ifndef RISCV64_TO_X86_64_BERBERIS_INTRINSICS_MACRO_ASSEMBLER_FLOATING_POINT_IMPL_H_
+#define RISCV64_TO_X86_64_BERBERIS_INTRINSICS_MACRO_ASSEMBLER_FLOATING_POINT_IMPL_H_
 
 #include "berberis/base/bit_util.h"
 #include "berberis/intrinsics/macro_assembler.h"
+#include "berberis/intrinsics/macro_assembler_constants_pool.h"
 
 namespace berberis {
-
-namespace constants_pool {
-
-// Constant suitable for NaN boxing of RISC-V 32bit float with PXor.
-// Note: technically we only need to Nan-box Float32 since we don't support Float16 yet.
-template <typename FloatType>
-extern const int32_t kNanBox;
-template <>
-extern const int32_t kNanBox<intrinsics::Float32>;
-template <typename FloatType>
-extern const int32_t kNanBoxedNans;
-template <>
-extern const int32_t kNanBoxedNans<intrinsics::Float32>;
-template <typename FloatType>
-extern const int32_t kCanonicalNans;
-
-// Canonical NaNs. Float32 and Float64 are supported.
-template <>
-extern const int32_t kCanonicalNans<intrinsics::Float32>;
-template <>
-extern const int32_t kCanonicalNans<intrinsics::Float64>;
-
-}  // namespace constants_pool
 
 template <typename Assembler>
 template <typename FloatType>
@@ -69,7 +47,7 @@ template <typename FloatType>
 void MacroAssembler<Assembler>::MacroFeq(Register result, XMMRegister src1, XMMRegister src2) {
   Cmpeqs<FloatType>(src1, src2);
   Mov<FloatType>(result, src1);
-  Andl(result, 1);
+  And<int32_t>(result, 1);
 }
 
 template <typename Assembler>
@@ -80,7 +58,7 @@ void MacroAssembler<Assembler>::MacroFeqAVX(Register result,
                                             XMMRegister tmp) {
   Vcmpeqs<FloatType>(tmp, src1, src2);
   Mov<FloatType>(result, tmp);
-  Andl(result, 1);
+  And<int32_t>(result, 1);
 }
 
 template <typename Assembler>
@@ -88,7 +66,7 @@ template <typename FloatType>
 void MacroAssembler<Assembler>::MacroFle(Register result, XMMRegister src1, XMMRegister src2) {
   Cmples<FloatType>(src1, src2);
   Mov<FloatType>(result, src1);
-  Andl(result, 1);
+  And<int32_t>(result, 1);
 }
 
 template <typename Assembler>
@@ -99,7 +77,7 @@ void MacroAssembler<Assembler>::MacroFleAVX(Register result,
                                             XMMRegister tmp) {
   Vcmples<FloatType>(tmp, src1, src2);
   Mov<FloatType>(result, tmp);
-  Andl(result, 1);
+  And<int32_t>(result, 1);
 }
 
 template <typename Assembler>
@@ -107,7 +85,7 @@ template <typename FloatType>
 void MacroAssembler<Assembler>::MacroFlt(Register result, XMMRegister src1, XMMRegister src2) {
   Cmplts<FloatType>(src1, src2);
   Mov<FloatType>(result, src1);
-  Andl(result, 1);
+  And<int32_t>(result, 1);
 }
 
 template <typename Assembler>
@@ -118,7 +96,7 @@ void MacroAssembler<Assembler>::MacroFltAVX(Register result,
                                             XMMRegister tmp) {
   Vcmplts<FloatType>(tmp, src1, src2);
   Mov<FloatType>(result, tmp);
-  Andl(result, 1);
+  And<int32_t>(result, 1);
 }
 
 template <typename Assembler>
@@ -165,4 +143,4 @@ void MacroAssembler<Assembler>::MacroUnboxNanAVX(XMMRegister result, XMMRegister
 
 }  // namespace berberis
 
-#endif  // RISCV64_TO_X86_64_BERBERIS_INTRINSICS_MACRO_ASSEMBLER_IMPL_H_
+#endif  // RISCV64_TO_X86_64_BERBERIS_INTRINSICS_MACRO_ASSEMBLER_FLOATING_POINT_IMPL_H_

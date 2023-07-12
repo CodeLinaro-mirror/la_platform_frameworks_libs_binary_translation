@@ -162,6 +162,13 @@ class EAX {
   [[maybe_unused]] static constexpr char kAsRegister = 'a';
 };
 
+class RAX {
+ public:
+  using Type = uint64_t;
+  [[maybe_unused]] static constexpr bool kIsImplicitReg = true;
+  [[maybe_unused]] static constexpr char kAsRegister = 'a';
+};
+
 class ECX {
  public:
   using Type = uint32_t;
@@ -200,6 +207,13 @@ class GeneralReg8 {
 class GeneralReg32 {
  public:
   using Type = uint32_t;
+  [[maybe_unused]] static constexpr bool kIsImplicitReg = false;
+  [[maybe_unused]] static constexpr char kAsRegister = 'r';
+};
+
+class GeneralReg64 {
+ public:
+  using Type = uint64_t;
   [[maybe_unused]] static constexpr bool kIsImplicitReg = false;
   [[maybe_unused]] static constexpr char kAsRegister = 'r';
 };

@@ -69,7 +69,9 @@ class LiteTranslator {
   Register Op32(Decoder::Op32Opcode opcode, Register arg1, Register arg2);
   Register OpImm(Decoder::OpImmOpcode opcode, Register arg, int16_t imm);
   Register OpImm32(Decoder::OpImm32Opcode opcode, Register arg, int16_t imm);
-  Register ShiftImm(Decoder::ShiftImmOpcode opcode, Register arg, uint16_t imm);
+  Register Slli(Register arg, int8_t imm);
+  Register Srli(Register arg, int8_t imm);
+  Register Srai(Register arg, int8_t imm);
   Register ShiftImm32(Decoder::ShiftImm32Opcode opcode, Register arg, uint16_t imm);
   Register Lui(int32_t imm);
   Register Auipc(int32_t imm);
@@ -80,12 +82,6 @@ class LiteTranslator {
   void ExitRegionIndirect(Register target);
   void Store(Decoder::StoreOperandType operand_type, Register arg, int16_t offset, Register data);
   Register Load(Decoder::LoadOperandType operand_type, Register arg, int16_t offset);
-
-  Register Amo(Decoder::AmoOpcode opcode, Register arg1, Register arg2, bool aq, bool rl) {
-    UNUSED(opcode, arg1, arg2, aq, rl);
-    Unimplemented();
-    return {};
-  }
 
   Register Ecall(Register syscall_nr,
                  Register arg0,

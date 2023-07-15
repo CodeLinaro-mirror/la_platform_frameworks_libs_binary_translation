@@ -718,14 +718,19 @@ def _get_reg_operand_info(arg, info_prefix=None):
 
 def _gen_make_intrinsics(f, intrs):
   print("""%s
-void MakeIntrinsics(FILE* out) {
-  using MacroAssembler = MacroAssembler<TextAssembler>;
-  namespace OperandClass = x86::OperandClass;
-  std::unique_ptr<GenerateAsmCallBase> asm_call_generators[] = {""" % AUTOGEN, file=f)
+template <typename MacroAssembler,
+          typename OperandClass,
+          typename... Args>
+void ProcessAllBindings(Args&&... args) {
+  ProcessBindings(
+      std::forward<Args>(args)...""" % AUTOGEN, end="", file=f)
   for line in _gen_c_intrinsics_generator(intrs):
-    print(line, file=f)
-  print("""  };
-  GenerateAsmCalls(out, std::forward<decltype(asm_call_generators)>(asm_call_generators));
+    if line.startswith(','):
+      print(',\n'+line[1:], end='', file=f)
+    else:
+      print('\n'+line, end='', file=f)
+  print("""
+  );
 }""", file=f)
 
 
@@ -746,7 +751,8 @@ def _gen_c_intrinsics_generator(intrs):
       # Note: not all variants are guaranteed to have asm version!
       # If that happens list of intr_asms for that variant would be empty.
       variants = [(desc, [
-          intr_asm for intr_asm in intr['asm'] if fmt in intr_asm['variants']
+          intr_asm for intr_asm in _gen_sorted_asms(intr)
+          if fmt in intr_asm['variants']
       ]) for fmt, desc in variants]
       # Print intrinsic generator
       for desc, intr_asms in variants:
@@ -759,9 +765,34 @@ def _gen_c_intrinsics_generator(intrs):
             for line in _gen_c_intrinsic('%s<%s>' % (name, spec), intr, intr_asm):
               yield line
     else:
-      for intr_asm in intr['asm']:
+      for intr_asm in _gen_sorted_asms(intr):
         for line in _gen_c_intrinsic(name, intr, intr_asm):
           yield line
+
+
+def _gen_sorted_asms(intr):
+  return sorted(intr['asm'],
+    key = lambda intr:
+        intr.get('nan', '') +
+      _KNOWN_FEATURES_KEYS.get(
+        intr.get('feature', ''), intr.get('feature', '')), reverse = True)
+
+_KNOWN_FEATURES_KEYS = {
+  'LZCNT': '001',
+  'BMI': '002',
+  'BMI2': '003',
+  'SSE': '010',
+  'SSE2': '011',
+  'SSE3': '012',
+  'SSSE3': '013',
+  'SSE4a': '014',
+  'SSE4_1': '015',
+  'SSE4_2': '016',
+  'AVX': '017',
+  'AVX2': '018',
+  'FMA': '019',
+  'FMA4': '020'
+}
 
 
 MAX_GENERATED_LINE_LENGTH = 100
@@ -771,20 +802,20 @@ def _gen_c_intrinsic(name, intr, asm):
   if not _is_interpreter_compatible_assembler(asm):
     return
 
-  sse_restriction = 'GenerateAsmCallBase::kNoSSERestriction'
+  cpuid_restriction = 'GenerateAsmCallBase::kNoCPUIDRestriction'
   if 'feature' in asm:
     if asm['feature'] == 'AuthenticAMD':
-      sse_restriction = 'GenerateAsmCallBase::kIsAuthenticAMD'
+      cpuid_restriction = 'GenerateAsmCallBase::kIsAuthenticAMD'
     else:
-      sse_restriction = 'GenerateAsmCallBase::kHas%s' % asm['feature']
+      cpuid_restriction = 'GenerateAsmCallBase::kHas%s' % asm['feature']
 
   nan_restriction = 'GenerateAsmCallBase::kNoNansOperation'
   if 'nan' in asm:
     nan_restriction = 'GenerateAsmCallBase::k%sNanOperationsHandling' % asm['nan']
 
-  restriction = [sse_restriction, nan_restriction]
+  restriction = [cpuid_restriction, nan_restriction]
 
-  yield '      std::unique_ptr<GenerateAsmCallBase>('
+  yield ',      std::unique_ptr<GenerateAsmCallBase>('
 
   def get_c_type_tuple(arguments):
     return 'std::tuple<%s>' % ', '.join(
@@ -795,21 +826,24 @@ def _gen_c_intrinsic(name, intr, asm):
     ',\n                              '.join(
         ['true' if _intr_has_side_effects(intr) else 'false'] +
         [get_c_type_tuple(intr['in'])] + [get_c_type_tuple(intr['out'])] +
-        [_get_reg_operand_info(arg, 'OperandClass')
+        [_get_reg_operand_info(arg, 'typename OperandClass')
          for arg in asm['args']]))
 
-  one_line = '              out, &MacroAssembler::%s, %s)),' % (
-      asm['asm'], ', '.join(['"%s"' % name] + restriction))
+  one_line = '              &MacroAssembler::%s%s, %s))' % (
+      'template ' if '<' in asm['asm'] else '',
+      asm['asm'],
+      ', '.join(['INTRINSIC_FUNCTION_NAME((%s))' % name] + restriction))
   if len(one_line) <= MAX_GENERATED_LINE_LENGTH:
     yield one_line
     return
 
-  yield '              out,'
-  yield '              &MacroAssembler::%s,' % asm['asm']
-  values = ['"%s"' % name] + restriction
+  yield '              &MacroAssembler::%s%s,' % (
+      'template ' if '<' in asm['asm'] else '',
+      asm['asm'])
+  values = ['INTRINSIC_FUNCTION_NAME((%s))' % name] + restriction
   for index, value in enumerate(values):
     if index + 1 == len(values):
-      yield '              %s)),' % value
+      yield '              %s))' % value
     else:
       yield '              %s,' % value
 

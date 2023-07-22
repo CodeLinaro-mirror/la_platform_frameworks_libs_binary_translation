@@ -210,7 +210,7 @@ void GenerateInShadows(FILE* out, int indent) {
         if constexpr (std::is_integral_v<Type> && sizeof(Type) < sizeof(int32_t)) {
           fprintf(
               out, "%2$*1$suint32_t in%3$d_expanded = in%3$d;\n", indent, "", arg.arg_info.from);
-          type_name = TypeTraits<uint64_t>::kName;
+          type_name = TypeTraits<uint32_t>::kName;
           xmm_type_name =
               TypeTraits<typename TypeTraits<typename TypeTraits<uint32_t>::Float>::Raw>::kName;
           expanded = "_expanded";
@@ -324,6 +324,7 @@ auto CallTextAssembler(FILE* out, int indent, int* register_numbers) {
                      })));
   // Verify CPU vendor and SSE restrictions.
   bool expect_lzcnt = false;
+  bool expect_bmi = false;
   bool expect_sse3 = false;
   bool expect_ssse3 = false;
   bool expect_sse4_1 = false;
@@ -334,6 +335,9 @@ auto CallTextAssembler(FILE* out, int indent, int* register_numbers) {
   switch (AsmCallInfo::kCPUIDRestriction) {
     case intrinsics::bindings::kHasLZCNT:
       expect_lzcnt = true;
+      break;
+    case intrinsics::bindings::kHasBMI:
+      expect_bmi = true;
       break;
     case intrinsics::bindings::kHasFMA:
     case intrinsics::bindings::kHasFMA4:
@@ -362,6 +366,7 @@ auto CallTextAssembler(FILE* out, int indent, int* register_numbers) {
     case intrinsics::bindings::kNoCPUIDRestriction:;  // Do nothing - make compiler happy.
   }
   CHECK_EQ(expect_lzcnt, as.need_lzcnt);
+  CHECK_EQ(expect_bmi, as.need_bmi);
   CHECK_EQ(expect_sse3, as.need_sse3);
   CHECK_EQ(expect_ssse3, as.need_ssse3);
   CHECK_EQ(expect_sse4_1, as.need_sse4_1);
@@ -611,6 +616,9 @@ void GenerateTextAsmIntrinsics(FILE* out) {
                 break;
               case intrinsics::bindings::kHasLZCNT:
                 fprintf(out, "host_platform::kHasLZCNT");
+                break;
+              case intrinsics::bindings::kHasBMI:
+                fprintf(out, "host_platform::kHasBMI");
                 break;
               case intrinsics::bindings::kHasSSE3:
                 fprintf(out, "host_platform::kHasSSE3");

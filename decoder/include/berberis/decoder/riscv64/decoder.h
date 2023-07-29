@@ -177,6 +177,10 @@ class Decoder {
     kMaxValue = 0b11'11111,
   };
 
+  enum class OpFpSingleInputNoRoundingOpcode {
+    kFmv,
+  };
+
   enum class OpImmOpcode {
     kAddi = 0b000,
     kSlti = 0b010,
@@ -208,6 +212,7 @@ class Decoder {
 
   enum class BitmanipImmOpcode {
     kClz = 0b0110000'00000'001,
+    kCpop = 0b0110000'00010'001,
     kCtz = 0b0110000'00001'001,
     kRori = 0b011000'101,
     kMaxValue = 0b111111'111111'111,
@@ -215,6 +220,7 @@ class Decoder {
 
   enum class BitmanipImm32Opcode {
     kClzw = 0b0110000'00000'001,
+    kCpopw = 0b0110000'00010'001,
     kCtzw = 0b0110000'00001'001,
     kRoriw = 0b0110000'101,
     kMaxValue = 0b1111111'111111'111,
@@ -447,6 +453,13 @@ class Decoder {
     uint8_t dst;
     uint8_t src;
     uint8_t rm;
+  };
+
+  struct OpFpSingleInputNoRoundingArgs {
+    OpFpSingleInputNoRoundingOpcode opcode;
+    FloatOperandType operand_type;
+    uint8_t dst;
+    uint8_t src;
   };
 
   template <typename OpcodeType>
@@ -1339,9 +1352,18 @@ class Decoder {
         return insn_consumer_->OpFp(args);
       }
       case 0b001: {
-        uint8_t opcode = (opcode_bits << 3) + rm;
+        OpFpNoRoundingOpcode no_rounding_opcode = OpFpNoRoundingOpcode((opcode_bits << 3) + rm);
+        if (no_rounding_opcode == Decoder::OpFpNoRoundingOpcode::kFSgnj && rs1 == rs2) {
+          const OpFpSingleInputNoRoundingArgs args = {
+              .opcode = OpFpSingleInputNoRoundingOpcode::kFmv,
+              .operand_type = FloatOperandType(operand_type),
+              .dst = rd,
+              .src = rs1,
+          };
+          return insn_consumer_->OpFpSingleInputNoRounding(args);
+        }
         const OpFpNoRoundingArgs args = {
-            .opcode = OpFpNoRoundingOpcode(opcode),
+            .opcode = no_rounding_opcode,
             .operand_type = FloatOperandType(operand_type),
             .dst = rd,
             .src1 = rs1,

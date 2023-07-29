@@ -597,6 +597,21 @@ class SemanticsPlayer {
     }
   }
 
+  void OpFpSingleInputNoRounding(const typename Decoder::OpFpSingleInputNoRoundingArgs& args) {
+    FpRegister arg = GetFRegAndUnboxNan(args.src, args.operand_type);
+    FpRegister result;
+    switch (args.opcode) {
+      case Decoder::OpFpSingleInputNoRoundingOpcode::kFmv:
+        result = listener_->Fmv(arg);
+        break;
+      default:
+        Unimplemented();
+        return;
+    }
+    result = CanonicalizeNan(result, args.operand_type);
+    NanBoxAndSetFpReg(args.dst, result, args.operand_type);
+  }
+
   template <typename OpImmArgs>
   void OpImm(OpImmArgs&& args) {
     Register arg = GetRegOrZero(args.src);
@@ -626,6 +641,8 @@ class SemanticsPlayer {
                                    switch (args.opcode) {
                                      case Decoder::BitmanipImmOpcode::kClz:
                                        return listener_->template Clz<int64_t>(arg);
+                                     case Decoder::BitmanipImmOpcode::kCpop:
+                                       return listener_->template Cpop<int64_t>(arg);
                                      case Decoder::BitmanipImmOpcode::kCtz:
                                        return listener_->template Ctz<int64_t>(arg);
                                      case Decoder::BitmanipImmOpcode::kRori:
@@ -639,6 +656,8 @@ class SemanticsPlayer {
                                    switch (args.opcode) {
                                      case Decoder::BitmanipImm32Opcode::kClzw:
                                        return listener_->template Clz<int32_t>(arg);
+                                     case Decoder::BitmanipImm32Opcode::kCpopw:
+                                       return listener_->template Cpop<int32_t>(arg);
                                      case Decoder::BitmanipImm32Opcode::kCtzw:
                                        return listener_->template Ctz<int32_t>(arg);
                                      case Decoder::BitmanipImm32Opcode::kRoriw:

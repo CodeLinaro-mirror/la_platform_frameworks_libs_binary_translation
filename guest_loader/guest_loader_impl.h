@@ -17,8 +17,13 @@
 #ifndef BERBERIS_GUEST_LOADER_GUEST_LOADER_IMPL_H_
 #define BERBERIS_GUEST_LOADER_GUEST_LOADER_IMPL_H_
 
+#include <cstddef>  // size_t
+#include <cstdint>  // uint8_t
+
 #include "berberis/base/stringprintf.h"
+#include "berberis/guest_abi/guest_function_wrapper.h"
 #include "berberis/guest_abi/guest_type.h"
+#include "berberis/guest_state/guest_addr.h"
 #include "berberis/guest_state/guest_state_opaque.h"
 #include "berberis/runtime_primitives/host_code.h"
 #include "berberis/tiny_loader/loaded_elf_file.h"
@@ -30,16 +35,18 @@ namespace berberis {
 extern const char* kAppProcessPath;
 extern const char* kPtInterpPath;
 extern const char* kVdsoPath;
+extern const char* kProxyPrefix;
 
-void StartExecutable(size_t argc,
-                     const char* argv[],
-                     char* envp[],
-                     GuestAddr linker_base_addr,
-                     GuestAddr entry_point,
-                     GuestAddr main_executable_entry_point,
-                     GuestAddr phdr,
-                     size_t phdr_count,
-                     GuestAddr ehdr_vdso);
+GuestAddr InitKernelArgs(GuestAddr guest_sp,
+                         size_t argc,
+                         const char* argv[],
+                         char* envp[],
+                         GuestAddr linker_base_addr,
+                         GuestAddr main_executable_entry_point,
+                         GuestAddr phdr,
+                         size_t phdr_count,
+                         GuestAddr ehdr_vdso,
+                         const uint8_t (*random_bytes)[16]);
 
 bool MakeElfSymbolTrampolineCallable(const LoadedElfFile& elf_file,
                                      const char* elf_file_label,
@@ -64,7 +71,7 @@ void InitLinkerDebug(const LoadedElfFile& linker_elf_file);
 template <typename T>
 bool FindSymbol(const LoadedElfFile& elf_file,
                 const char* symbol_name,
-                T* /* fn */,
+                T* fn,
                 std::string* error_msg) {
   T guest_fn = reinterpret_cast<T>(elf_file.FindSymbol(symbol_name));
   if (guest_fn == nullptr) {
@@ -72,8 +79,7 @@ bool FindSymbol(const LoadedElfFile& elf_file,
     return false;
   }
 
-  // TODO(279068747): Uncomment when available.
-  // *fn = WrapGuestFunction(GuestType(guest_fn), symbol_name);
+  *fn = WrapGuestFunction(GuestType(guest_fn), symbol_name);
 
   return true;
 }

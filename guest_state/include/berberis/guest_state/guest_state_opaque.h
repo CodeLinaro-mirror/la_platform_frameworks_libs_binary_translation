@@ -63,7 +63,7 @@ GuestAddr GetStackRegister(CPUState* cpu);
 
 void SetLinkRegister(CPUState* cpu, GuestAddr val);
 
-GuestAddr GetLinkRegister(const CPUState* cpu);
+GuestAddr GetLinkRegister(const CPUState& cpu);
 
 void SetInsnAddr(CPUState* cpu, GuestAddr addr);
 
@@ -71,6 +71,12 @@ GuestAddr GetInsnAddr(const CPUState* cpu);
 
 // TODO(b/28058920): Refactor into GuestThread.
 bool ArePendingSignalsPresent(const ThreadState* state);
+
+void SetTlsAddr(ThreadState*, GuestAddr addr);
+
+GuestAddr GetTlsAddr(const ThreadState& cpu);
+
+void InitFloatingPointState();
 
 }  // namespace berberis
 

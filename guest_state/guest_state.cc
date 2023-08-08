@@ -19,7 +19,7 @@
 #include "berberis/base/checks.h"
 #include "berberis/base/mmap.h"
 #include "berberis/guest_state/guest_addr.h"
-#include "berberis/guest_state/guest_state_riscv64.h"
+#include "berberis/guest_state/guest_state.h"
 
 #include <atomic>   // std::memory_order_relaxed
 #include <cstddef>  // size_t
@@ -36,11 +36,11 @@ void InitThreadState(ThreadState* state) {
   // This is needed to set all flag values to 0.
   memset(&(state->cpu), 0, sizeof(CPUState));
 
-  // TODO(b/281864904): Add architecture-defined hook for initializing host MXCSR.
+  InitFloatingPointState();
 
   // ATTENTION: Set fields specific for current thread when actually attaching to host thread!
   state->thread = nullptr;
-  // TODO(b/281864904): Initialize TLS pointer to zero here.
+  SetTlsAddr(state, 0);
 
   state->pending_signals_status.store(kPendingSignalsDisabled, std::memory_order_relaxed);
   state->residence = kOutsideGeneratedCode;
@@ -93,18 +93,6 @@ bool ArePendingSignalsPresent(const ThreadState* state) {
 
 CPUState* GetCPUState(ThreadState* state) {
   return &state->cpu;
-}
-
-void SetStackRegister(CPUState* cpu, GuestAddr val) {
-  SetXReg<SP>(*cpu, val);
-}
-
-void SetLinkRegister(CPUState* cpu, GuestAddr val) {
-  SetXReg<RA>(*cpu, val);
-}
-
-GuestAddr GetLinkRegister(const CPUState* cpu) {
-  return GetXReg<RA>(*cpu);
 }
 
 void SetInsnAddr(CPUState* cpu, GuestAddr addr) {

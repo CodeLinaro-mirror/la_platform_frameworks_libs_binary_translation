@@ -26,7 +26,10 @@
 #include "berberis/decoder/riscv64/decoder.h"
 #include "berberis/decoder/riscv64/semantics_player.h"
 #include "berberis/guest_state/guest_addr.h"
-#include "berberis/guest_state/guest_state_riscv64.h"
+#include "berberis/guest_state/guest_state.h"
+#include "berberis/intrinsics/intrinsics.h"
+#include "berberis/intrinsics/intrinsics_float.h"
+#include "berberis/intrinsics/macro_assembler.h"
 #include "berberis/lite_translator/lite_translate_region.h"
 
 namespace berberis {
@@ -35,13 +38,21 @@ class MachindeCode;
 
 class LiteTranslator {
  public:
+  using Assembler = MacroAssembler<x86_64::Assembler>;
   using Decoder = Decoder<SemanticsPlayer<LiteTranslator>>;
-  using Register = x86_64::Assembler::Register;
-  using FpRegister = x86_64::Assembler::XMMRegister;
-  using Condition = x86_64::Assembler::Condition;
+  using Register = Assembler::Register;
+  using FpRegister = Assembler::XMMRegister;
+  using Condition = Assembler::Condition;
+  using Float32 = intrinsics::Float32;
+  using Float64 = intrinsics::Float64;
 
   explicit LiteTranslator(MachineCode* machine_code, GuestAddr pc, LiteTranslateParams& params)
-      : as_(machine_code), success_(true), next_gp_reg_for_alloc_(0), pc_(pc), params_(params){};
+      : as_(machine_code),
+        success_(true),
+        next_gp_reg_for_alloc_(0),
+        pc_(pc),
+        params_(params),
+        is_region_end_reached_(false){};
 
   //
   // Instruction implementations.
@@ -103,48 +114,11 @@ class LiteTranslator {
   // F and D extensions.
   //
 
-  FpRegister OpFp(Decoder::OpFpOpcode opcode,
-                  Decoder::FloatOperandType float_size,
-                  uint8_t rm,
-                  FpRegister arg1,
-                  FpRegister arg2) {
-    UNUSED(opcode, float_size, rm, arg1, arg2);
-    Unimplemented();
-    return {};
-  }
-
-  FpRegister OpFpNoRounding(Decoder::OpFpNoRoundingOpcode opcode,
-                            Decoder::FloatOperandType float_size,
-                            FpRegister arg1,
-                            FpRegister arg2) {
-    UNUSED(opcode, float_size, arg1, arg2);
-    Unimplemented();
-    return {};
-  }
-
   Register OpFpGpRegisterTargetNoRounding(Decoder::OpFpGpRegisterTargetNoRoundingOpcode opcode,
                                           Decoder::FloatOperandType float_size,
                                           FpRegister arg1,
                                           FpRegister arg2) {
     UNUSED(opcode, float_size, arg1, arg2);
-    Unimplemented();
-    return {};
-  }
-
-  Register OpFpGpRegisterTargetSingleInputNoRounding(
-      Decoder::OpFpGpRegisterTargetSingleInputNoRoundingOpcode opcode,
-      Decoder::FloatOperandType float_size,
-      FpRegister arg) {
-    UNUSED(opcode, float_size, arg);
-    Unimplemented();
-    return {};
-  }
-
-  FpRegister OpFpSingleInput(Decoder::OpFpSingleInputOpcode opcode,
-                             Decoder::FloatOperandType float_size,
-                             uint8_t rm,
-                             FpRegister arg) {
-    UNUSED(opcode, float_size, rm, arg);
     Unimplemented();
     return {};
   }
@@ -157,44 +131,6 @@ class LiteTranslator {
 
   Register Fmv(Decoder::FloatOperandType float_size, FpRegister arg) {
     UNUSED(float_size, arg);
-    Unimplemented();
-    return {};
-  }
-
-  FpRegister Fcvt(Decoder::FloatOperandType target_operand_size,
-                  Decoder::FloatOperandType source_operand_size,
-                  uint8_t rm,
-                  FpRegister arg) {
-    UNUSED(target_operand_size, source_operand_size, rm, arg);
-    Unimplemented();
-    return {};
-  }
-
-  Register Fcvt(Decoder::FcvtOperandType target_operand_size,
-                Decoder::FloatOperandType source_operand_size,
-                uint8_t rm,
-                FpRegister arg) {
-    UNUSED(target_operand_size, source_operand_size, rm, arg);
-    Unimplemented();
-    return {};
-  }
-
-  FpRegister Fcvt(Decoder::FloatOperandType target_operand_size,
-                  Decoder::FcvtOperandType source_operand_size,
-                  uint8_t rm,
-                  Register arg) {
-    UNUSED(target_operand_size, source_operand_size, rm, arg);
-    Unimplemented();
-    return {};
-  }
-
-  FpRegister Fma(Decoder::FmaOpcode opcode,
-                 Decoder::FloatOperandType float_size,
-                 uint8_t rm,
-                 FpRegister arg1,
-                 FpRegister arg2,
-                 FpRegister arg3) {
-    UNUSED(opcode, float_size, rm, arg1, arg2, arg3);
     Unimplemented();
     return {};
   }
@@ -277,7 +213,12 @@ class LiteTranslator {
   // Various helper methods.
   //
 
-  Register GetImm(uint64_t imm) {
+  [[nodiscard]] Register GetFrm() {
+    Unimplemented();
+    return {};
+  }
+
+  [[nodiscard]] Register GetImm(uint64_t imm) {
     Register imm_reg = AllocTempReg();
     as_.Movq(imm_reg, imm);
     return imm_reg;
@@ -285,34 +226,49 @@ class LiteTranslator {
 
   void Unimplemented() { success_ = false; }
 
-  x86_64::Assembler* as() { return &as_; }
-  bool success() const { return success_; }
+  [[nodiscard]] Assembler* as() { return &as_; }
+  [[nodiscard]] bool success() const { return success_; }
+
+#include "berberis/intrinsics/translator_intrinsics_hooks-inl.h"
+
+  bool is_region_end_reached() const { return is_region_end_reached_; }
+
+  void IncrementInsnAddr(uint8_t insn_size) { pc_ += insn_size; }
+
+  void FreeTempRegs() { next_gp_reg_for_alloc_ = 0; }
 
  private:
+  template <auto kFunction, typename AssemblerResType, typename... AssemblerArgType>
+  AssemblerResType CallIntrinsic(AssemblerArgType...) {
+    Unimplemented();
+    return {};
+  }
+
   Register AllocTempReg() {
     // TODO(286261771): Add rdx to registers, push it on stack in all instances that are clobbering
     // it.
-    static constexpr x86_64::Assembler::Register kRegs[] = {x86_64::Assembler::rbx,
-                                                            x86_64::Assembler::rsi,
-                                                            x86_64::Assembler::rdi,
-                                                            x86_64::Assembler::r8,
-                                                            x86_64::Assembler::r9,
-                                                            x86_64::Assembler::r10,
-                                                            x86_64::Assembler::r11,
-                                                            x86_64::Assembler::r12,
-                                                            x86_64::Assembler::r13,
-                                                            x86_64::Assembler::r14,
-                                                            x86_64::Assembler::r15};
+    static constexpr Assembler::Register kRegs[] = {Assembler::rbx,
+                                                    Assembler::rsi,
+                                                    Assembler::rdi,
+                                                    Assembler::r8,
+                                                    Assembler::r9,
+                                                    Assembler::r10,
+                                                    Assembler::r11,
+                                                    Assembler::r12,
+                                                    Assembler::r13,
+                                                    Assembler::r14,
+                                                    Assembler::r15};
     CHECK_LT(next_gp_reg_for_alloc_, arraysize(kRegs));
 
     return kRegs[next_gp_reg_for_alloc_++];
   }
 
-  x86_64::Assembler as_;
+  Assembler as_;
   bool success_;
   uint8_t next_gp_reg_for_alloc_;
   GuestAddr pc_;
   const LiteTranslateParams& params_;
+  bool is_region_end_reached_;
 };
 
 }  // namespace berberis

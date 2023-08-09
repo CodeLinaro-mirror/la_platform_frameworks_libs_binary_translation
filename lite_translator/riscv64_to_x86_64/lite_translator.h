@@ -186,10 +186,23 @@ class LiteTranslator {
     CHECK_LT(reg, arraysize(ThreadState::cpu.x));
     CHECK_LE(reg, kNumGuestRegs);
     if (IsRegMappingEnabled()) {
-      Unmap(reg);
+      auto [mapped_reg, _] = GetMappedRegisterOrMap(reg);
+      as_.Movq(mapped_reg, value);
+      gp_maintainer_.NoticeModified(reg);
     }
-    int32_t offset = offsetof(ThreadState, cpu.x[0]) + reg * 8;
-    as_.Movq({.base = as_.rbp, .disp = offset}, value);
+  }
+
+  void StoreMappedRegs() {
+    if (!IsRegMappingEnabled()) {
+      return;
+    }
+    for (int i = 0; i < int(kNumGuestRegs); i++) {
+      if (gp_maintainer_.IsModified(i)) {
+        auto mapped_reg = gp_maintainer_.GetMapped(i);
+        int32_t offset = offsetof(ThreadState, cpu.x[0]) + i * 8;
+        as_.Movq({.base = as_.rbp, .disp = offset}, mapped_reg);
+      }
+    }
   }
 
   FpRegister GetFpReg(uint8_t reg) {
@@ -307,8 +320,6 @@ class LiteTranslator {
   void IncrementInsnAddr(uint8_t insn_size) { pc_ += insn_size; }
 
   bool IsRegMappingEnabled() { return params_.enable_reg_mapping; }
-
-  void Unmap(int reg) { gp_maintainer_.Unmap(reg); }
 
   std::tuple<Register, bool> GetMappedRegisterOrMap(int reg) {
     if (gp_maintainer_.IsMapped(reg)) {

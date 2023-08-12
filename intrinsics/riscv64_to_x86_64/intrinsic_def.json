@@ -198,6 +198,12 @@
     "in": [ "Type0", "Type0" ],
     "out": [ "Type0" ]
   },
+  "Rev8": {
+    "comment": "Byte reverse.",
+    "class": "scalar",
+    "in": [ "uint64_t" ],
+    "out": [ "uint64_t" ]
+  },
   "Rol": {
     "comment": "Rotate left.",
     "class": "template",
@@ -224,6 +230,12 @@
     "class": "scalar",
     "in": [ "int16_t" ],
     "out": [ "int64_t" ]
+  },
+  "Orcb": {
+    "comment": "OR-Combine, byte granule.",
+    "class": "scalar",
+    "in": [ "uint64_t" ],
+    "out": [ "uint64_t" ]
   },
     "FAdd": {
     "comment": "Floating point addition",

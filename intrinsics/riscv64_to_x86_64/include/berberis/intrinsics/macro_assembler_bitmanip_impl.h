@@ -64,6 +64,18 @@ void MacroAssembler<Assembler>::MacroMin(Register result, Register src1, Registe
   }
 }
 
+template <typename Assembler>
+void MacroAssembler<Assembler>::MacroOrcb(XMMRegister result) {
+  Pcmpeqb(result, {.disp = constants_pool::Zero});
+  Pandn(result, {.disp = constants_pool::kMaxUInt});
+}
+
+template <typename Assembler>
+void MacroAssembler<Assembler>::MacroOrcbAVX(XMMRegister result, XMMRegister src) {
+  Vpcmpeqb(result, src, {.disp = constants_pool::Zero});
+  Vpandn(result, result, {.disp = constants_pool::kMaxUInt});
+}
+
 }  // namespace berberis
 
 #endif  // RISCV64_TO_X86_64_BERBERIS_INTRINSICS_MACRO_ASSEMBLER_BITMANIP_IMPL_H_

@@ -80,6 +80,7 @@ decltype(auto) TupleMap(const ContainerType& container, const Transformer& trans
 
 class TESTSUITE : public ::testing::Test {
  public:
+  TESTSUITE() : state_{.cpu = {.frm = intrinsics::GuestModeFromHostRounding()}} {}
   // Compressed Instructions.
 
   template <RegisterType register_type, uint64_t expected_result, uint8_t kTargetReg>
@@ -1214,11 +1215,20 @@ TEST_F(TESTSUITE, OpImmInstructions) {
   TestOpImm(0x60111093, {{0x01000000'0000, 0, 40}});
   // Cpop
   TestOpImm(0x60211093, {{0xf000'0000'0000'000fULL, 0, 8}});
+  // Rev8
+  TestOpImm(0x6b815093, {{0x0000'0000'0000'000fULL, 0, 0x0f00'0000'0000'0000ULL}});
+  TestOpImm(0x6b815093, {{0xf000'0000'0000'0000ULL, 0, 0x0000'0000'0000'00f0ULL}});
+  TestOpImm(0x6b815093, {{0x00f0'0000'0000'0000ULL, 0, 0x0000'0000'0000'f000ULL}});
+  TestOpImm(0x6b815093, {{0x0000'000f'0000'0000ULL, 0, 0x0000'0000'0f00'0000ULL}});
+
   // Sext.b
   TestOpImm(0x60411093, {{0b1111'1110, 0, 0xffff'ffff'ffff'fffe}});  // -2
   // Sext.h
   TestOpImm(0x60511093, {{0b1111'1110, 0, 0xfe}});
   TestOpImm(0x60511093, {{0b1111'1111'1111'1110, 0, 0xffff'ffff'ffff'fffe}});
+  // Orc.b
+  TestOpImm(0x28715093, {{0xfe00'f0ff'fa00'fffb, 0, 0xff00'ffff'ff00'ffff}});
+  TestOpImm(0x28715093, {{0xfa00, 0, 0xff00}});
 }
 
 TEST_F(TESTSUITE, OpImm32Instructions) {

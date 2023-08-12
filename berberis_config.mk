@@ -25,7 +25,7 @@ BERBERIS_PRODUCT_PACKAGES := \
     libberberis_exec_region
 
 BERBERIS_PRODUCT_PACKAGES_RISCV64_TO_X86_64 := \
-    libberberis_proxy_libc.so \
+    libberberis_proxy_libc \
     berberis_prebuilt_riscv64 \
     berberis_program_runner_riscv64 \
     libberberis_riscv64
@@ -35,6 +35,7 @@ BERBERIS_PRODUCT_PACKAGES_RISCV64_TO_X86_64 := \
 BERBERIS_PRODUCT_PACKAGES_RISCV64_TO_X86_64 += $(NATIVE_BRIDGE_PRODUCT_PACKAGES_RISCV64_READY)
 
 BERBERIS_DEV_PRODUCT_PACKAGES := \
+    berberis_hello_world.native_bridge \
     berberis_hello_world_static.native_bridge \
     berberis_host_tests \
     berberis_ndk_program_tests \

@@ -332,9 +332,16 @@ class SemanticsPlayer {
   };
 
   void JumpAndLinkRegister(const typename Decoder::JumpAndLinkRegisterArgs& args) {
-    Register result = listener_->GetImm(listener_->GetInsnAddr() + args.insn_len);
-    SetRegOrIgnore(args.dst, result);
     Register base = GetRegOrZero(args.base);
+    if (args.base == args.dst) {
+      // If base and dst are the same register and the listener implements register mapping
+      // SetRegOrIgnore below will overwrite the original base register and make it invalid for
+      // BranchRegister call. Note that this issue only exists for JumpAndLinkRegister since we
+      // need to write the result before consuming all the arguments.
+      base = listener_->Copy(base);
+    }
+    Register next_insn_addr = listener_->GetImm(listener_->GetInsnAddr() + args.insn_len);
+    SetRegOrIgnore(args.dst, next_insn_addr);
     listener_->BranchRegister(base, args.offset);
   };
 
@@ -382,12 +389,37 @@ class SemanticsPlayer {
                                        return listener_->template Min<int64_t>(arg1, arg2);
                                      case Decoder::OpOpcode::kMinu:
                                        return listener_->template Min<uint64_t>(arg1, arg2);
+                                     case Decoder::OpOpcode::kRol:
+                                       return listener_->template Rol<int64_t>(arg1, arg2);
+                                     case Decoder::OpOpcode::kRor:
+                                       return listener_->template Ror<int64_t>(arg1, arg2);
+                                     case Decoder::OpOpcode::kSh1add:
+                                       return listener_->Sh1add(arg1, arg2);
+                                     case Decoder::OpOpcode::kSh2add:
+                                       return listener_->Sh2add(arg1, arg2);
+                                     case Decoder::OpOpcode::kSh3add:
+                                       return listener_->Sh3add(arg1, arg2);
                                      default:
                                        return listener_->Op(args.opcode, arg1, arg2);
                                    }
                                  },
                                  [&](const typename Decoder::Op32Args& args) {
-                                   return listener_->Op32(args.opcode, arg1, arg2);
+                                   switch (args.opcode) {
+                                     case Decoder::Op32Opcode::kAdduw:
+                                       return listener_->Adduw(arg1, arg2);
+                                     case Decoder::Op32Opcode::kRolw:
+                                       return listener_->template Rol<int32_t>(arg1, arg2);
+                                     case Decoder::Op32Opcode::kRorw:
+                                       return listener_->template Ror<int32_t>(arg1, arg2);
+                                     case Decoder::Op32Opcode::kSh1adduw:
+                                       return listener_->Sh1adduw(arg1, arg2);
+                                     case Decoder::Op32Opcode::kSh2adduw:
+                                       return listener_->Sh2adduw(arg1, arg2);
+                                     case Decoder::Op32Opcode::kSh3adduw:
+                                       return listener_->Sh3adduw(arg1, arg2);
+                                     default:
+                                       return listener_->Op32(args.opcode, arg1, arg2);
+                                   }
                                  }}(args);
     SetRegOrIgnore(args.dst, result);
   };
@@ -674,6 +706,10 @@ class SemanticsPlayer {
                                        return listener_->template Sext<int8_t>(arg);
                                      case Decoder::BitmanipImmOpcode::kSexth:
                                        return listener_->template Sext<int16_t>(arg);
+                                     case Decoder::BitmanipImmOpcode::kOrcb:
+                                       return listener_->Orcb(arg);
+                                     case Decoder::BitmanipImmOpcode::kRev8:
+                                       return listener_->Rev8(arg);
                                      case Decoder::BitmanipImmOpcode::kRori:
                                        return listener_->Rori(arg, args.shamt);
                                      default:
@@ -691,6 +727,8 @@ class SemanticsPlayer {
                                        return listener_->template Ctz<int32_t>(arg);
                                      case Decoder::BitmanipImm32Opcode::kRoriw:
                                        return listener_->Roriw(arg, args.shamt);
+                                     case Decoder::BitmanipImm32Opcode::kSlliuw:
+                                       return listener_->Slliuw(arg, args.shamt);
                                      default:
                                        Unimplemented();
                                        return Register{};

@@ -33,6 +33,7 @@
 #include "berberis/intrinsics/intrinsics_float.h"
 #include "berberis/intrinsics/type_traits.h"
 #include "berberis/kernel_api/run_guest_syscall.h"
+#include "berberis/runtime_primitives/recovery_code.h"
 
 #include "fp_regs.h"
 
@@ -320,7 +321,7 @@ class Interpreter {
 
   Register Roriw(Register arg, int8_t shamt) {
     CheckShamt32IsValid(shamt);
-    return (((uint32_t(arg) >> shamt)) | (uint32_t(arg) << (32 - shamt)));
+    return int32_t(((uint32_t(arg) >> shamt)) | (uint32_t(arg) << (32 - shamt)));
   }
 
   void Store(Decoder::StoreOperandType operand_type, Register arg, int16_t offset, Register data) {
@@ -473,6 +474,8 @@ class Interpreter {
 
   [[nodiscard]] uint64_t GetImm(uint64_t imm) const { return imm; }
 
+  [[nodiscard]] Register Copy(Register value) const { return value; }
+
   [[nodiscard]] GuestAddr GetInsnAddr() const { return state_->cpu.insn_addr; }
 
   void FinalizeInsn(uint8_t insn_len) {
@@ -527,6 +530,12 @@ class Interpreter {
 };
 
 }  // namespace
+
+void InitInterpreter() {
+  // TODO(b/232598137): Currently we just call it to initialize the recovery map.
+  // We need to add real faulty instructions with recovery here.
+  InitExtraRecoveryCodeUnsafe({});
+}
 
 void InterpretInsn(ThreadState* state) {
   GuestAddr pc = state->cpu.insn_addr;

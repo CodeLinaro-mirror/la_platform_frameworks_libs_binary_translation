@@ -59,6 +59,9 @@ struct CPUState {
   Reservation reservation_value;
 };
 
+constexpr uint32_t kNumGuestRegs = arraysize(CPUState::x);
+constexpr uint32_t kNumGuestFpRegs = arraysize(CPUState::f);
+
 template <uint8_t kIndex>
 inline uint64_t GetXReg(const CPUState& state) {
   static_assert(kIndex > 0);

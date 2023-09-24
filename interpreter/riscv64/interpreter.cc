@@ -42,6 +42,7 @@ namespace {
 
 class Interpreter {
  public:
+  using CsrName = berberis::CsrName;
   using Decoder = Decoder<SemanticsPlayer<Interpreter>>;
   using Register = uint64_t;
   using FpRegister = uint64_t;
@@ -54,45 +55,22 @@ class Interpreter {
   // Instruction implementations.
   //
 
-  Register Csr(Decoder::CsrOpcode opcode, Register arg, Decoder::CsrRegister csr) {
-    Register (*UpdateStatus)(Register arg, Register original_csr_value);
+  Register UpdateCsr(Decoder::CsrOpcode opcode, Register arg, Register csr) {
     switch (opcode) {
       case Decoder::CsrOpcode::kCsrrw:
-        UpdateStatus = [](Register arg, Register /*original_csr_value*/) { return arg; };
-        break;
+        return arg;
       case Decoder::CsrOpcode::kCsrrs:
-        UpdateStatus = [](Register arg, Register original_csr_value) {
-          return arg | original_csr_value;
-        };
-        break;
+        return arg | csr;
       case Decoder::CsrOpcode::kCsrrc:
-        UpdateStatus = [](Register arg, Register original_csr_value) {
-          return ~arg & original_csr_value;
-        };
-        break;
+        return ~arg & csr;
       default:
         Unimplemented();
         return {};
     }
-    Register result;
-    switch (csr) {
-      case Decoder::CsrRegister::kFrm:
-        result = state_->cpu.frm;
-        arg = UpdateStatus(arg, result);
-        state_->cpu.frm = arg;
-        if (arg <= FPFlags::RM_MAX) {
-          std::fesetround(intrinsics::ToHostRoundingMode(arg));
-        }
-        break;
-      default:
-        Unimplemented();
-        return {};
-    }
-    return result;
   }
 
-  Register Csr(Decoder::CsrImmOpcode opcode, uint8_t imm, Decoder::CsrRegister csr) {
-    return Csr(Decoder::CsrOpcode(opcode), imm, csr);
+  Register UpdateCsr(Decoder::CsrImmOpcode opcode, uint8_t imm, Register csr) {
+    return UpdateCsr(static_cast<Decoder::CsrOpcode>(opcode), imm, csr);
   }
 
   // Note: we prefer not to use C11/C++ atomic_thread_fence or even gcc/clang builtin
@@ -442,7 +420,13 @@ class Interpreter {
   // Various helper methods.
   //
 
-  [[nodiscard]] uint8_t GetFrm() const { return state_->cpu.frm; }
+  template <CsrName kName>
+  [[nodiscard]] Register GetCsr() const {
+    return state_->cpu.*CsrFieldAddr<kName>;
+  }
+
+  template <CsrName kName>
+  void SetCsr(Register arg);
 
   [[nodiscard]] uint64_t GetImm(uint64_t imm) const { return imm; }
 
@@ -500,6 +484,13 @@ class Interpreter {
   ThreadState* state_;
   bool branch_taken_;
 };
+
+template <>
+void Interpreter::SetCsr<CsrName::kFrm>(Register arg) {
+  arg &= 0b111;
+  state_->cpu.frm = arg;
+  std::fesetround(intrinsics::ToHostRoundingMode(arg));
+}
 
 template <>
 Interpreter::FpRegister Interpreter::GetFRegAndUnboxNan<Interpreter::Float32>(uint8_t reg) {

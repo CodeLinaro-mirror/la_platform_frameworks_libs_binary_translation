@@ -51,6 +51,7 @@ class MacroAssembler : public Assembler {
 #include "berberis/intrinsics/macro_assembler_interface-inl.h"  // NOLINT generated file
 
   using Assembler::Bind;
+  using Assembler::Btq;
   using Assembler::Jcc;
   using Assembler::Leaq;
   using Assembler::MakeLabel;
@@ -61,6 +62,7 @@ class MacroAssembler : public Assembler {
   using Assembler::Pmov;
   using Assembler::Por;
   using Assembler::Pshufd;
+  using Assembler::Setcc;
   using Assembler::Vpand;
   using Assembler::Vpandn;
   using Assembler::Vpcmpeqb;
@@ -108,13 +110,13 @@ class MacroAssembler : public Assembler {
       Assembler::Movsxbq arguments;                                                                \
     } else if constexpr (FormatIs<format_out, int64_t, uint64_t> &&                                \
                          FormatIs<format_in, uint8_t>) {                                           \
-      Assembler::Movzxbq arguments;                                                                \
+      Assembler::Movzxbl arguments;                                                                \
     } else if constexpr (FormatIs<format_out, int64_t, uint64_t> &&                                \
                          FormatIs<format_in, int16_t>) {                                           \
       Assembler::Movsxwq arguments;                                                                \
     } else if constexpr (FormatIs<format_out, int64_t, uint64_t> &&                                \
                          FormatIs<format_in, uint16_t>) {                                          \
-      Assembler::Movzxwq arguments;                                                                \
+      Assembler::Movzxwl arguments;                                                                \
     } else if constexpr (FormatIs<format_out, int64_t, uint64_t> &&                                \
                          FormatIs<format_in, int32_t>) {                                           \
       Assembler::Movsxlq arguments;                                                                \

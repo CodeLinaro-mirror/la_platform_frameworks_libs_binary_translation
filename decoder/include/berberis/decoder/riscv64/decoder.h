@@ -135,6 +135,10 @@ class Decoder {
     kSh1add = 0b0010'000'010,
     kSh2add = 0b0010'000'100,
     kSh3add = 0b0010'000'110,
+    kBclr = 0b0100'100'001,
+    kBext = 0b0100'100'101,
+    kBinv = 0b0110'100'001,
+    kBset = 0b0010'100'001,
     kMaxValue = 0b1111'111'111,
   };
 
@@ -239,6 +243,10 @@ class Decoder {
     kOrcb = 0b0010100'00111'101,
     kRev8 = 0b0110101'11000'101,
     kRori = 0b011000'101,
+    kBclri = 0b010010'001,
+    kBexti = 0b010010'101,
+    kBinvi = 0b011010'001,
+    kBseti = 0b001010'001,
     kMaxValue = 0b111111'111111'111,
   };
 
@@ -255,17 +263,6 @@ class Decoder {
     kEcall = 0b000000000000'00000'000'00000,
     kEbreak = 0b000000000001'00000'000'00000,
     kMaxValue = 0b111111111111'11111'111'11111,
-  };
-
-  // Technically CsrRegister is instruction argument, but it's handling is closer to the handling
-  // of opcode: instructions which deal with different registers have radically different semantic
-  // while most combinations trigger “illegal instruction opcode”.
-
-  enum class CsrRegister {
-    kFFlags = 0b00'00'0000'0001,
-    kFrm = 0b00'00'0000'0010,
-    kFCsr = 0b00'00'0000'0011,
-    kMaxValue = 0b11'11'1111'1111,
   };
 
   // Load/Store instruction include 3bit “width” field while all other floating-point instructions
@@ -340,14 +337,14 @@ class Decoder {
     CsrOpcode opcode;
     uint8_t dst;
     uint8_t src;
-    CsrRegister csr;
+    uint16_t csr;
   };
 
   struct CsrImmArgs {
     CsrImmOpcode opcode;
     uint8_t dst;
     uint8_t imm;
-    CsrRegister csr;
+    uint16_t csr;
   };
 
   struct FcvtFloatToFloatArgs {
@@ -1315,11 +1312,15 @@ class Decoder {
       uint8_t shamt = GetBits<uint8_t, 20, kShiftFieldSize>();
       uint16_t high_opcode = GetBits<uint16_t, 20 + kShiftFieldSize, 12 - kShiftFieldSize>();
       BitmanipOpCodeType opcode{int16_t(low_opcode | (high_opcode << 3))};
-      bool is_shift = false;
+      bool has_shamt = false;
 
       switch ((BitmanipImmOpcode)opcode) {
         case BitmanipImmOpcode::kRori:
-          is_shift = true;
+        case BitmanipImmOpcode::kBclri:
+        case BitmanipImmOpcode::kBexti:
+        case BitmanipImmOpcode::kBinvi:
+        case BitmanipImmOpcode::kBseti:
+          has_shamt = true;
           break;
         default:
           break;
@@ -1328,13 +1329,13 @@ class Decoder {
       switch ((BitmanipImm32Opcode)opcode) {
         case BitmanipImm32Opcode::kRoriw:
         case BitmanipImm32Opcode::kSlliuw:
-          is_shift = true;
+          has_shamt = true;
           break;
         default:
           break;
       }
       // TODO(b/291851792): Refactor instructions with shamt into ShiftImmArgs
-      if (!is_shift) {
+      if (!has_shamt) {
         high_opcode = GetBits<uint16_t, 20, 12>();
         opcode = {low_opcode | (high_opcode << 3)};
         shamt = 0;
@@ -1550,7 +1551,7 @@ class Decoder {
           .opcode = opcode,
           .dst = GetBits<uint8_t, 7, 5>(),
           .imm = GetBits<uint8_t, 15, 5>(),
-          .csr = CsrRegister(GetBits<uint16_t, 20, 12>()),
+          .csr = GetBits<uint16_t, 20, 12>(),
       };
       return insn_consumer_->Csr(args);
     }
@@ -1559,7 +1560,7 @@ class Decoder {
         .opcode = opcode,
         .dst = GetBits<uint8_t, 7, 5>(),
         .src = GetBits<uint8_t, 15, 5>(),
-        .csr = CsrRegister(GetBits<uint16_t, 20, 12>()),
+        .csr = GetBits<uint16_t, 20, 12>(),
     };
     return insn_consumer_->Csr(args);
   }

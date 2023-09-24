@@ -47,6 +47,7 @@ class MachindeCode;
 class LiteTranslator {
  public:
   using Assembler = MacroAssembler<x86_64::Assembler>;
+  using CsrName = berberis::CsrName;
   using Decoder = Decoder<SemanticsPlayer<LiteTranslator>>;
   using Register = Assembler::Register;
   // Note: on RISC-V architecture FP register and SIMD registers are disjoint, but on x86 they are
@@ -136,13 +137,13 @@ class LiteTranslator {
     as_.Movs<DataType>({.base = arg, .disp = offset}, data);
   }
 
-  Register Csr(Decoder::CsrOpcode opcode, Register arg, Decoder::CsrRegister csr) {
+  Register UpdateCsr(Decoder::CsrOpcode opcode, Register arg, Register csr) {
     UNUSED(opcode, arg, csr);
     Unimplemented();
     return {};
   }
 
-  Register Csr(Decoder::CsrImmOpcode opcode, uint8_t imm, Decoder::CsrRegister csr) {
+  Register UpdateCsr(Decoder::CsrImmOpcode opcode, uint8_t imm, Register csr) {
     UNUSED(opcode, imm, csr);
     Unimplemented();
     return {};
@@ -278,11 +279,17 @@ class LiteTranslator {
   // Various helper methods.
   //
 
-  [[nodiscard]] Register GetFrm() {
-    Register frm_reg = AllocTempReg();
-    as_.Movb(frm_reg, {.base = Assembler::rbp, .disp = offsetof(ThreadState, cpu.csr_data)});
-    as_.Andb(frm_reg, int8_t{0b111});
-    return frm_reg;
+  template <CsrName kName>
+  [[nodiscard]] Register GetCsr() {
+    Register csr_reg = AllocTempReg();
+    as_.Expand<uint64_t, CsrFieldType<kName>>(
+        csr_reg, {.base = Assembler::rbp, .disp = kCsrFieldOffset<kName>});
+    return csr_reg;
+  }
+
+  template <CsrName kName>
+  void SetCsr(Register /*arg*/) {
+    Unimplemented();
   }
 
   [[nodiscard]] Register GetImm(uint64_t imm) {
@@ -380,29 +387,41 @@ class LiteTranslator {
  private:
   template <auto kFunction, typename AssemblerResType, typename... AssemblerArgType>
   AssemblerResType CallIntrinsic(AssemblerArgType... args) {
-    AssemblerResType result;
-    if constexpr (std::is_same_v<AssemblerResType, Register>) {
-      result = AllocTempReg();
-    } else if constexpr (std::is_same_v<AssemblerResType, SimdRegister>) {
-      result = AllocTempSimdReg();
+    if constexpr (std::is_same_v<AssemblerResType, void>) {
+      if (inline_intrinsic::TryInlineIntrinsic<kFunction>(
+              as_,
+              [this]() { return AllocTempReg(); },
+              [this]() { return AllocTempSimdReg(); },
+              std::monostate{},
+              args...)) {
+        return;
+      }
+      call_intrinsic::CallIntrinsic<AssemblerResType>(as_, kFunction, args...);
     } else {
-      // This should not be reached by the compiler. If it is - there is a new result type that
-      // needs to be supported.
-      static_assert(kDependentTypeFalse<AssemblerResType>, "Unsupported result type");
-    }
+      AssemblerResType result;
+      if constexpr (std::is_same_v<AssemblerResType, Register>) {
+        result = AllocTempReg();
+      } else if constexpr (std::is_same_v<AssemblerResType, SimdRegister>) {
+        result = AllocTempSimdReg();
+      } else {
+        // This should not be reached by the compiler. If it is - there is a new result type that
+        // needs to be supported.
+        static_assert(kDependentTypeFalse<AssemblerResType>, "Unsupported result type");
+      }
 
-    if (inline_intrinsic::TryInlineIntrinsic<kFunction>(
-            as_,
-            [this]() { return AllocTempReg(); },
-            [this]() { return AllocTempSimdReg(); },
-            result,
-            args...)) {
+      if (inline_intrinsic::TryInlineIntrinsic<kFunction>(
+              as_,
+              [this]() { return AllocTempReg(); },
+              [this]() { return AllocTempSimdReg(); },
+              result,
+              args...)) {
+        return result;
+      }
+
+      call_intrinsic::CallIntrinsic<AssemblerResType>(as_, kFunction, result, args...);
+
       return result;
     }
-
-    call_intrinsic::CallIntrinsic<AssemblerResType>(as_, kFunction, result, args...);
-
-    return result;
   }
 
   Assembler as_;

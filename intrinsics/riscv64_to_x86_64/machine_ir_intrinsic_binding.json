@@ -211,6 +211,26 @@
     "out": [ 0 ]
   },
   {
+    "name": "FeSetRound",
+    "insn": "MacroFeSetRound",
+    "in": [ 3 ],
+    "out": []
+  },
+  {
+    "name": "FeSetRoundImm",
+    "insn": "MacroFeSetRound",
+    "usage": "interpret-only",
+    "in": [ 3 ],
+    "out": []
+  },
+  {
+    "name": "FeSetRoundImm",
+    "insn": "MacroFeSetRoundImmTranslate",
+    "usage": "translate-only",
+    "in": [ 3 ],
+    "out": []
+  },
+  {
     "name": "FMAddHostRounding<Float32>",
     "insn": "Vfmadd231ssXRegXRegXReg",
     "feature": "FMA",
@@ -482,7 +502,7 @@
     "name": "NanBox<Float32>",
     "insn": "MacroNanBoxFloat32AVX",
     "feature": "AVX",
-    "in": [ 0 ],
+    "in": [ 1 ],
     "out": [ 0 ]
   },
   {

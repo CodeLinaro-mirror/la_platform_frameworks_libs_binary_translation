@@ -329,6 +329,30 @@
     "in": [ "Type0", "Type0" ],
     "out": [ "Type0" ]
   },
+  "FeGetExceptions": {
+    "comment": "Read exceptions state from x87 status word and MXCSR.",
+    "class": "scalar",
+    "in": [],
+    "out": [ "uint64_t" ],
+    "side_effects_comment": "Reads state from host CPU. State may be affected to floating point instructions.",
+    "has_side_effects": true
+  },
+  "FeSetExceptions": {
+    "comment": "Store exceptions state into x87 status word and MXCSR. Only low five bits are set on input!",
+    "class": "scalar",
+    "in": [ "uint64_t" ],
+    "out": [],
+    "side_effects_comment": "Stores state to host CPU. State may be affected to floating point instructions.",
+    "has_side_effects": true
+  },
+  "FeSetExceptionsImm": {
+    "comment": "Store exceptions state into x87 status word and MXCSR. Only low five bits are set on input!",
+    "class": "scalar",
+    "in": [ "uimm8" ],
+    "out": [],
+    "side_effects_comment": "Stores state to host CPU. State may be affected to floating point instructions.",
+    "has_side_effects": true
+  },
   "FeSetRound": {
     "comment": "Store guest rounding mode in the host FPU state. Only low three bits are set on input!",
     "class": "scalar",
@@ -625,6 +649,48 @@
     "variants": [ "Float32" ],
     "in": [ "Float64" ],
     "out": [ "Type0" ]
+  },
+  "Vsetivli": {
+    "comment": "Test vtype and set vl accordingly.",
+    "class": "scalar",
+    "in": [ "uimm8", "uimm16" ],
+    "out": [ "uint64_t", "uint64_t" ]
+  },
+  "Vsetvl": {
+    "comment": "Test vtype and set vl accordingly.",
+    "class": "scalar",
+    "in": [ "uint64_t", "uint64_t" ],
+    "out": [ "uint64_t", "uint64_t" ]
+  },
+  "Vsetvli": {
+    "comment": "Test vtype and set vl accordingly.",
+    "class": "scalar",
+    "in": [ "uint64_t", "uimm16" ],
+    "out": [ "uint64_t", "uint64_t" ]
+  },
+  "Vsetvlmax": {
+    "comment": "Test vtype and set vl accordingly.",
+    "class": "scalar",
+    "in": [ "uint64_t" ],
+    "out": [ "uint64_t", "uint64_t" ]
+  },
+  "Vsetvlimax": {
+    "comment": "Test vtype and set vl accordingly.",
+    "class": "scalar",
+    "in": [ "uimm16" ],
+    "out": [ "uint64_t", "uint64_t" ]
+  },
+  "Vtestvl": {
+    "comment": "Test vl and keep it or reset it and vtype.",
+    "class": "scalar",
+    "in": [ "uint8_t", "uint64_t", "uint64_t" ],
+    "out": [ "uint64_t", "uint64_t" ]
+  },
+  "Vtestvli": {
+    "comment": "Test vl and keep it or reset it and vtype.",
+    "class": "scalar",
+    "in": [ "uint8_t", "uint64_t", "uimm16" ],
+    "out": [ "uint64_t", "uint64_t" ]
   },
   "Zexth": {
     "comment": "Zero-extend half word",

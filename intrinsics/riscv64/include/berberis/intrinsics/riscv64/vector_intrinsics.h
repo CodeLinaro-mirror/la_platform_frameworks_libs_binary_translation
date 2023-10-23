@@ -47,9 +47,9 @@ int MaskForRegisterInSequence(SIMD128Register mask, size_t register_in_sequence)
   } else if constexpr (sizeof(ElementType) == sizeof(uint16_t)) {
     return mask.Get<uint8_t>(register_in_sequence);
   } else if constexpr (sizeof(ElementType) == sizeof(uint32_t)) {
-    return mask.Get<uint32_t>(0) >> (register_in_sequence << 4);
+    return mask.Get<uint32_t>(0) >> (register_in_sequence * 4);
   } else if constexpr (sizeof(ElementType) == sizeof(uint64_t)) {
-    return mask.Get<uint32_t>(0) >> (register_in_sequence << 2);
+    return mask.Get<uint32_t>(0) >> (register_in_sequence * 2);
   } else {
     static_assert(kDependentTypeFalse<ElementType>, "Unsupported vector element type");
   }
@@ -97,12 +97,12 @@ inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
     for (int index = vstart; index < vl; ++index) {
       result.Set<ElementType>(lambda(VectorElement<ElementType>(source, index)...), index);
     }
-  }
-  if constexpr (vta == TailProcessing::kAgnostic) {
-    if (vl > static_cast<int>(16 / sizeof(ElementType))) {
-      #pragma clang loop unroll(disable)
-      for (int index = vl; index < 16 / static_cast<int>(sizeof(ElementType)); ++index) {
-        result.Set<ElementType>(fill_value, index);
+    if constexpr (vta == TailProcessing::kAgnostic) {
+      if (vl < static_cast<int>(16 / sizeof(ElementType))) {
+        #pragma clang loop unroll(disable)
+        for (int index = vl; index < 16 / static_cast<int>(sizeof(ElementType)); ++index) {
+          result.Set<ElementType>(fill_value, index);
+        }
       }
     }
   }
@@ -146,7 +146,7 @@ inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
     }
   }
   if constexpr (vta == TailProcessing::kAgnostic) {
-    if (vl > static_cast<int>(16 / sizeof(ElementType))) {
+    if (vl < static_cast<int>(16 / sizeof(ElementType))) {
       #pragma clang loop unroll(disable)
       for (int index = vl; index < 16 / static_cast<int>(sizeof(ElementType)); ++index) {
         result.Set<ElementType>(fill_value, index);
@@ -213,6 +213,10 @@ DEFINE_ARITHMETIC_INTRINSIC(Vsubvv,
                             (src1, src2))
 DEFINE_ARITHMETIC_INTRINSIC(Vsubvx,
                             return (args - ...),
+                            (SIMD128Register src1, ElementType src2),
+                            (src1, src2))
+DEFINE_ARITHMETIC_INTRINSIC(Vrsubvx,
+                            ({ auto [arg1, arg2] = std::tuple{args...}; return (arg2 - arg1); }),
                             (SIMD128Register src1, ElementType src2),
                             (src1, src2))
 

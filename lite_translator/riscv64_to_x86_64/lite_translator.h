@@ -87,6 +87,7 @@ class LiteTranslator {
   void CompareAndBranch(Decoder::BranchOpcode opcode, Register arg1, Register arg2, int16_t offset);
   void Branch(int32_t offset);
   void BranchRegister(Register base, int16_t offset);
+  void ExitGeneratedCode(GuestAddr target);
   void ExitRegion(GuestAddr target);
   void ExitRegionIndirect(Register target);
   void Store(Decoder::StoreOperandType operand_type, Register arg, int16_t offset, Register data);
@@ -159,7 +160,8 @@ class LiteTranslator {
   // V extension.
   //
 
-  void OpVector(const typename Decoder::VOpArgs& /*args*/) {
+  template <typename VOpArgs, typename... ExtraAegs>
+  void OpVector(const VOpArgs& /*args*/, ExtraAegs... /*extra_args*/) {
     // TODO(300690740): develop and implement strategy which would allow us to support vector
     // intrinsics not just in the interpreter.
     Unimplemented();
@@ -436,6 +438,8 @@ class LiteTranslator {
       AssemblerResType result;
       if constexpr (std::is_same_v<AssemblerResType, Register>) {
         result = AllocTempReg();
+      } else if constexpr (std::is_same_v<AssemblerResType, std::tuple<Register, Register>>) {
+        result = std::tuple{AllocTempReg(), AllocTempReg()};
       } else if constexpr (std::is_same_v<AssemblerResType, SimdRegister>) {
         result = AllocTempSimdReg();
       } else {
@@ -471,6 +475,27 @@ class LiteTranslator {
 };
 
 template <>
+[[nodiscard]] inline LiteTranslator::Register LiteTranslator::GetCsr<CsrName::kFCsr>() {
+  Register csr_reg = AllocTempReg();
+  bool inline_succeful = inline_intrinsic::TryInlineIntrinsic<&intrinsics::FeGetExceptions>(
+      as_,
+      [this]() { return AllocTempReg(); },
+      [this]() { return AllocTempSimdReg(); },
+      Assembler::rax);
+  CHECK(inline_succeful);
+  as_.Expand<uint64_t, CsrFieldType<CsrName::kFrm>>(
+      csr_reg, {.base = Assembler::rbp, .disp = kCsrFieldOffset<CsrName::kFrm>});
+  as_.Shl<uint8_t>(csr_reg, 5);
+  as_.Or<uint8_t>(csr_reg, as_.rax);
+  return csr_reg;
+}
+
+template <>
+[[nodiscard]] inline LiteTranslator::Register LiteTranslator::GetCsr<CsrName::kFFlags>() {
+  return FeGetExceptions();
+}
+
+template <>
 [[nodiscard]] inline LiteTranslator::Register LiteTranslator::GetCsr<CsrName::kVlenb>() {
   return GetImm(16);
 }
@@ -491,6 +516,51 @@ template <>
                                 {.base = Assembler::rbp, .disp = kCsrFieldOffset<CsrName::kVcsr>});
   as_.Shr<uint8_t>(reg, 2);
   return reg;
+}
+
+template <>
+inline void LiteTranslator::SetCsr<CsrName::kFCsr>(uint8_t imm) {
+  // Note: instructions Csrrci or Csrrsi couldn't affect Frm because immediate only has five bits.
+  // But these instruction don't pass their immediate-specified argument into `SetCsr`, they combine
+  // it with register first. Fixing that can only be done by changing code in the semantics player.
+  //
+  // But Csrrwi may clear it.  And we actually may only arrive here from Csrrwi.
+  // Thus, technically, we know that imm >> 5 is always zero, but it doesn't look like a good idea
+  // to rely on that: it's very subtle and it only affects code generation speed.
+  as_.Mov<uint8_t>({.base = Assembler::rbp, .disp = kCsrFieldOffset<CsrName::kFrm>},
+                   static_cast<int8_t>(imm >> 5));
+  as_.MacroFeSetExceptionsAndRoundImmTranslate(
+      {Assembler::rbp, .disp = static_cast<int>(offsetof(ThreadState, intrinsics_scratch_area))},
+      imm);
+}
+
+template <>
+inline void LiteTranslator::SetCsr<CsrName::kFCsr>(Register arg) {
+  // Use RAX as temporary register for exceptions and RCX for rm.
+  // We know RCX would be used by FeSetRound, too.
+  as_.Mov<uint8_t>(Assembler::rax, arg);
+  as_.And<uint32_t>(Assembler::rax, 0b1'1111);
+  as_.Shldl(Assembler::rcx, arg, int8_t{32 - 5});
+  as_.And<uint8_t>(Assembler::rcx, kCsrMask<CsrName::kFrm>);
+  as_.Mov<uint8_t>({.base = Assembler::rbp, .disp = kCsrFieldOffset<CsrName::kFrm>},
+                   Assembler::rcx);
+  as_.MacroFeSetExceptionsAndRoundTranslate(
+      Assembler::rax,
+      {Assembler::rbp, .disp = static_cast<int>(offsetof(ThreadState, intrinsics_scratch_area))},
+      Assembler::rax);
+}
+
+template <>
+inline void LiteTranslator::SetCsr<CsrName::kFFlags>(uint8_t imm) {
+  FeSetExceptionsImm(static_cast<int8_t>(imm & 0b1'1111));
+}
+
+template <>
+inline void LiteTranslator::SetCsr<CsrName::kFFlags>(Register arg) {
+  // Use RAX as temporary register.
+  as_.Mov<uint8_t>(Assembler::rax, arg);
+  as_.And<uint32_t>(Assembler::rax, 0b1'1111);
+  FeSetExceptions(Assembler::rax);
 }
 
 template <>

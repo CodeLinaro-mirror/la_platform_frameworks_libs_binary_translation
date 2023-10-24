@@ -27,6 +27,7 @@ namespace berberis {
 template <class SemanticsListener>
 class SemanticsPlayer {
  public:
+  using CsrName = typename SemanticsListener::CsrName;
   using Decoder = Decoder<SemanticsPlayer>;
   using Register = typename SemanticsListener::Register;
   using Float32 = typename SemanticsListener::Float32;
@@ -115,29 +116,74 @@ class SemanticsPlayer {
   }
 
   void Csr(const typename Decoder::CsrArgs& args) {
-    Register result;
-    Register arg = GetRegOrZero(args.src);
-    result = listener_->Csr(args.opcode, arg, args.csr);
-    SetRegOrIgnore(args.dst, result);
+    if (args.opcode == Decoder::CsrOpcode::kCsrrw) {
+      if (args.dst != 0) {
+        auto [csr_supported, csr] = GetCsr(static_cast<CsrName>(args.csr));
+        if (!csr_supported) {
+          return Unimplemented();
+        }
+        Register arg = listener_->GetReg(args.src);
+        SetCsr(static_cast<CsrName>(args.csr), arg);
+        listener_->SetReg(args.dst, csr);
+      }
+      Register arg = listener_->GetReg(args.src);
+      if (!SetCsr(static_cast<CsrName>(args.csr), arg)) {
+        return Unimplemented();
+      }
+      return;
+    }
+    auto [csr_supported, csr] = GetCsr(static_cast<CsrName>(args.csr));
+    if (!csr_supported) {
+      return Unimplemented();
+    }
+    if (args.src != 0) {
+      Register arg = listener_->GetReg(args.src);
+      if (!SetCsr(static_cast<CsrName>(args.csr), listener_->UpdateCsr(args.opcode, arg, csr))) {
+        return Unimplemented();
+      }
+    }
+    SetRegOrIgnore(args.dst, csr);
   }
 
   void Csr(const typename Decoder::CsrImmArgs& args) {
-    Register result;
-    result = listener_->Csr(args.opcode, args.imm, args.csr);
-    SetRegOrIgnore(args.dst, result);
+    if (args.opcode == Decoder::CsrImmOpcode::kCsrrwi) {
+      if (args.dst != 0) {
+        auto [csr_supported, csr] = GetCsr(static_cast<CsrName>(args.csr));
+        if (!csr_supported) {
+          return Unimplemented();
+        }
+        if (!SetCsr(static_cast<CsrName>(args.csr), csr)) {
+          return Unimplemented();
+        }
+        listener_->SetReg(args.dst, csr);
+      }
+      SetCsr(static_cast<CsrName>(args.csr), args.imm);
+      return;
+    }
+    auto [csr_supported, csr] = GetCsr(static_cast<CsrName>(args.csr));
+    if (!csr_supported) {
+      return Unimplemented();
+    }
+    if (args.imm != 0) {
+      if (!SetCsr(static_cast<CsrName>(args.csr),
+                  listener_->UpdateCsr(args.opcode, args.imm, csr))) {
+        return Unimplemented();
+      }
+    }
+    SetRegOrIgnore(args.dst, csr);
   }
 
   void Fcvt(const typename Decoder::FcvtFloatToFloatArgs& args) {
     if (args.dst_type == Decoder::FloatOperandType::kFloat &&
         args.src_type == Decoder::FloatOperandType::kDouble) {
       FpRegister arg = GetFRegAndUnboxNan<Float64>(args.src);
-      Register frm = listener_->GetFrm();
+      Register frm = listener_->template GetCsr<CsrName::kFrm>();
       FpRegister result = listener_->template FCvtFloatToFloat<Float32, Float64>(args.rm, frm, arg);
       NanBoxAndSetFpReg<Float32>(args.dst, result);
     } else if (args.dst_type == Decoder::FloatOperandType::kDouble &&
                args.src_type == Decoder::FloatOperandType::kFloat) {
       FpRegister arg = GetFRegAndUnboxNan<Float32>(args.src);
-      Register frm = listener_->GetFrm();
+      Register frm = listener_->template GetCsr<CsrName::kFrm>();
       FpRegister result = listener_->template FCvtFloatToFloat<Float64, Float32>(args.rm, frm, arg);
       NanBoxAndSetFpReg<Float64>(args.dst, result);
     } else {
@@ -163,7 +209,7 @@ class SemanticsPlayer {
                          int8_t dst,
                          int8_t src) {
     FpRegister arg = GetFRegAndUnboxNan<FLoatType>(src);
-    Register frm = listener_->GetFrm();
+    Register frm = listener_->template GetCsr<CsrName::kFrm>();
     Register result;
     switch (dst_type) {
       case Decoder::FcvtOperandType::k32bitSigned:
@@ -201,7 +247,7 @@ class SemanticsPlayer {
                           int8_t dst,
                           int8_t src) {
     Register arg = GetRegOrZero(src);
-    Register frm = listener_->GetFrm();
+    Register frm = listener_->template GetCsr<CsrName::kFrm>();
     FpRegister result;
     switch (src_type) {
       case Decoder::FcvtOperandType::k32bitSigned:
@@ -246,7 +292,7 @@ class SemanticsPlayer {
     FpRegister arg1 = GetFRegAndUnboxNan<FloatType>(src1);
     FpRegister arg2 = GetFRegAndUnboxNan<FloatType>(src2);
     FpRegister arg3 = GetFRegAndUnboxNan<FloatType>(src3);
-    Register frm = listener_->GetFrm();
+    Register frm = listener_->template GetCsr<CsrName::kFrm>();
     FpRegister result;
     switch (opcode) {
       case Decoder::FmaOpcode::kFmadd:
@@ -381,6 +427,14 @@ class SemanticsPlayer {
                                        return listener_->Sh2add(arg1, arg2);
                                      case Decoder::OpOpcode::kSh3add:
                                        return listener_->Sh3add(arg1, arg2);
+                                     case Decoder::OpOpcode::kBclr:
+                                       return listener_->Bclr(arg1, arg2);
+                                     case Decoder::OpOpcode::kBext:
+                                       return listener_->Bext(arg1, arg2);
+                                     case Decoder::OpOpcode::kBinv:
+                                       return listener_->Binv(arg1, arg2);
+                                     case Decoder::OpOpcode::kBset:
+                                       return listener_->Bset(arg1, arg2);
                                      default:
                                        return listener_->Op(args.opcode, arg1, arg2);
                                    }
@@ -435,7 +489,7 @@ class SemanticsPlayer {
   void OpFp(typename Decoder::OpFpOpcode opcode, int8_t rm, int8_t dst, int8_t src1, int8_t src2) {
     FpRegister arg1 = GetFRegAndUnboxNan<FloatType>(src1);
     FpRegister arg2 = GetFRegAndUnboxNan<FloatType>(src2);
-    Register frm = listener_->GetFrm();
+    Register frm = listener_->template GetCsr<CsrName::kFrm>();
     FpRegister result;
     switch (opcode) {
       case Decoder::OpFpOpcode::kFAdd:
@@ -618,7 +672,7 @@ class SemanticsPlayer {
                        int8_t src) {
     FpRegister arg = GetFRegAndUnboxNan<FloatType>(src);
     FpRegister result;
-    Register frm = listener_->GetFrm();
+    Register frm = listener_->template GetCsr<CsrName::kFrm>();
     switch (opcode) {
       case Decoder::OpFpSingleInputOpcode::kFSqrt:
         result = listener_->template FSqrt<FloatType>(rm, frm, arg);
@@ -702,6 +756,14 @@ class SemanticsPlayer {
                                        return listener_->Rev8(arg);
                                      case Decoder::BitmanipImmOpcode::kRori:
                                        return listener_->Rori(arg, args.shamt);
+                                     case Decoder::BitmanipImmOpcode::kBclri:
+                                       return listener_->Bclri(arg, args.shamt);
+                                     case Decoder::BitmanipImmOpcode::kBexti:
+                                       return listener_->Bexti(arg, args.shamt);
+                                     case Decoder::BitmanipImmOpcode::kBinvi:
+                                       return listener_->Binvi(arg, args.shamt);
+                                     case Decoder::BitmanipImmOpcode::kBseti:
+                                       return listener_->Bseti(arg, args.shamt);
                                      default:
                                        Unimplemented();
                                        return Register{};
@@ -725,6 +787,84 @@ class SemanticsPlayer {
                                    }
                                  }}(args);
     SetRegOrIgnore(args.dst, result);
+  }
+
+  void OpVector(const typename Decoder::VOpViArgs& args) {
+    // TODO(300690740): develop and implement strategy which would allow us to support vector
+    // intrinsics not just in the interpreter.
+    listener_->OpVector(args);
+  }
+
+  void OpVector(const typename Decoder::VOpVvArgs& args) {
+    // TODO(300690740): develop and implement strategy which would allow us to support vector
+    // intrinsics not just in the interpreter.
+    listener_->OpVector(args);
+  }
+
+  void OpVector(const typename Decoder::VOpVxArgs& args) {
+    // TODO(300690740): develop and implement strategy which would allow us to support vector
+    // intrinsics not just in the interpreter.
+    Register arg2 = GetRegOrZero(args.src2);
+    listener_->OpVector(args, arg2);
+  }
+
+  void Vsetivli(const typename Decoder::VsetivliArgs& args) {
+    // Note: it's unclear whether args.avl should be treated similarly to x0 in Vsetvli or not.
+    // Keep implementation separate from Vsetvli to make it easier to adjust that code.
+    if (args.avl == 0) {
+      if (args.dst == 0) {
+        auto [vl_orig, vtype_orig] = GetVlAndVtypeCsr();
+        auto [vl, vtype] = listener_->Vtestvli(vl_orig, vtype_orig, args.vtype);
+        SetVlAndVtypeCsr(vl, vtype);
+      } else {
+        auto [vl, vtype] = listener_->Vsetvlimax(args.vtype);
+        SetVlAndVtypeCsr(vl, vtype);
+        listener_->SetReg(args.dst, vl);
+      }
+    } else {
+      auto [vl, vtype] = listener_->Vsetivli(args.avl, args.vtype);
+      SetVlAndVtypeCsr(vl, vtype);
+      SetRegOrIgnore(args.dst, vl);
+    }
+  }
+
+  void Vsetvl(const typename Decoder::VsetvlArgs& args) {
+    Register vtype_new = listener_->GetReg(args.src2);
+    if (args.src1 == 0) {
+      if (args.dst == 0) {
+        auto [vl_orig, vtype_orig] = GetVlAndVtypeCsr();
+        auto [vl, vtype] = listener_->Vtestvl(vl_orig, vtype_orig, vtype_new);
+        SetVlAndVtypeCsr(vl, vtype);
+      } else {
+        auto [vl, vtype] = listener_->Vsetvlmax(vtype_new);
+        SetVlAndVtypeCsr(vl, vtype);
+        listener_->SetReg(args.dst, vl);
+      }
+    } else {
+      Register avl = listener_->GetReg(args.src1);
+      auto [vl, vtype] = listener_->Vsetvl(avl, vtype_new);
+      SetVlAndVtypeCsr(vl, vtype);
+      SetRegOrIgnore(args.dst, vl);
+    }
+  }
+
+  void Vsetvli(const typename Decoder::VsetvliArgs& args) {
+    if (args.src == 0) {
+      if (args.dst == 0) {
+        auto [vl_orig, vtype_orig] = GetVlAndVtypeCsr();
+        auto [vl, vtype] = listener_->Vtestvli(vl_orig, vtype_orig, args.vtype);
+        SetVlAndVtypeCsr(vl, vtype);
+      } else {
+        auto [vl, vtype] = listener_->Vsetvlimax(args.vtype);
+        SetVlAndVtypeCsr(vl, vtype);
+        listener_->SetReg(args.dst, vl);
+      }
+    } else {
+      Register avl = listener_->GetReg(args.src);
+      auto [vl, vtype] = listener_->Vsetvli(avl, args.vtype);
+      SetVlAndVtypeCsr(vl, vtype);
+      SetRegOrIgnore(args.dst, vl);
+    }
   }
 
   void Store(const typename Decoder::StoreArgs& args) {
@@ -780,6 +920,85 @@ class SemanticsPlayer {
     }
   }
 
+  // TODO(b/260725458): stop using GetCsrProcessor helper class and define lambda in GetCsr instead.
+  // We need C++20 (https://wg21.link/P0428R2) for that.
+  class GetCsrProcessor {
+   public:
+    GetCsrProcessor(Register& reg, SemanticsListener* listener) : reg_(reg), listener_(listener) {}
+    template <CsrName kName>
+    void operator()() {
+      reg_ = listener_->template GetCsr<kName>();
+    }
+
+   private:
+    Register& reg_;
+    SemanticsListener* listener_;
+  };
+
+  std::tuple<bool, Register> GetCsr(CsrName csr) {
+    Register reg;
+    GetCsrProcessor get_csr(reg, listener_);
+    return {ProcessCsrNameAsTemplateParameter(csr, get_csr), reg};
+  }
+
+  // TODO(b/260725458): stop using SetCsrProcessor helper class and define lambda in SetCsr instead.
+  // We need C++20 (https://wg21.link/P0428R2) for that.
+  class SetCsrImmProcessor {
+   public:
+    SetCsrImmProcessor(uint8_t imm, SemanticsListener* listener) : imm_(imm), listener_(listener) {}
+    template <CsrName kName>
+    void operator()() {
+      // Csr registers with two top bits set are read-only.
+      // Attempts to write into such register raise illegal instruction exceptions.
+      if constexpr (CsrWritable(kName)) {
+        listener_->template SetCsr<kName>(imm_);
+      }
+    }
+
+   private:
+    uint8_t imm_;
+    SemanticsListener* listener_;
+  };
+
+  bool SetCsr(CsrName csr, uint8_t imm) {
+    // Csr registers with two top bits set are read-only.
+    // Attempts to write into such register raise illegal instruction exceptions.
+    if (!CsrWritable(csr)) {
+      return false;
+    }
+    SetCsrImmProcessor set_csr(imm, listener_);
+    return ProcessCsrNameAsTemplateParameter(csr, set_csr);
+  }
+
+  // TODO(b/260725458): stop using SetCsrProcessor helper class and define lambda in SetCsr instead.
+  // We need C++20 (https://wg21.link/P0428R2) for that.
+  class SetCsrProcessor {
+   public:
+    SetCsrProcessor(Register reg, SemanticsListener* listener) : reg_(reg), listener_(listener) {}
+    template <CsrName kName>
+    void operator()() {
+      // Csr registers with two top bits set are read-only.
+      // Attempts to write into such register raise illegal instruction exceptions.
+      if constexpr (CsrWritable(kName)) {
+        listener_->template SetCsr<kName>(reg_);
+      }
+    }
+
+   private:
+    Register reg_;
+    SemanticsListener* listener_;
+  };
+
+  bool SetCsr(CsrName csr, Register reg) {
+    // Csr registers with two top bits set are read-only.
+    // Attempts to write into such register raise illegal instruction exceptions.
+    if (!CsrWritable(csr)) {
+      return false;
+    }
+    SetCsrProcessor set_csr(reg, listener_);
+    return ProcessCsrNameAsTemplateParameter(csr, set_csr);
+  }
+
   // Floating point instructions in RISC-V are encoded in a way where you may find out size of
   // operand (single-precision, double-precision, half-precision or quad-precesion; the latter
   // two optional) from the instruction encoding without determining the full form of instruction.
@@ -814,6 +1033,17 @@ class SemanticsPlayer {
   template <typename FloatType>
   void NanBoxAndSetFpReg(uint8_t reg, FpRegister value) {
     listener_->template NanBoxAndSetFpReg<FloatType>(reg, value);
+  }
+
+  std::tuple<Register, Register> GetVlAndVtypeCsr() {
+    Register vl_orig = listener_->template GetCsr<CsrName::kVl>();
+    Register vtype_orig = listener_->template GetCsr<CsrName::kVtype>();
+    return {vl_orig, vtype_orig};
+  }
+
+  void SetVlAndVtypeCsr(Register vl, Register vtype) {
+    listener_->template SetCsr<CsrName::kVtype>(vtype);
+    listener_->template SetCsr<CsrName::kVl>(vl);
   }
 
   SemanticsListener* listener_;

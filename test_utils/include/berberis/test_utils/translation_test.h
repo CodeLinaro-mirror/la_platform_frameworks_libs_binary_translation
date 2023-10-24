@@ -14,27 +14,24 @@
  * limitations under the License.
  */
 
-#include "berberis/intrinsics/intrinsics.h"
+#ifndef BERBERIS_TEST_UTILS_TRANSLATION_TEST_H_
+#define BERBERIS_TEST_UTILS_TRANSLATION_TEST_H_
 
-#include <cstdint>
-#include <tuple>
+#include "gtest/gtest.h"
 
-namespace berberis::intrinsics {
+#include "berberis/runtime/berberis.h"
 
-// TODO(b/260725458): stop using __builtin_popcount after C++20 would become available.
-template <>
-std::tuple<int64_t> Cpop<int32_t>(int32_t src) {
-  return {__builtin_popcount(src)};
-}
+namespace berberis {
 
-// TODO(b/260725458): stop using __builtin_popcountll after C++20 would become available.
-template <>
-std::tuple<int64_t> Cpop<int64_t>(int64_t src) {
-  return {__builtin_popcountll(src)};
-}
+// This test initializes the Berberis runtime before running.
+class TranslationTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    ::testing::Test::SetUp();
+    InitBerberis();
+  }
+};
 
-std::tuple<uint64_t> Slliuw(uint32_t src, uint8_t imm) {
-  return {uint64_t{src} << imm};
-}
+}  // namespace berberis
 
-}  // namespace berberis::intrinsics
+#endif  // BERBERIS_TEST_UTILS_TRANSLATION_TEST_H_

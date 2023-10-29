@@ -14,24 +14,20 @@
  * limitations under the License.
  */
 
-#ifndef BERBERIS_FP_REGS_TEST_H_
-#define BERBERIS_FP_REGS_TEST_H_
-
-#include <cstdint>
-
-#include "berberis/base/bit_util.h"
+#include "berberis/native_bridge/native_bridge.h"
 
 namespace berberis {
 
-inline constexpr class FPValueToFPReg {
- public:
-  uint64_t operator()(uint64_t value) const { return value; }
-  uint64_t operator()(float value) const {
-    return bit_cast<uint32_t>(value) | 0xffff'ffff'0000'0000;
-  }
-  uint64_t operator()(double value) const { return bit_cast<uint64_t>(value); }
-} kFPValueToFPReg;
+const char* kGuestIsa = "riscv64";
+
+const char* kSupportedLibraryPathSubstring = "/lib/riscv64";
+
+const android::NativeBridgeRuntimeValues kNativeBridgeRuntimeValues = {
+    .os_arch = "riscv64",
+    .cpu_abi = "riscv64",
+    .cpu_abi2 = nullptr,
+    .supported_abis = nullptr,
+    .abi_count = 0,
+};
 
 }  // namespace berberis
-
-#endif  // BERBERIS_FP_REGS_TEST_H_

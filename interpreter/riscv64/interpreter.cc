@@ -38,7 +38,7 @@
 #include "berberis/runtime_primitives/recovery_code.h"
 
 #include "faulty_memory_accesses.h"
-#include "fp_regs.h"
+#include "regs.h"
 
 namespace berberis {
 
@@ -428,7 +428,7 @@ class Interpreter {
   using TailProcessing = intrinsics::TailProcessing;
   using InactiveProcessing = intrinsics::InactiveProcessing;
 
-  enum class VectorSelecteElementWidth {
+  enum class VectorSelectElementWidth {
     k8bit = 0b000,
     k16bit = 0b001,
     k32bit = 0b010,
@@ -478,14 +478,14 @@ class Interpreter {
     if (static_cast<std::make_signed_t<Register>>(vtype) < 0) {
       return Unimplemented();
     }
-    switch (static_cast<VectorSelecteElementWidth>((vtype >> 3) & 0b111)) {
-      case VectorSelecteElementWidth::k8bit:
+    switch (static_cast<VectorSelectElementWidth>((vtype >> 3) & 0b111)) {
+      case VectorSelectElementWidth::k8bit:
         return OpVector<uint8_t>(args, vtype, extra_args...);
-      case VectorSelecteElementWidth::k16bit:
+      case VectorSelectElementWidth::k16bit:
         return OpVector<uint16_t>(args, vtype, extra_args...);
-      case VectorSelecteElementWidth::k32bit:
+      case VectorSelectElementWidth::k32bit:
         return OpVector<uint32_t>(args, vtype, extra_args...);
-      case VectorSelecteElementWidth::k64bit:
+      case VectorSelectElementWidth::k64bit:
         return OpVector<uint64_t>(args, vtype, extra_args...);
       default:
         return Unimplemented();
@@ -556,6 +556,15 @@ class Interpreter {
       case Decoder::VOpViOpcode::kVrsubvi:
         return OpVectorvx<intrinsics::Vrsubvx<ElementType, vta>, ElementType, vlmul, vta>(
             args.dst, args.src, args.imm);
+      case Decoder::VOpViOpcode::kVandvi:
+        return OpVectorvx<intrinsics::Vandvx<ElementType, vta>, ElementType, vlmul, vta>(
+            args.dst, args.src, args.imm);
+      case Decoder::VOpViOpcode::kVorvi:
+        return OpVectorvx<intrinsics::Vorvx<ElementType, vta>, ElementType, vlmul, vta>(
+            args.dst, args.src, args.imm);
+      case Decoder::VOpViOpcode::kVxorvi:
+        return OpVectorvx<intrinsics::Vxorvx<ElementType, vta>, ElementType, vlmul, vta>(
+            args.dst, args.src, args.imm);
       default:
         Unimplemented();
     }
@@ -569,6 +578,15 @@ class Interpreter {
             args.dst, args.src1, args.src2);
       case Decoder::VOpVvOpcode::kVsubvv:
         return OpVectorvv<intrinsics::Vsubvv<ElementType, vta>, ElementType, vlmul, vta>(
+            args.dst, args.src1, args.src2);
+      case Decoder::VOpVvOpcode::kVandvv:
+        return OpVectorvv<intrinsics::Vandvv<ElementType, vta>, ElementType, vlmul, vta>(
+            args.dst, args.src1, args.src2);
+      case Decoder::VOpVvOpcode::kVorvv:
+        return OpVectorvv<intrinsics::Vorvv<ElementType, vta>, ElementType, vlmul, vta>(
+            args.dst, args.src1, args.src2);
+      case Decoder::VOpVvOpcode::kVxorvv:
+        return OpVectorvv<intrinsics::Vxorvv<ElementType, vta>, ElementType, vlmul, vta>(
             args.dst, args.src1, args.src2);
       default:
         Unimplemented();
@@ -586,6 +604,15 @@ class Interpreter {
             args.dst, args.src1, arg2);
       case Decoder::VOpVxOpcode::kVrsubvx:
         return OpVectorvx<intrinsics::Vrsubvx<ElementType, vta>, ElementType, vlmul, vta>(
+            args.dst, args.src1, arg2);
+      case Decoder::VOpVxOpcode::kVandvx:
+        return OpVectorvx<intrinsics::Vandvx<ElementType, vta>, ElementType, vlmul, vta>(
+            args.dst, args.src1, arg2);
+      case Decoder::VOpVxOpcode::kVorvx:
+        return OpVectorvx<intrinsics::Vorvx<ElementType, vta>, ElementType, vlmul, vta>(
+            args.dst, args.src1, arg2);
+      case Decoder::VOpVxOpcode::kVxorvx:
+        return OpVectorvx<intrinsics::Vxorvx<ElementType, vta>, ElementType, vlmul, vta>(
             args.dst, args.src1, arg2);
       default:
         Unimplemented();
@@ -656,6 +683,15 @@ class Interpreter {
       case Decoder::VOpViOpcode::kVrsubvi:
         return OpVectorvx<intrinsics::Vrsubvxm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
             args.dst, args.src, args.imm);
+      case Decoder::VOpViOpcode::kVandvi:
+        return OpVectorvx<intrinsics::Vandvxm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
+            args.dst, args.src, args.imm);
+      case Decoder::VOpViOpcode::kVorvi:
+        return OpVectorvx<intrinsics::Vorvxm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
+            args.dst, args.src, args.imm);
+      case Decoder::VOpViOpcode::kVxorvi:
+        return OpVectorvx<intrinsics::Vxorvxm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
+            args.dst, args.src, args.imm);
       default:
         Unimplemented();
     }
@@ -672,6 +708,15 @@ class Interpreter {
             args.dst, args.src1, args.src2);
       case Decoder::VOpVvOpcode::kVsubvv:
         return OpVectorvv<intrinsics::Vsubvvm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
+            args.dst, args.src1, args.src2);
+      case Decoder::VOpVvOpcode::kVandvv:
+        return OpVectorvv<intrinsics::Vandvvm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
+            args.dst, args.src1, args.src2);
+      case Decoder::VOpVvOpcode::kVorvv:
+        return OpVectorvv<intrinsics::Vorvvm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
+            args.dst, args.src1, args.src2);
+      case Decoder::VOpVvOpcode::kVxorvv:
+        return OpVectorvv<intrinsics::Vxorvvm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
             args.dst, args.src1, args.src2);
       default:
         Unimplemented();
@@ -692,6 +737,15 @@ class Interpreter {
             args.dst, args.src1, arg2);
       case Decoder::VOpVxOpcode::kVrsubvx:
         return OpVectorvx<intrinsics::Vrsubvxm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
+            args.dst, args.src1, arg2);
+      case Decoder::VOpVxOpcode::kVandvx:
+        return OpVectorvx<intrinsics::Vandvxm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
+            args.dst, args.src1, arg2);
+      case Decoder::VOpVxOpcode::kVorvx:
+        return OpVectorvx<intrinsics::Vorvxm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
+            args.dst, args.src1, arg2);
+      case Decoder::VOpVxOpcode::kVxorvx:
+        return OpVectorvx<intrinsics::Vxorvxm<ElementType, vta, vma>, ElementType, vlmul, vta, vma>(
             args.dst, args.src1, arg2);
       default:
         Unimplemented();
@@ -856,10 +910,10 @@ class Interpreter {
 
   void CheckRegIsValid(uint8_t reg) const {
     CHECK_GT(reg, 0u);
-    CHECK_LE(reg, arraysize(state_->cpu.x));
+    CHECK_LE(reg, std::size(state_->cpu.x));
   }
 
-  void CheckFpRegIsValid(uint8_t reg) const { CHECK_LT(reg, arraysize(state_->cpu.f)); }
+  void CheckFpRegIsValid(uint8_t reg) const { CHECK_LT(reg, std::size(state_->cpu.f)); }
 
   ThreadState* state_;
   bool branch_taken_;

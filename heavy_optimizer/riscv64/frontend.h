@@ -248,30 +248,49 @@ class HeavyOptimizerFrontend {
   }
 
   template <typename FloatType>
-  void NanBoxAndSetFpReg(uint8_t reg, FpRegister value) {
-    CHECK_LE(reg, kNumGuestFpRegs);
+  void NanBoxFpReg(FpRegister value) {
     if (host_platform::kHasAVX) {
       builder_.Gen<x86_64::MacroNanBoxFloat32AVX>(value.machine_reg(), value.machine_reg());
     } else {
       builder_.Gen<x86_64::MacroNanBoxFloat32>(value.machine_reg());
     }
+  }
+
+  template <typename FloatType>
+  void NanBoxAndSetFpReg(uint8_t reg, FpRegister value) {
+    CHECK_LE(reg, kNumGuestFpRegs);
+    NanBoxFpReg<FloatType>(value);
     builder_.GenSetSimd<8>(GetThreadStateFRegOffset(reg), value.machine_reg());
   }
 
   template <typename DataType>
-  FpRegister LoadFp(Register /* arg */, int16_t /* offset */) {
-    Unimplemented();
-    return {};
+  FpRegister LoadFp(Register arg, int16_t offset) {
+    auto res = AllocTempSimdReg();
+    if constexpr (std::is_same_v<DataType, Float32>) {
+      Gen<x86_64::MovssXRegMemBaseDisp>(res.machine_reg(), arg, offset);
+    } else if constexpr (std::is_same_v<DataType, Float64>) {
+      Gen<x86_64::MovsdXRegMemBaseDisp>(res.machine_reg(), arg, offset);
+    } else {
+      static_assert(kDependentTypeFalse<DataType>);
+    }
+    return res;
   }
 
   template <typename DataType>
-  void StoreFp(Register /* arg */, int16_t /* offset */, FpRegister /* data */) {
-    Unimplemented();
+  void StoreFp(Register arg, int16_t offset, FpRegister data) {
+    if constexpr (std::is_same_v<DataType, Float32>) {
+      Gen<x86_64::MovssMemBaseDispXReg>(arg, offset, data.machine_reg());
+    } else if constexpr (std::is_same_v<DataType, Float64>) {
+      Gen<x86_64::MovsdMemBaseDispXReg>(arg, offset, data.machine_reg());
+    } else {
+      static_assert(kDependentTypeFalse<DataType>);
+    }
   }
 
-  FpRegister Fmv(FpRegister /* arg */) {
-    Unimplemented();
-    return {};
+  FpRegister Fmv(FpRegister arg) {
+    auto res = AllocTempSimdReg();
+    Gen<PseudoCopy>(res.machine_reg(), arg.machine_reg(), 16);
+    return res;
   }
 
   //
@@ -369,7 +388,8 @@ class HeavyOptimizerFrontend {
             typename... AssemblerArgType,
             std::enable_if_t<std::is_same_v<std::decay_t<AssemblerResType>, void>, bool> = true>
   void CallIntrinsic(AssemblerArgType... args) {
-    if (TryInlineIntrinsicForHeavyOptimizer<kFunction>(&builder_, GetFlagsRegister(), args...)) {
+    if (TryInlineIntrinsicForHeavyOptimizerVoid<kFunction>(
+            &builder_, GetFlagsRegister(), args...)) {
       return;
     }
 
@@ -466,12 +486,21 @@ class HeavyOptimizerFrontend {
 };
 
 template <>
+[[nodiscard]] inline HeavyOptimizerFrontend::FpRegister
+HeavyOptimizerFrontend::GetFRegAndUnboxNan<intrinsics::Float64>(uint8_t reg) {
+  return GetFpReg(reg);
+}
+
+template <>
+inline void HeavyOptimizerFrontend::NanBoxFpReg<intrinsics::Float64>(FpRegister) {}
+
+template <>
 [[nodiscard]] inline HeavyOptimizerFrontend::Register
 HeavyOptimizerFrontend::GetCsr<CsrName::kFCsr>() {
   auto csr_reg = AllocTempReg();
   auto tmp = AllocTempReg();
   bool inline_successful = TryInlineIntrinsicForHeavyOptimizer<&intrinsics::FeGetExceptions>(
-      &builder_, GetFlagsRegister(), tmp);
+      &builder_, tmp, GetFlagsRegister());
   CHECK(inline_successful);
   Gen<x86_64::MovzxbqRegMemBaseDisp>(
       csr_reg, x86_64::kMachineRegRBP, kCsrFieldOffset<CsrName::kFrm>);

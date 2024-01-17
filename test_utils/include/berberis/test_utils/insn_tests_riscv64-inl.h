@@ -40,6 +40,11 @@
 #error "TESTSUITE is undefined"
 #endif
 
+#if !(defined(TESTING_INTERPRETER) || defined(TESTING_LITE_TRANSLATOR) || \
+      defined(TESTING_HEAVY_OPTIMIZER))
+#error "One of TESTING_INTERPRETER, TESTING_LITE_TRANSLATOR, TESTING_HEAVY_OPTIMIZER must be defined
+#endif
+
 // TODO(b/276787675): remove these files from interpreter when they are no longer needed there.
 // Maybe extract FPvalueToFPReg and TupleMap to a separate header?
 inline constexpr class FPValueToFPReg {
@@ -140,6 +145,12 @@ class TESTSUITE : public ::testing::Test {
   void TestCBeqzBnez(uint16_t insn_bytes, uint64_t value, int16_t expected_offset) {
     auto code_start = ToGuestAddr(&insn_bytes);
     state_.cpu.insn_addr = code_start;
+    if (expected_offset == 0) {
+      // Emit pending signal so we don't get stuck in an infinite loop.
+      state_.pending_signals_status = kPendingSignalsPresent;
+    } else {
+      state_.pending_signals_status = kPendingSignalsDisabled;
+    }
     SetXReg<9>(state_.cpu, value);
     EXPECT_TRUE(RunOneInstruction<2>(&state_, state_.cpu.insn_addr + expected_offset));
     EXPECT_EQ(state_.cpu.insn_addr, code_start + expected_offset);
@@ -167,6 +178,12 @@ class TESTSUITE : public ::testing::Test {
   void TestCJ(uint16_t insn_bytes, int16_t expected_offset) {
     auto code_start = ToGuestAddr(&insn_bytes);
     state_.cpu.insn_addr = code_start;
+    if (expected_offset == 0) {
+      // Emit pending signal so we don't get stuck in an infinite loop.
+      state_.pending_signals_status = kPendingSignalsPresent;
+    } else {
+      state_.pending_signals_status = kPendingSignalsDisabled;
+    }
     EXPECT_TRUE(RunOneInstruction<2>(&state_, state_.cpu.insn_addr + expected_offset));
     EXPECT_EQ(state_.cpu.insn_addr, code_start + expected_offset);
   }
@@ -1109,6 +1126,8 @@ TEST_F(TESTSUITE, CsrInstructions) {
   TestFrm(0x0020f173, 0, 0);
 }
 
+#if defined(TESTING_INTERPRETER) || defined(TESTING_LITE_TRANSLATOR)
+
 TEST_F(TESTSUITE, FCsrRegister) {
   fenv_t saved_environment;
   EXPECT_EQ(fegetenv(&saved_environment), 0);
@@ -1151,6 +1170,8 @@ TEST_F(TESTSUITE, FCsrRegister) {
 
   EXPECT_EQ(fesetenv(&saved_environment), 0);
 }
+
+#endif  // defined(TESTING_INTERPRETER) || defined(TESTING_LITE_TRANSLATOR)
 
 TEST_F(TESTSUITE, FFlagsRegister) {
   fenv_t saved_environment;
@@ -1234,7 +1255,7 @@ TEST_F(TESTSUITE, OpInstructions) {
   // Xor
   TestOp(0x003140b3, {{0b0101, 0b0011, 0b0110}});
   // Sll
-  TestOp(0x003110b3, {{0b1010, 3, 0b1010'000}});
+  TestOp(0x003110b3, {{0b1010, 3, 0b0101'0000}});
   // Srl
   TestOp(0x003150b3, {{0xf000'0000'0000'0000ULL, 12, 0x000f'0000'0000'0000ULL}});
   // Sra
@@ -1685,7 +1706,6 @@ TEST_F(TESTSUITE, StoreInstructions) {
   // Sd
   TestStore(0x0020b423, kDataToStore);
 }
-
 TEST_F(TESTSUITE, FmaInstructions) {
   // Fmadd.S
   TestFma(0x203170c3, {std::tuple{1.0f, 2.0f, 3.0f, 5.0f}});
@@ -1971,6 +1991,8 @@ TEST_F(TESTSUITE, StoreFpInstructions) {
   TestStoreFp(0x0020b427, kDataToStore);
 }
 
+#if defined(TESTING_INTERPRETER) || defined(TESTING_LITE_TRANSLATOR)
+
 TEST_F(TESTSUITE, TestVsetvl) {
   constexpr uint64_t kVill =
       0b1'0000000'00000000'00000000'00000000'00000000'00000000'00000000'00000000;
@@ -2088,3 +2110,5 @@ TEST_F(TESTSUITE, TestVsetvl) {
               // Invalid change of vtype.
               {8, 001, 128, ~0ULL, 0, kVill}});
 }
+
+#endif  // defined(TESTING_INTERPRETER) || defined(TESTING_LITE_TRANSLATOR)

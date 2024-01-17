@@ -17,6 +17,7 @@
 #include "berberis/guest_state/guest_state.h"
 
 #include "berberis/base/checks.h"
+#include "berberis/guest_state/guest_state_arch.h"
 #include "berberis/guest_state/guest_state_opaque.h"
 
 namespace berberis {
@@ -71,8 +72,25 @@ std::size_t GetThreadStateRegOffset(int reg) {
   return offsetof(ThreadState, cpu.x[reg]);
 }
 
-std::size_t GetThreadStateSimdRegOffset(int simd_reg) {
-  return offsetof(ThreadState, cpu.v[simd_reg]);
+std::size_t GetThreadStateFRegOffset(int freg) {
+  return offsetof(ThreadState, cpu.f[freg]);
+}
+
+std::size_t GetThreadStateVRegOffset(int vreg) {
+  return offsetof(ThreadState, cpu.v[vreg]);
+}
+
+std::size_t GetThreadStateSimdRegOffset(int /* simd_reg */) {
+  // RISCV64 does not have simd registers.
+  UNREACHABLE();
+}
+
+std::size_t GetThreadStateReservationAddressOffset() {
+  return offsetof(ThreadState, cpu.reservation_address);
+}
+
+std::size_t GetThreadStateReservationValueOffset() {
+  return offsetof(ThreadState, cpu.reservation_value);
 }
 
 bool IsSimdOffset(size_t offset) {
@@ -81,6 +99,18 @@ bool IsSimdOffset(size_t offset) {
 }
 
 bool DoesCpuStateHaveFlags() {
+  return false;
+}
+
+bool DoesCpuStateHaveDedicatedFpRegs() {
+  return true;
+}
+
+bool DoesCpuStateHaveDedicatedVecRegs() {
+  return true;
+}
+
+bool DoesCpuStateHaveDedicatedSimdRegs() {
   return false;
 }
 

@@ -17,11 +17,13 @@
 #ifndef BERBERIS_INTRINSICS_RISCV64_VECTOR_INTRINSICS_H_
 #define BERBERIS_INTRINSICS_RISCV64_VECTOR_INTRINSICS_H_
 
+#include <climits>  // CHAR_BIT
 #include <cstdint>
 #include <limits>
 #include <tuple>
 #include <type_traits>
 
+#include "berberis/base/bit_util.h"
 #include "berberis/base/dependent_false.h"
 #include "berberis/intrinsics/intrinsics.h"        // PreferredIntrinsicsImplementation
 #include "berberis/intrinsics/intrinsics_float.h"  // Float32/Float64
@@ -74,14 +76,7 @@ inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
                                                     SourceType... source) {
   static_assert(((std::is_same_v<SourceType, SIMD128Register> ||
                   std::is_same_v<SourceType, ElementType>)&&...));
-  constexpr auto fill_value = [] {
-    if constexpr (std::is_integral_v<ElementType>) {
-      return std::numeric_limits<std::make_unsigned_t<ElementType>>::max();
-    } else {
-      return std::numeric_limits<
-          std::make_unsigned_t<typename TypeTraits<ElementType>::Int>>::max();
-    }
-  }();
+  constexpr ElementType fill_value = ~ElementType{0};
   if (vstart < 0) {
     vstart = 0;
   }
@@ -90,18 +85,22 @@ inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
   }
   if (vstart == 0 && vl == static_cast<int>(16 / sizeof(ElementType))) {
     for (int index = vstart; index < vl; ++index) {
-      result.Set<ElementType>(lambda(VectorElement<ElementType>(source, index)...), index);
+      result.Set(lambda(VectorElement<ElementType>(result, index),
+                        VectorElement<ElementType>(source, index)...),
+                 index);
     }
   } else {
-    #pragma clang loop unroll(disable)
+#pragma clang loop unroll(disable)
     for (int index = vstart; index < vl; ++index) {
-      result.Set<ElementType>(lambda(VectorElement<ElementType>(source, index)...), index);
+      result.Set(lambda(VectorElement<ElementType>(result, index),
+                        VectorElement<ElementType>(source, index)...),
+                 index);
     }
     if constexpr (vta == TailProcessing::kAgnostic) {
       if (vl < static_cast<int>(16 / sizeof(ElementType))) {
-        #pragma clang loop unroll(disable)
+#pragma clang loop unroll(disable)
         for (int index = vl; index < 16 / static_cast<int>(sizeof(ElementType)); ++index) {
-          result.Set<ElementType>(fill_value, index);
+          result.Set(fill_value, index);
         }
       }
     }
@@ -123,33 +122,28 @@ inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
                                                     SourceType... source) {
   static_assert(((std::is_same_v<SourceType, SIMD128Register> ||
                   std::is_same_v<SourceType, ElementType>)&&...));
-  constexpr auto fill_value = [] {
-    if constexpr (std::is_integral_v<ElementType>) {
-      return std::numeric_limits<std::make_unsigned_t<ElementType>>::max();
-    } else {
-      return std::numeric_limits<
-          std::make_unsigned_t<typename TypeTraits<ElementType>::Int>>::max();
-    }
-  }();
+  constexpr ElementType fill_value = ~ElementType{0};
   if (vstart < 0) {
     vstart = 0;
   }
   if (vl > static_cast<int>(16 / sizeof(ElementType))) {
     vl = 16 / sizeof(ElementType);
   }
-  #pragma clang loop unroll(disable)
+#pragma clang loop unroll(disable)
   for (int index = vstart; index < vl; ++index) {
     if (mask & (1 << index)) {
-      result.Set<ElementType>(lambda(VectorElement<ElementType>(source, index)...), index);
+      result.Set(lambda(VectorElement<ElementType>(result, index),
+                        VectorElement<ElementType>(source, index)...),
+                 index);
     } else if constexpr (vma == InactiveProcessing::kAgnostic) {
-      result.Set<ElementType>(fill_value, index);
+      result.Set(fill_value, index);
     }
   }
   if constexpr (vta == TailProcessing::kAgnostic) {
     if (vl < static_cast<int>(16 / sizeof(ElementType))) {
-      #pragma clang loop unroll(disable)
+#pragma clang loop unroll(disable)
       for (int index = vl; index < 16 / static_cast<int>(sizeof(ElementType)); ++index) {
-        result.Set<ElementType>(fill_value, index);
+        result.Set(fill_value, index);
       }
     }
   }
@@ -167,7 +161,7 @@ inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
                                           SIMD128Register result,                                 \
                                           DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS parameters) { \
     return VectorArithmetic<ElementType, vta>(                                                    \
-        [](auto... args) {                                                                        \
+        []([[maybe_unused]] auto vd, auto... args) {                                              \
           static_assert((std::is_same_v<decltype(args), ElementType> && ...));                    \
           arithmetic;                                                                             \
         },                                                                                        \
@@ -188,7 +182,7 @@ inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
       SIMD128Register result,                                                                     \
       DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS parameters) {                                     \
     return VectorArithmetic<ElementType, vta, vma>(                                               \
-        [](auto... args) {                                                                        \
+        []([[maybe_unused]] auto vd, auto... args) {                                              \
           static_assert((std::is_same_v<decltype(args), ElementType> && ...));                    \
           arithmetic;                                                                             \
         },                                                                                        \
@@ -217,16 +211,53 @@ DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(or, (args | ...))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(or, (args | ...))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(xor, (args ^ ...))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(xor, (args ^ ...))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(mseq, (args == ...))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(mseq, (args == ...))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(msne, (args != ...))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(msne, (args != ...))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(mslt, (args < ...))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(mslt, (args < ...))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(msle, (args <= ...))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(msle, (args <= ...))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(msgt, (args > ...))
-
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(mseq,
+                                   ElementType{
+                                       static_cast<typename ElementType::BaseType>((args == ...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(mseq,
+                                   ElementType{
+                                       static_cast<typename ElementType::BaseType>((args == ...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(msne,
+                                   ElementType{
+                                       static_cast<typename ElementType::BaseType>((args != ...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(msne,
+                                   ElementType{
+                                       static_cast<typename ElementType::BaseType>((args != ...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(mslt,
+                                   ElementType{
+                                       static_cast<typename ElementType::BaseType>((args < ...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(mslt,
+                                   ElementType{
+                                       static_cast<typename ElementType::BaseType>((args < ...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(msle,
+                                   ElementType{
+                                       static_cast<typename ElementType::BaseType>((args <= ...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(msle,
+                                   ElementType{
+                                       static_cast<typename ElementType::BaseType>((args <= ...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(msgt,
+                                   ElementType{
+                                       static_cast<typename ElementType::BaseType>((args > ...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(sl, auto [arg1, arg2] = std::tuple{args...}; (arg1 << arg2))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(sl, auto [arg1, arg2] = std::tuple{args...}; (arg1 << arg2))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(sr, auto [arg1, arg2] = std::tuple{args...}; (arg1 >> arg2))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(sr, auto [arg1, arg2] = std::tuple{args...}; (arg1 >> arg2))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(macc, auto [arg1, arg2] = std::tuple{args...};
+                                   ((arg2 * arg1) + vd))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(macc, auto [arg1, arg2] = std::tuple{args...};
+                                   ((arg2 * arg1) + vd))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(nmsac, auto [arg1, arg2] = std::tuple{args...};
+                                   (-(arg2 * arg1) + vd))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(nmsac, auto [arg1, arg2] = std::tuple{args...};
+                                   (-(arg2 * arg1) + vd))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(madd, auto [arg1, arg2] = std::tuple{args...};
+                                   ((arg2 * vd) + arg1))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(madd, auto [arg1, arg2] = std::tuple{args...};
+                                   ((arg2 * vd) + arg1))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(nmsub, auto [arg1, arg2] = std::tuple{args...};
+                                   (-(arg2 * vd) + arg1))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(nmsub, auto [arg1, arg2] = std::tuple{args...};
+                                   (-(arg2 * vd) + arg1))
 #undef DEFINE_ARITHMETIC_INTRINSIC
 #undef DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS
 

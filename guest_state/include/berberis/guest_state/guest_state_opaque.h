@@ -92,8 +92,19 @@ void SetShadowCallStackPointer(CPUState& cpu, GuestAddr scs_sp);
 void InitFloatingPointState();
 
 std::size_t GetThreadStateRegOffset(int reg);
+
+bool DoesCpuStateHaveDedicatedFpRegs();
+std::size_t GetThreadStateFRegOffset(int freg);
+
+bool DoesCpuStateHaveDedicatedVecRegs();
+std::size_t GetThreadStateVRegOffset(int vreg);
+
+bool DoesCpuStateHaveDedicatedSimdRegs();
 std::size_t GetThreadStateSimdRegOffset(int simd_reg);
 bool IsSimdOffset(size_t offset);
+
+std::size_t GetThreadStateReservationAddressOffset();
+std::size_t GetThreadStateReservationValueOffset();
 
 bool DoesCpuStateHaveFlags();
 std::size_t GetThreadStateFlagOffset();

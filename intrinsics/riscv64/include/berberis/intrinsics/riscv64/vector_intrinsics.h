@@ -17,6 +17,7 @@
 #ifndef BERBERIS_INTRINSICS_RISCV64_VECTOR_INTRINSICS_H_
 #define BERBERIS_INTRINSICS_RISCV64_VECTOR_INTRINSICS_H_
 
+#include <algorithm>
 #include <climits>  // CHAR_BIT
 #include <cstdint>
 #include <limits>
@@ -43,7 +44,7 @@ enum class InactiveProcessing {
 };
 
 template <typename ElementType>
-int MaskForRegisterInSequence(SIMD128Register mask, size_t register_in_sequence) {
+[[nodiscard]] int MaskForRegisterInSequence(SIMD128Register mask, size_t register_in_sequence) {
   if constexpr (sizeof(ElementType) == sizeof(uint8_t)) {
     return mask.Get<uint16_t>(register_in_sequence);
   } else if constexpr (sizeof(ElementType) == sizeof(uint16_t)) {
@@ -57,95 +58,180 @@ int MaskForRegisterInSequence(SIMD128Register mask, size_t register_in_sequence)
   }
 }
 
-template <typename ElementType>
-inline ElementType VectorElement(SIMD128Register src, int index) {
-  return src.Get<ElementType>(index);
-}
-
-template <typename ElementType>
-inline ElementType VectorElement(ElementType src, int) {
-  return src;
-}
-
-// TODO(b/260725458): Pass lambda as template argument after C++20 would become available.
-template <typename ElementType, TailProcessing vta, typename Lambda, typename... SourceType>
-inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
-                                                    int vstart,
-                                                    int vl,
-                                                    SIMD128Register result,
-                                                    SourceType... source) {
-  static_assert(((std::is_same_v<SourceType, SIMD128Register> ||
-                  std::is_same_v<SourceType, ElementType>)&&...));
-  constexpr ElementType fill_value = ~ElementType{0};
-  if (vstart < 0) {
-    vstart = 0;
-  }
-  if (vl > static_cast<int>(16 / sizeof(ElementType))) {
-    vl = 16 / sizeof(ElementType);
-  }
-  if (vstart == 0 && vl == static_cast<int>(16 / sizeof(ElementType))) {
-    for (int index = vstart; index < vl; ++index) {
-      result.Set(lambda(VectorElement<ElementType>(result, index),
-                        VectorElement<ElementType>(source, index)...),
-                 index);
-    }
+// Naïve implementation for tests.  Also used on not-x86 platforms.
+[[nodiscard]] inline SIMD128Register MakeBitmaskFromVlForTests(size_t vl) {
+  if (vl == 128) {
+    return SIMD128Register(__int128(0));
   } else {
-#pragma clang loop unroll(disable)
-    for (int index = vstart; index < vl; ++index) {
-      result.Set(lambda(VectorElement<ElementType>(result, index),
-                        VectorElement<ElementType>(source, index)...),
-                 index);
-    }
-    if constexpr (vta == TailProcessing::kAgnostic) {
-      if (vl < static_cast<int>(16 / sizeof(ElementType))) {
-#pragma clang loop unroll(disable)
-        for (int index = vl; index < 16 / static_cast<int>(sizeof(ElementType)); ++index) {
-          result.Set(fill_value, index);
-        }
-      }
+    return SIMD128Register((~__int128(0)) << vl);
+  }
+}
+
+#ifndef __x86_64__
+[[nodiscard]] inline SIMD128Register MakeBitmaskFromVl(size_t vl) {
+  return MakeBitmaskFromVlForTests(vl);
+}
+#endif
+
+// Naïve implementation for tests.  Also used on not-x86 platforms.
+template <typename ElementType>
+[[nodiscard]] inline SIMD128Register BitMaskToSimdMaskForTests(size_t mask) {
+  constexpr ElementType kZeroValue = ElementType{0};
+  constexpr ElementType kFillValue = ~ElementType{0};
+  SIMD128Register result;
+  for (size_t index = 0; index < 16 / sizeof(ElementType); ++index) {
+    size_t bit = 1 << index;
+    if (mask & bit) {
+      result.Set(kFillValue, index);
+    } else {
+      result.Set(kZeroValue, index);
     }
   }
   return result;
 }
 
-// TODO(b/260725458): Pass lambda as template argument after C++20 would become available.
-template <typename ElementType,
-          TailProcessing vta,
-          InactiveProcessing vma,
-          typename Lambda,
-          typename... SourceType>
-inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
-                                                    int vstart,
-                                                    int vl,
-                                                    int mask,
-                                                    SIMD128Register result,
-                                                    SourceType... source) {
-  static_assert(((std::is_same_v<SourceType, SIMD128Register> ||
-                  std::is_same_v<SourceType, ElementType>)&&...));
-  constexpr ElementType fill_value = ~ElementType{0};
+#ifndef __x86_64__
+template <typename ElementType>
+[[nodiscard]] inline SIMD128Register BitMaskToSimdMask(size_t mask) {
+  return BitMaskToSimdMaskForTests<ElementType>(mask);
+}
+#endif
+
+template <auto kElement>
+[[nodiscard]] inline SIMD128Register VectorMaskedElementToForTests(SIMD128Register simd_mask,
+                                                                   SIMD128Register result) {
+  using ElementType = decltype(kElement);
+  constexpr int kElementsCount = static_cast<int>(16 / sizeof(ElementType));
+  for (int index = 0; index < kElementsCount; ++index) {
+    if (!simd_mask.Get<ElementType>(index)) {
+      result.Set(kElement, index);
+    }
+  }
+  return result;
+}
+
+#ifndef __x86_64__
+template <typename ElementType>
+[[nodiscard]] inline SIMD128Register VectorMaskedElementTo(SIMD128Register simd_mask,
+                                                           SIMD128Register result) {
+  return VectorMaskedElementToForTests(simd_mask, result);
+}
+#endif
+
+template <typename ElementType>
+[[nodiscard]] inline ElementType VectorElement(SIMD128Register src, int index) {
+  return src.Get<ElementType>(index);
+}
+
+template <typename ElementType>
+[[nodiscard]] inline ElementType VectorElement(ElementType src, int) {
+  return src;
+}
+
+template <typename ElementType>
+std::tuple<SIMD128Register> VMovTopHalfToBottom(SIMD128Register src) {
+  SIMD128Register result;
+  constexpr int kMaxCount = 16 / sizeof(ElementType);
+  for (int i = 0; i < kMaxCount / 2; ++i) {
+    result.Set<ElementType>(src.Get<ElementType>(kMaxCount / 2 + i), i);
+  }
+  return result;
+}
+
+template <typename ElementType, TailProcessing vta>
+SIMD128Register VectorMasking(int vstart, int vl, SIMD128Register dest, SIMD128Register result) {
+  constexpr int kElementsCount = static_cast<int>(16 / sizeof(ElementType));
   if (vstart < 0) {
     vstart = 0;
   }
-  if (vl > static_cast<int>(16 / sizeof(ElementType))) {
-    vl = 16 / sizeof(ElementType);
+  if (vl < 0) {
+    vl = 0;
   }
-#pragma clang loop unroll(disable)
-  for (int index = vstart; index < vl; ++index) {
-    if (mask & (1 << index)) {
-      result.Set(lambda(VectorElement<ElementType>(result, index),
-                        VectorElement<ElementType>(source, index)...),
-                 index);
-    } else if constexpr (vma == InactiveProcessing::kAgnostic) {
-      result.Set(fill_value, index);
+  if (vl > kElementsCount) {
+    vl = kElementsCount;
+  }
+  if (vstart == 0) [[likely]] {
+    if (vl == 16) [[likely]] {
+      return result;
+    }
+    SIMD128Register tail_bitmask = MakeBitmaskFromVl(vl * sizeof(ElementType) * 8);
+    if constexpr (vta == TailProcessing::kAgnostic) {
+      dest = result | tail_bitmask;
+    } else {
+      dest = (dest & tail_bitmask) | (result & ~tail_bitmask);
+    }
+  } else if (vstart > vl) [[unlikely]] {
+    if (vl == 16) [[likely]] {
+      return dest;
+    }
+    if constexpr (vta == TailProcessing::kAgnostic) {
+      SIMD128Register tail_bitmask = MakeBitmaskFromVl(vl * sizeof(ElementType) * 8);
+      dest |= tail_bitmask;
+    }
+  } else {
+    SIMD128Register start_bitmask = MakeBitmaskFromVl(vstart * sizeof(ElementType) * 8);
+    SIMD128Register tail_bitmask = MakeBitmaskFromVl(vl * sizeof(ElementType) * 8);
+    if constexpr (vta == TailProcessing::kAgnostic) {
+      dest = (dest & ~start_bitmask) | (result & start_bitmask) | tail_bitmask;
+    } else {
+      dest = (dest & (~start_bitmask | tail_bitmask)) | (result & start_bitmask & ~tail_bitmask);
     }
   }
-  if constexpr (vta == TailProcessing::kAgnostic) {
-    if (vl < static_cast<int>(16 / sizeof(ElementType))) {
-#pragma clang loop unroll(disable)
-      for (int index = vl; index < 16 / static_cast<int>(sizeof(ElementType)); ++index) {
-        result.Set(fill_value, index);
-      }
-    }
+  return dest;
+}
+
+template <typename ElementType, TailProcessing vta, InactiveProcessing vma>
+SIMD128Register VectorMasking(int vstart,
+                              int vl,
+                              int mask,
+                              SIMD128Register dest,
+                              SIMD128Register result,
+                              SIMD128Register result_mask) {
+  SIMD128Register simd_mask = BitMaskToSimdMask<ElementType>(mask);
+  if (vma == InactiveProcessing::kAgnostic) {
+    result |= ~simd_mask;
+  } else {
+    result = (result & simd_mask) | (result_mask & ~simd_mask);
+  }
+  return VectorMasking<ElementType, vta>(vstart, vl, dest, result);
+}
+
+template <typename ElementType, TailProcessing vta, InactiveProcessing vma>
+SIMD128Register VectorMasking(int vstart,
+                              int vl,
+                              int mask,
+                              SIMD128Register dest,
+                              SIMD128Register result) {
+  return VectorMasking<ElementType, vta, vma>(vstart,
+                                              vl,
+                                              mask,
+                                              dest,
+                                              result,
+                                              /*result_mask=*/dest);
+}
+
+// TODO(b/260725458): Pass lambda as template argument after C++20 would become available.
+template <typename ElementType, typename Lambda, typename... ParameterType>
+inline std::tuple<SIMD128Register> VectorProcessing(Lambda lambda, ParameterType... parameters) {
+  static_assert(((std::is_same_v<ParameterType, SIMD128Register> ||
+                  std::is_same_v<ParameterType, ElementType>)&&...));
+  SIMD128Register result;
+  constexpr int kElementsCount = static_cast<int>(16 / sizeof(ElementType));
+  for (int index = 0; index < kElementsCount; ++index) {
+    result.Set(lambda(VectorElement<ElementType>(parameters, index)...), index);
+  }
+  return result;
+}
+
+// TODO(b/260725458): Pass lambda as template argument after C++20 would become available.
+template <typename ElementType, typename Lambda, typename... ParameterType>
+inline std::tuple<SIMD128Register> VectorArithmeticW(Lambda lambda, ParameterType... parameters) {
+  static_assert(((std::is_same_v<ParameterType, SIMD128Register> ||
+                  std::is_same_v<ParameterType, ElementType>)&&...));
+  SIMD128Register result;
+  constexpr int kElementsCount = static_cast<int>(8 / sizeof(ElementType));
+  for (int index = 0; index < kElementsCount; ++index) {
+    result.Set(lambda(Widen(VectorElement<ElementType>(parameters, index))...), index);
   }
   return result;
 }
@@ -154,43 +240,34 @@ inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
 #define DEFINE_ARITHMETIC_INTRINSIC(Name, arithmetic, parameters, arguments)                      \
                                                                                                   \
   template <typename ElementType,                                                                 \
-            TailProcessing vta,                                                                   \
             enum PreferredIntrinsicsImplementation = kUseAssemblerImplementationIfPossible>       \
-  inline std::tuple<SIMD128Register> Name(int vstart,                                             \
-                                          int vl,                                                 \
-                                          SIMD128Register result,                                 \
-                                          DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS parameters) { \
-    return VectorArithmetic<ElementType, vta>(                                                    \
-        []([[maybe_unused]] auto vd, auto... args) {                                              \
+  inline std::tuple<SIMD128Register> Name(DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS parameters) { \
+    return VectorProcessing<ElementType>(                                                         \
+        [](auto... args) {                                                                        \
           static_assert((std::is_same_v<decltype(args), ElementType> && ...));                    \
           arithmetic;                                                                             \
         },                                                                                        \
-        vstart,                                                                                   \
-        vl,                                                                                       \
-        result,                                                                                   \
         DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS arguments);                                     \
-  }                                                                                               \
-                                                                                                  \
-  template <typename ElementType,                                                                 \
-            TailProcessing vta,                                                                   \
-            InactiveProcessing vma,                                                               \
-            enum PreferredIntrinsicsImplementation = kUseAssemblerImplementationIfPossible>       \
-  inline std::tuple<SIMD128Register> Name##m(                                                     \
-      int vstart,                                                                                 \
-      int vl,                                                                                     \
-      int mask,                                                                                   \
-      SIMD128Register result,                                                                     \
-      DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS parameters) {                                     \
-    return VectorArithmetic<ElementType, vta, vma>(                                               \
-        []([[maybe_unused]] auto vd, auto... args) {                                              \
-          static_assert((std::is_same_v<decltype(args), ElementType> && ...));                    \
-          arithmetic;                                                                             \
-        },                                                                                        \
-        vstart,                                                                                   \
-        vl,                                                                                       \
-        mask,                                                                                     \
-        result,                                                                                   \
-        DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS arguments);                                     \
+  }
+
+#define DEFINE_1OP_ARITHMETIC_INTRINSIC_M(name, ...)                 \
+  DEFINE_ARITHMETIC_INTRINSIC(V##name##m, return ({ __VA_ARGS__; }); \
+                              , (Int128 src), (src))
+#define DEFINE_2OP_ARITHMETIC_INTRINSIC_VS(name, ...)                 \
+  DEFINE_ARITHMETIC_INTRINSIC(V##name##vs, return ({ __VA_ARGS__; }); \
+                              , (ElementType src1, ElementType src2), (src1, src2))
+
+#define DEFINE_ARITHMETIC_INTRINSIC_W(Name, arithmetic, parameters, arguments)                     \
+                                                                                                   \
+  template <typename ElementType,                                                                  \
+            enum PreferredIntrinsicsImplementation = kUseAssemblerImplementationIfPossible>        \
+  inline std::tuple<SIMD128Register> Name(DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS parameters) {  \
+    return VectorArithmeticW<ElementType>(                                                         \
+        [](auto... args) {                                                                         \
+          static_assert((std::is_same_v<decltype(args), decltype(Widen(ElementType{0}))> && ...)); \
+          arithmetic;                                                                              \
+        },                                                                                         \
+        DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS arguments);                                      \
   }
 
 #define DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(name, ...)                 \
@@ -199,6 +276,18 @@ inline std::tuple<SIMD128Register> VectorArithmetic(Lambda lambda,
 #define DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(name, ...)                 \
   DEFINE_ARITHMETIC_INTRINSIC(V##name##vx, return ({ __VA_ARGS__; }); \
                               , (SIMD128Register src1, ElementType src2), (src1, src2))
+#define DEFINE_3OP_ARITHMETIC_INTRINSIC_VV(name, ...) \
+  DEFINE_ARITHMETIC_INTRINSIC(                        \
+      V##name##vv, return ({ __VA_ARGS__; });         \
+      , (SIMD128Register src1, SIMD128Register src2, SIMD128Register src3), (src1, src2, src3))
+#define DEFINE_3OP_ARITHMETIC_INTRINSIC_VX(name, ...) \
+  DEFINE_ARITHMETIC_INTRINSIC(                        \
+      V##name##vx, return ({ __VA_ARGS__; });         \
+      , (SIMD128Register src1, ElementType src2, SIMD128Register src3), (src1, src2, src3))
+
+#define DEFINE_2OP_ARITHMETIC_W_INTRINSIC_VV(name, ...)                 \
+  DEFINE_ARITHMETIC_INTRINSIC_W(V##name##vv, return ({ __VA_ARGS__; }); \
+                                , (SIMD128Register src1, SIMD128Register src2), (src1, src2))
 
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(add, (args + ...))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(add, (args + ...))
@@ -242,24 +331,62 @@ DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(sl, auto [arg1, arg2] = std::tuple{args...}; 
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(sl, auto [arg1, arg2] = std::tuple{args...}; (arg1 << arg2))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(sr, auto [arg1, arg2] = std::tuple{args...}; (arg1 >> arg2))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(sr, auto [arg1, arg2] = std::tuple{args...}; (arg1 >> arg2))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(macc, auto [arg1, arg2] = std::tuple{args...};
-                                   ((arg2 * arg1) + vd))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(macc, auto [arg1, arg2] = std::tuple{args...};
-                                   ((arg2 * arg1) + vd))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(nmsac, auto [arg1, arg2] = std::tuple{args...};
-                                   (-(arg2 * arg1) + vd))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(nmsac, auto [arg1, arg2] = std::tuple{args...};
-                                   (-(arg2 * arg1) + vd))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(madd, auto [arg1, arg2] = std::tuple{args...};
-                                   ((arg2 * vd) + arg1))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(madd, auto [arg1, arg2] = std::tuple{args...};
-                                   ((arg2 * vd) + arg1))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(nmsub, auto [arg1, arg2] = std::tuple{args...};
-                                   (-(arg2 * vd) + arg1))
-DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(nmsub, auto [arg1, arg2] = std::tuple{args...};
-                                   (-(arg2 * vd) + arg1))
+DEFINE_3OP_ARITHMETIC_INTRINSIC_VV(macc, auto [arg1, arg2, arg3] = std::tuple{args...};
+                                   ((arg2 * arg1) + arg3))
+DEFINE_3OP_ARITHMETIC_INTRINSIC_VX(macc, auto [arg1, arg2, arg3] = std::tuple{args...};
+                                   ((arg2 * arg1) + arg3))
+DEFINE_3OP_ARITHMETIC_INTRINSIC_VV(nmsac, auto [arg1, arg2, arg3] = std::tuple{args...};
+                                   (-(arg2 * arg1) + arg3))
+DEFINE_3OP_ARITHMETIC_INTRINSIC_VX(nmsac, auto [arg1, arg2, arg3] = std::tuple{args...};
+                                   (-(arg2 * arg1) + arg3))
+DEFINE_3OP_ARITHMETIC_INTRINSIC_VV(madd, auto [arg1, arg2, arg3] = std::tuple{args...};
+                                   ((arg2 * arg3) + arg1))
+DEFINE_3OP_ARITHMETIC_INTRINSIC_VX(madd, auto [arg1, arg2, arg3] = std::tuple{args...};
+                                   ((arg2 * arg3) + arg1))
+DEFINE_3OP_ARITHMETIC_INTRINSIC_VV(nmsub, auto [arg1, arg2, arg3] = std::tuple{args...};
+                                   (-(arg2 * arg3) + arg1))
+DEFINE_3OP_ARITHMETIC_INTRINSIC_VX(nmsub, auto [arg1, arg2, arg3] = std::tuple{args...};
+                                   (-(arg2 * arg3) + arg1))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(min, (std::min(args...)))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(min, (std::min(args...)))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(max, (std::max(args...)))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(max, (std::max(args...)))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(merge, auto [arg1, arg2] = std::tuple{args...}; arg2)
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(merge, auto [arg1, arg2] = std::tuple{args...}; arg2)
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VS(redsum, (args + ...))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VS(redand, (args & ...))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VS(redor, (args | ...))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VS(redxor, (args ^ ...))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VS(redmin, std::min(args...))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VS(redmax, std::max(args...))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(mul, auto [arg1, arg2] = std::tuple{args...}; (arg2 * arg1))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(mul, auto [arg1, arg2] = std::tuple{args...}; (arg2 * arg1))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(mulh, auto [arg1, arg2] = std::tuple{args...};
+                                   NarrowTopHalf(Widen(arg2) * Widen(arg1)))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(mulh, auto [arg1, arg2] = std::tuple{args...};
+                                   NarrowTopHalf(Widen(arg2) * Widen(arg1)))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(mulhsu, auto [arg1, arg2] = std::tuple{args...};
+                                   NarrowTopHalf(BitCastToUnsigned(Widen(BitCastToSigned(arg2))) *
+                                                 Widen(BitCastToUnsigned(arg1))))
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(mulhsu, auto [arg1, arg2] = std::tuple{args...};
+                                   NarrowTopHalf(BitCastToUnsigned(Widen(BitCastToSigned(arg2))) *
+                                                 Widen(BitCastToUnsigned(arg1))))
+DEFINE_1OP_ARITHMETIC_INTRINSIC_M(cpop, Popcount(args...))
+DEFINE_1OP_ARITHMETIC_INTRINSIC_M(first, auto [arg] = std::tuple{args...};
+                                  (arg == Int128{0})
+                                  ? Int128{-1}
+                                  : Popcount(arg ^ (arg - Int128{1})))
+DEFINE_2OP_ARITHMETIC_W_INTRINSIC_VV(wadd, (args + ...))
+
 #undef DEFINE_ARITHMETIC_INTRINSIC
 #undef DEFINE_ARITHMETIC_PARAMETERS_OR_ARGUMENTS
+#undef DEFINE_1OP_ARITHMETIC_INTRINSIC_M
+#undef DEFINE_2OP_ARITHMETIC_INTRINSIC_VS
+#undef DEFINE_2OP_ARITHMETIC_INTRINSIC_VV
+#undef DEFINE_2OP_ARITHMETIC_INTRINSIC_VX
+#undef DEFINE_3OP_ARITHMETIC_INTRINSIC_VV
+#undef DEFINE_3OP_ARITHMETIC_INTRINSIC_VX
+#undef DEFINE_2OP_ARITHMETIC_W_INTRINSIC_VV
 
 }  // namespace berberis::intrinsics
 

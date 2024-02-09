@@ -346,10 +346,35 @@ class Decoder {
   };
 
   enum class VOpMVvOpcode : uint8_t {
+    kVredsumvs = 0b000000,
+    kVredandvs = 0b000001,
+    kVredorvs = 0b000010,
+    kVredxorvs = 0b000011,
+    kVredminuvs = 0b000100,
+    kVredminvs = 0b000101,
+    kVredmaxuvs = 0b000110,
+    kVredmaxvs = 0b000111,
+    kVmandnmm = 0b011000,
+    kVmandmm = 0b011001,
+    kVmormm = 0b011010,
+    kVmxormm = 0b011011,
+    kVmornmm = 0b011100,
+    kVmnandmm = 0b011101,
+    kVmnormm = 0b011110,
+    kVmxnormm = 0b011111,
+    kVₓmₓs = 0b010000,
+    kVmulhuvv = 0b100100,
+    kVmulvv = 0b100101,
+    kVmulhsuvv = 0b100110,
+    kVmulhvv = 0b100111,
     kVmaddvv = 0b101001,
     kVnmsubvv = 0b101011,
     kVmaccvv = 0b101101,
     kVnmsacvv = 0b101111,
+    kVwadduvv = 0b110000,
+    kVwaddvv = 0b110001,
+    kVwsubuvv = 0b110010,
+    kVwsubvv = 0b110011,
     kMaxValue = 0b111111
   };
 
@@ -398,11 +423,26 @@ class Decoder {
   };
 
   enum class VOpMVxOpcode : uint8_t {
+    kVmulhuvx = 0b100100,
+    kVmulvx = 0b100101,
+    kVmulhsuvx = 0b100110,
+    kVmulhvx = 0b100111,
     kVmaddvx = 0b101001,
     kVnmsubvx = 0b101011,
     kVmaccvx = 0b101101,
     kVnmsacvx = 0b101111,
     kMaxValue = 0b111111
+  };
+
+  enum class VStoreUnitStrideOpcode : uint8_t {
+    kVsₓ = 0b01000,
+    kMaxValue = 0b11111,
+  };
+
+  enum class VₓmₓsOpcode : uint8_t {
+    kVcpopm = 0b10000,
+    kVfirstm = 0b10001,
+    kMaxValue = 0b11111,
   };
 
   // Load/Store instruction include 3bit “width” field while all other floating-point instructions
@@ -671,7 +711,10 @@ class Decoder {
     bool vm;
     uint8_t dst;
     uint8_t src1;
-    uint8_t src2;
+    union {
+      VₓmₓsOpcode subopcode;
+      uint8_t src2;
+    };
   };
 
   struct VOpIVxArgs {
@@ -706,6 +749,15 @@ class Decoder {
     uint8_t dst;
     uint8_t src1;
     uint8_t src2;
+  };
+
+  struct VStoreUnitStrideArgs {
+    VStoreUnitStrideOpcode opcode;
+    StoreOperandType width;
+    bool vm;
+    uint8_t nf;
+    uint8_t src;
+    uint8_t data;
   };
 
   template <typename OperandTypeEnum>
@@ -1300,7 +1352,7 @@ class Decoder {
   static auto SignExtend(const Type val) {
     static_assert(std::is_integral_v<Type>, "Only integral types are supported");
     static_assert(size > 0 && size < (sizeof(Type) * CHAR_BIT), "Invalid size value");
-    typedef std::make_signed_t<Type> SignedType;
+    using SignedType = std::make_signed_t<Type>;
     struct {
       SignedType val : size;
     } holder = {.val = static_cast<SignedType>(val)};
@@ -1485,8 +1537,27 @@ class Decoder {
     if constexpr (std::is_same_v<OperandTypeEnum, FloatOperandType>) {
       auto decoded_operand_type = kLoadStoreWidthToOperandType[GetBits<12, 3>()];
       if (decoded_operand_type.is_vector_instruction) {
+        if (GetBits<28, 1>() == 1) {
+          return Undefined();
+        }
+        switch (GetBits<26, 2>()) {
+          case 0b00: {
+            const VStoreUnitStrideArgs args = {
+                .opcode = VStoreUnitStrideOpcode(GetBits<20, 5>()),
+                .width = decoded_operand_type.eew,
+                .vm = GetBits<25, 1>(),
+                .nf = GetBits<29, 3>(),
+                .src = GetBits<15, 5>(),
+                .data = GetBits<7, 5>(),
+            };
+            return insn_consumer_->OpVector(args);
+          }
+          default:
+            return Undefined();
+        }
         return Undefined();
       }
+
       operand_type = decoded_operand_type.size;
     } else {
       operand_type = OperandTypeEnum{GetBits<12, 3>()};

@@ -31,8 +31,6 @@ namespace berberis::constants_pool {
 //   2. Make it possible to access in text assembler without complex dance with hash-tables.
 //   3. Allocate below-2GB-copy in x86_64 mode easily.
 struct MacroAssemblerConstants {
-  alignas(16) const uint64_t kZero[2] = {0x0000'0000'0000'0000, 0x0000'0000'0000'0000};
-  alignas(16) const uint64_t kMaxUInt[2] = {0xffff'ffff'ffff'ffff, 0xffff'ffff'ffff'ffff};
   alignas(16) const uint64_t kNanBoxFloat32[2] = {0xffff'ffff'0000'0000, 0xffff'ffff'0000'0000};
   alignas(16) const uint64_t kNanBoxedNansFloat32[2] = {0xffff'ffff'7fc0'0000,
                                                         0xffff'ffff'7fc0'0000};
@@ -42,6 +40,42 @@ struct MacroAssemblerConstants {
                                                          0x7fc'00000};
   alignas(16) const uint64_t kCanonicalNansFloat64[2] = {0x7ff8'0000'0000'0000,
                                                          0x7ff8'0000'0000'0000};
+  alignas(16) const int8_t kMinInt8[16] = {
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+      -128,
+  };
+  alignas(16) const int8_t kMaxInt8[16] =
+      {127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127};
+  alignas(16) const int16_t kMinInt16[8] =
+      {-0x8000, -0x8000, -0x8000, -0x8000, -0x8000, -0x8000, -0x8000, -0x8000};
+  alignas(16)
+      const int16_t kMaxInt16[8] = {0x7fff, 0x7fff, 0x7fff, 0x7fff, 0x7fff, 0x7fff, 0x7fff, 0x7fff};
+  alignas(16) const int32_t kMinInt32[4] = {
+      static_cast<int32_t>(-0x8000'0000),
+      static_cast<int32_t>(-0x8000'0000),
+      static_cast<int32_t>(-0x8000'0000),
+      static_cast<int32_t>(-0x8000'0000),
+  };
+  alignas(16) const int32_t kMaxInt32[4] = {0x7fff'ffff, 0x7fff'ffff, 0x7fff'ffff, 0x7fff'ffff};
+  alignas(16) const int64_t kMinInt64[2] = {
+      static_cast<int64_t>(-0x8000'0000'0000'0000),
+      static_cast<int64_t>(-0x8000'0000'0000'0000),
+  };
+  alignas(16) const int64_t kMaxInt64[2] = {0x7fff'ffff'ffff'ffff, 0x7fff'ffff'ffff'ffff};
   int64_t kBsrToClzInt64 = 127;
   int64_t kWidthInBits64 = 64;
   int32_t kBsrToClzInt32 = 63;
@@ -63,23 +97,143 @@ struct MacroAssemblerConstants {
       0x05, 0x15, 0x05, 0x15, 0x0d, 0x1d, 0x0d, 0x1d,
       0x03, 0x13, 0x03, 0x13, 0x0b, 0x1b, 0x0b, 0x1b,
       0x07, 0x17, 0x07, 0x17, 0x0f, 0x1f, 0x0f, 0x1f};
+  // This table represents exactly what you see: 𝟏𝟐𝟖 + 𝐍 unset bits and then 𝟏𝟐𝟖 - 𝐍 set bits for 𝐍
+  // in range from 𝟎 to 𝟕.  The last 𝟏𝟐𝟖 bits from line 𝐍 then it's mask for 𝐯𝐥 equal to 𝐍 and if
+  // you shift start address down by 𝐌  bytes then you get mask for 𝟖 * 𝐌 + 𝐍 bits.
+  // Using this approach we may load appropriate bitmask from memory with one load instruction and
+  // the table itself takes 𝟐𝟓𝟔 bytes.
+  // Since valid values for 𝐯𝐥 are from 𝟎 to 𝐯𝐥 𝟎 𝟏𝟐𝟖 (including 𝟏𝟐𝟖), 𝐌 may be from 𝟎 to 𝟏𝟔,
+  // that's why we need 16 zero bytes in that table.
+  // On AMD CPUs with misalignsse feature we may access data from that table without using movups,
+  // and on all CPUs we may use 2KiB table instead.
+  // But for now we are using movups and small table as probably-adequate compromise.
+  alignas(16) const uint64_t kBitMaskTable[8][4] = {
+      {0x0000'0000'0000'0000, 0x0000'0000'0000'0000, 0xffff'ffff'ffff'ffff, 0xffff'ffff'ffff'ffff},
+      {0x0000'0000'0000'0000, 0x0000'0000'0000'0000, 0xffff'ffff'ffff'fffe, 0xffff'ffff'ffff'ffff},
+      {0x0000'0000'0000'0000, 0x0000'0000'0000'0000, 0xffff'ffff'ffff'fffc, 0xffff'ffff'ffff'ffff},
+      {0x0000'0000'0000'0000, 0x0000'0000'0000'0000, 0xffff'ffff'ffff'fff8, 0xffff'ffff'ffff'ffff},
+      {0x0000'0000'0000'0000, 0x0000'0000'0000'0000, 0xffff'ffff'ffff'fff0, 0xffff'ffff'ffff'ffff},
+      {0x0000'0000'0000'0000, 0x0000'0000'0000'0000, 0xffff'ffff'ffff'ffe0, 0xffff'ffff'ffff'ffff},
+      {0x0000'0000'0000'0000, 0x0000'0000'0000'0000, 0xffff'ffff'ffff'ffc0, 0xffff'ffff'ffff'ffff},
+      {0x0000'0000'0000'0000, 0x0000'0000'0000'0000, 0xffff'ffff'ffff'ff80, 0xffff'ffff'ffff'ffff},
+  };
+  alignas(16) const uint64_t kBitMaskTo32bitMask[4] = {
+      0x0000'0000'0000'0000,
+      0x0000'0000'ffff'ffff,
+      0xffff'ffff'0000'0000,
+      0xffff'ffff'ffff'ffff,
+  };
+  alignas(16) const uint64_t kBitMaskTo16bitMask[16] = {
+      0x0000'0000'0000'0000,
+      0x0000'0000'0000'ffff,
+      0x0000'0000'ffff'0000,
+      0x0000'0000'ffff'ffff,
+      0x0000'ffff'0000'0000,
+      0x0000'ffff'0000'ffff,
+      0x0000'ffff'ffff'0000,
+      0x0000'ffff'ffff'ffff,
+      0xffff'0000'0000'0000,
+      0xffff'0000'0000'ffff,
+      0xffff'0000'ffff'0000,
+      0xffff'0000'ffff'ffff,
+      0xffff'ffff'0000'0000,
+      0xffff'ffff'0000'ffff,
+      0xffff'ffff'ffff'0000,
+      0xffff'ffff'ffff'ffff,
+  };
+  alignas(16) const uint64_t kBitMaskTo8bitMask[256] = {
+      0x0000'0000'0000'0000, 0x0000'0000'0000'00ff, 0x0000'0000'0000'ff00, 0x0000'0000'0000'ffff,
+      0x0000'0000'00ff'0000, 0x0000'0000'00ff'00ff, 0x0000'0000'00ff'ff00, 0x0000'0000'00ff'ffff,
+      0x0000'0000'ff00'0000, 0x0000'0000'ff00'00ff, 0x0000'0000'ff00'ff00, 0x0000'0000'ff00'ffff,
+      0x0000'0000'ffff'0000, 0x0000'0000'ffff'00ff, 0x0000'0000'ffff'ff00, 0x0000'0000'ffff'ffff,
+      0x0000'00ff'0000'0000, 0x0000'00ff'0000'00ff, 0x0000'00ff'0000'ff00, 0x0000'00ff'0000'ffff,
+      0x0000'00ff'00ff'0000, 0x0000'00ff'00ff'00ff, 0x0000'00ff'00ff'ff00, 0x0000'00ff'00ff'ffff,
+      0x0000'00ff'ff00'0000, 0x0000'00ff'ff00'00ff, 0x0000'00ff'ff00'ff00, 0x0000'00ff'ff00'ffff,
+      0x0000'00ff'ffff'0000, 0x0000'00ff'ffff'00ff, 0x0000'00ff'ffff'ff00, 0x0000'00ff'ffff'ffff,
+      0x0000'ff00'0000'0000, 0x0000'ff00'0000'00ff, 0x0000'ff00'0000'ff00, 0x0000'ff00'0000'ffff,
+      0x0000'ff00'00ff'0000, 0x0000'ff00'00ff'00ff, 0x0000'ff00'00ff'ff00, 0x0000'ff00'00ff'ffff,
+      0x0000'ff00'ff00'0000, 0x0000'ff00'ff00'00ff, 0x0000'ff00'ff00'ff00, 0x0000'ff00'ff00'ffff,
+      0x0000'ff00'ffff'0000, 0x0000'ff00'ffff'00ff, 0x0000'ff00'ffff'ff00, 0x0000'ff00'ffff'ffff,
+      0x0000'ffff'0000'0000, 0x0000'ffff'0000'00ff, 0x0000'ffff'0000'ff00, 0x0000'ffff'0000'ffff,
+      0x0000'ffff'00ff'0000, 0x0000'ffff'00ff'00ff, 0x0000'ffff'00ff'ff00, 0x0000'ffff'00ff'ffff,
+      0x0000'ffff'ff00'0000, 0x0000'ffff'ff00'00ff, 0x0000'ffff'ff00'ff00, 0x0000'ffff'ff00'ffff,
+      0x0000'ffff'ffff'0000, 0x0000'ffff'ffff'00ff, 0x0000'ffff'ffff'ff00, 0x0000'ffff'ffff'ffff,
+      0x00ff'0000'0000'0000, 0x00ff'0000'0000'00ff, 0x00ff'0000'0000'ff00, 0x00ff'0000'0000'ffff,
+      0x00ff'0000'00ff'0000, 0x00ff'0000'00ff'00ff, 0x00ff'0000'00ff'ff00, 0x00ff'0000'00ff'ffff,
+      0x00ff'0000'ff00'0000, 0x00ff'0000'ff00'00ff, 0x00ff'0000'ff00'ff00, 0x00ff'0000'ff00'ffff,
+      0x00ff'0000'ffff'0000, 0x00ff'0000'ffff'00ff, 0x00ff'0000'ffff'ff00, 0x00ff'0000'ffff'ffff,
+      0x00ff'00ff'0000'0000, 0x00ff'00ff'0000'00ff, 0x00ff'00ff'0000'ff00, 0x00ff'00ff'0000'ffff,
+      0x00ff'00ff'00ff'0000, 0x00ff'00ff'00ff'00ff, 0x00ff'00ff'00ff'ff00, 0x00ff'00ff'00ff'ffff,
+      0x00ff'00ff'ff00'0000, 0x00ff'00ff'ff00'00ff, 0x00ff'00ff'ff00'ff00, 0x00ff'00ff'ff00'ffff,
+      0x00ff'00ff'ffff'0000, 0x00ff'00ff'ffff'00ff, 0x00ff'00ff'ffff'ff00, 0x00ff'00ff'ffff'ffff,
+      0x00ff'ff00'0000'0000, 0x00ff'ff00'0000'00ff, 0x00ff'ff00'0000'ff00, 0x00ff'ff00'0000'ffff,
+      0x00ff'ff00'00ff'0000, 0x00ff'ff00'00ff'00ff, 0x00ff'ff00'00ff'ff00, 0x00ff'ff00'00ff'ffff,
+      0x00ff'ff00'ff00'0000, 0x00ff'ff00'ff00'00ff, 0x00ff'ff00'ff00'ff00, 0x00ff'ff00'ff00'ffff,
+      0x00ff'ff00'ffff'0000, 0x00ff'ff00'ffff'00ff, 0x00ff'ff00'ffff'ff00, 0x00ff'ff00'ffff'ffff,
+      0x00ff'ffff'0000'0000, 0x00ff'ffff'0000'00ff, 0x00ff'ffff'0000'ff00, 0x00ff'ffff'0000'ffff,
+      0x00ff'ffff'00ff'0000, 0x00ff'ffff'00ff'00ff, 0x00ff'ffff'00ff'ff00, 0x00ff'ffff'00ff'ffff,
+      0x00ff'ffff'ff00'0000, 0x00ff'ffff'ff00'00ff, 0x00ff'ffff'ff00'ff00, 0x00ff'ffff'ff00'ffff,
+      0x00ff'ffff'ffff'0000, 0x00ff'ffff'ffff'00ff, 0x00ff'ffff'ffff'ff00, 0x00ff'ffff'ffff'ffff,
+      0xff00'0000'0000'0000, 0xff00'0000'0000'00ff, 0xff00'0000'0000'ff00, 0xff00'0000'0000'ffff,
+      0xff00'0000'00ff'0000, 0xff00'0000'00ff'00ff, 0xff00'0000'00ff'ff00, 0xff00'0000'00ff'ffff,
+      0xff00'0000'ff00'0000, 0xff00'0000'ff00'00ff, 0xff00'0000'ff00'ff00, 0xff00'0000'ff00'ffff,
+      0xff00'0000'ffff'0000, 0xff00'0000'ffff'00ff, 0xff00'0000'ffff'ff00, 0xff00'0000'ffff'ffff,
+      0xff00'00ff'0000'0000, 0xff00'00ff'0000'00ff, 0xff00'00ff'0000'ff00, 0xff00'00ff'0000'ffff,
+      0xff00'00ff'00ff'0000, 0xff00'00ff'00ff'00ff, 0xff00'00ff'00ff'ff00, 0xff00'00ff'00ff'ffff,
+      0xff00'00ff'ff00'0000, 0xff00'00ff'ff00'00ff, 0xff00'00ff'ff00'ff00, 0xff00'00ff'ff00'ffff,
+      0xff00'00ff'ffff'0000, 0xff00'00ff'ffff'00ff, 0xff00'00ff'ffff'ff00, 0xff00'00ff'ffff'ffff,
+      0xff00'ff00'0000'0000, 0xff00'ff00'0000'00ff, 0xff00'ff00'0000'ff00, 0xff00'ff00'0000'ffff,
+      0xff00'ff00'00ff'0000, 0xff00'ff00'00ff'00ff, 0xff00'ff00'00ff'ff00, 0xff00'ff00'00ff'ffff,
+      0xff00'ff00'ff00'0000, 0xff00'ff00'ff00'00ff, 0xff00'ff00'ff00'ff00, 0xff00'ff00'ff00'ffff,
+      0xff00'ff00'ffff'0000, 0xff00'ff00'ffff'00ff, 0xff00'ff00'ffff'ff00, 0xff00'ff00'ffff'ffff,
+      0xff00'ffff'0000'0000, 0xff00'ffff'0000'00ff, 0xff00'ffff'0000'ff00, 0xff00'ffff'0000'ffff,
+      0xff00'ffff'00ff'0000, 0xff00'ffff'00ff'00ff, 0xff00'ffff'00ff'ff00, 0xff00'ffff'00ff'ffff,
+      0xff00'ffff'ff00'0000, 0xff00'ffff'ff00'00ff, 0xff00'ffff'ff00'ff00, 0xff00'ffff'ff00'ffff,
+      0xff00'ffff'ffff'0000, 0xff00'ffff'ffff'00ff, 0xff00'ffff'ffff'ff00, 0xff00'ffff'ffff'ffff,
+      0xffff'0000'0000'0000, 0xffff'0000'0000'00ff, 0xffff'0000'0000'ff00, 0xffff'0000'0000'ffff,
+      0xffff'0000'00ff'0000, 0xffff'0000'00ff'00ff, 0xffff'0000'00ff'ff00, 0xffff'0000'00ff'ffff,
+      0xffff'0000'ff00'0000, 0xffff'0000'ff00'00ff, 0xffff'0000'ff00'ff00, 0xffff'0000'ff00'ffff,
+      0xffff'0000'ffff'0000, 0xffff'0000'ffff'00ff, 0xffff'0000'ffff'ff00, 0xffff'0000'ffff'ffff,
+      0xffff'00ff'0000'0000, 0xffff'00ff'0000'00ff, 0xffff'00ff'0000'ff00, 0xffff'00ff'0000'ffff,
+      0xffff'00ff'00ff'0000, 0xffff'00ff'00ff'00ff, 0xffff'00ff'00ff'ff00, 0xffff'00ff'00ff'ffff,
+      0xffff'00ff'ff00'0000, 0xffff'00ff'ff00'00ff, 0xffff'00ff'ff00'ff00, 0xffff'00ff'ff00'ffff,
+      0xffff'00ff'ffff'0000, 0xffff'00ff'ffff'00ff, 0xffff'00ff'ffff'ff00, 0xffff'00ff'ffff'ffff,
+      0xffff'ff00'0000'0000, 0xffff'ff00'0000'00ff, 0xffff'ff00'0000'ff00, 0xffff'ff00'0000'ffff,
+      0xffff'ff00'00ff'0000, 0xffff'ff00'00ff'00ff, 0xffff'ff00'00ff'ff00, 0xffff'ff00'00ff'ffff,
+      0xffff'ff00'ff00'0000, 0xffff'ff00'ff00'00ff, 0xffff'ff00'ff00'ff00, 0xffff'ff00'ff00'ffff,
+      0xffff'ff00'ffff'0000, 0xffff'ff00'ffff'00ff, 0xffff'ff00'ffff'ff00, 0xffff'ff00'ffff'ffff,
+      0xffff'ffff'0000'0000, 0xffff'ffff'0000'00ff, 0xffff'ffff'0000'ff00, 0xffff'ffff'0000'ffff,
+      0xffff'ffff'00ff'0000, 0xffff'ffff'00ff'00ff, 0xffff'ffff'00ff'ff00, 0xffff'ffff'00ff'ffff,
+      0xffff'ffff'ff00'0000, 0xffff'ffff'ff00'00ff, 0xffff'ffff'ff00'ff00, 0xffff'ffff'ff00'ffff,
+      0xffff'ffff'ffff'0000, 0xffff'ffff'ffff'00ff, 0xffff'ffff'ffff'ff00, 0xffff'ffff'ffff'ffff,
+  };
 };
 
 // Make sure Layout is the same in 32-bit mode and 64-bit mode.
-CHECK_STRUCT_LAYOUT(MacroAssemblerConstants, 1792, 128);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kZero, 0, 128);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kMaxUInt, 128, 128);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kNanBoxFloat32, 256, 128);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kNanBoxedNansFloat32, 384, 128);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kCanonicalNansFloat32, 512, 128);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kCanonicalNansFloat64, 640, 128);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kBsrToClzInt64, 768, 64);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kWidthInBits64, 832, 64);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kBsrToClzInt32, 896, 32);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kWidthInBits32, 928, 32);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, k0x8000_0000_0000_00ff, 960, 64);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kRiscVToX87Exceptions, 1024, 256);
-CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kX87ToRiscVExceptions, 1280, 512);
+CHECK_STRUCT_LAYOUT(MacroAssemblerConstants, 22272, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kNanBoxFloat32, 0, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kNanBoxedNansFloat32, 128, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kCanonicalNansFloat32, 256, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kCanonicalNansFloat64, 384, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kMinInt8, 512, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kMaxInt8, 640, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kMinInt16, 768, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kMaxInt16, 896, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kMinInt32, 1024, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kMaxInt32, 1152, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kMinInt64, 1280, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kMaxInt64, 1408, 128);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kBsrToClzInt64, 1536, 64);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kWidthInBits64, 1600, 64);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kBsrToClzInt32, 1664, 32);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kWidthInBits32, 1696, 32);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, k0x8000_0000_0000_00ff, 1728, 64);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kRiscVToX87Exceptions, 1792, 256);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kX87ToRiscVExceptions, 2048, 512);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kBitMaskTable, 2560, 2048);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kBitMaskTo32bitMask, 4608, 256);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kBitMaskTo16bitMask, 4864, 1024);
+CHECK_FIELD_LAYOUT(MacroAssemblerConstants, kBitMaskTo8bitMask, 5888, 16384);
 
 // Note: because we have aligned fields and thus padding in that data structure
 // value-initialization is both slower and larger than copy-initialization for
@@ -112,11 +266,35 @@ int32_t GetConstants() {
 extern const int32_t kBerberisMacroAssemblerConstantsRelocated;
 const int32_t kBerberisMacroAssemblerConstantsRelocated = GetConstants();
 template <>
+extern const int32_t kVectorConst<int8_t{-128}> =
+    GetConstants() + offsetof(MacroAssemblerConstants, kMinInt8);
+template <>
+extern const int32_t kVectorConst<int8_t{127}> =
+    GetConstants() + offsetof(MacroAssemblerConstants, kMaxInt8);
+template <>
+extern const int32_t kVectorConst<int16_t{-0x8000}> =
+    GetConstants() + offsetof(MacroAssemblerConstants, kMinInt16);
+template <>
+extern const int32_t kVectorConst<int16_t{0x7fff}> =
+    GetConstants() + offsetof(MacroAssemblerConstants, kMaxInt16);
+template <>
+extern const int32_t kVectorConst<int32_t{static_cast<int32_t>(-0x8000'0000)}> =
+    GetConstants() + offsetof(MacroAssemblerConstants, kMinInt32);
+template <>
+extern const int32_t kVectorConst<int32_t{0x7fff'ffff}> =
+    GetConstants() + offsetof(MacroAssemblerConstants, kMaxInt32);
+template <>
+extern const int32_t kVectorConst<int64_t{static_cast<int64_t>(-0x8000'0000'0000'0000)}> =
+    GetConstants() + offsetof(MacroAssemblerConstants, kMinInt64);
+template <>
+extern const int32_t kVectorConst<int64_t{0x7fff'ffff'ffff'ffff}> =
+    GetConstants() + offsetof(MacroAssemblerConstants, kMaxInt64);
+template <>
 const int32_t kVectorConst<uint64_t{0x0000'0000'0000'0000}> =
-    GetConstants() + offsetof(MacroAssemblerConstants, kZero);
+    GetConstants() + offsetof(MacroAssemblerConstants, kBitMaskTable);
 template <>
 const int32_t kVectorConst<uint64_t{0xffff'ffff'ffff'ffff}> =
-    GetConstants() + offsetof(MacroAssemblerConstants, kMaxUInt);
+    GetConstants() + offsetof(MacroAssemblerConstants, kBitMaskTable) + 16;
 template <>
 const int32_t kVectorConst<uint64_t{0xffff'ffff'0000'0000}> =
     GetConstants() + offsetof(MacroAssemblerConstants, kNanBoxFloat32);
@@ -148,5 +326,12 @@ const int32_t kRiscVToX87Exceptions =
     GetConstants() + offsetof(MacroAssemblerConstants, kRiscVToX87Exceptions);
 const int32_t kX87ToRiscVExceptions =
     GetConstants() + offsetof(MacroAssemblerConstants, kX87ToRiscVExceptions);
+const int32_t kBitMaskTable = GetConstants() + offsetof(MacroAssemblerConstants, kBitMaskTable);
+const int32_t kBitMaskTo8bitMask =
+    GetConstants() + offsetof(MacroAssemblerConstants, kBitMaskTo8bitMask);
+const int32_t kBitMaskTo16bitMask =
+    GetConstants() + offsetof(MacroAssemblerConstants, kBitMaskTo16bitMask);
+const int32_t kBitMaskTo32bitMask =
+    GetConstants() + offsetof(MacroAssemblerConstants, kBitMaskTo32bitMask);
 
-}  // namespace berberis::constant_pool
+}  // namespace berberis::constants_pool

@@ -265,6 +265,7 @@ class Decoder {
   };
 
   enum class VLoadUnitStrideOpcode : uint8_t {
+    kVleXX = 0b00000,
     kVlXreXX = 0b01000,
     kMaxValue = 0b11111,
   };
@@ -295,8 +296,8 @@ class Decoder {
     kVsravi = 0b101001,
     kVssrlvi = 0b101010,
     kVssravi = 0b101011,
-    kVnsrlvi = 0b101100,
-    kVnsravi = 0b101101,
+    kVnsrlwi = 0b101100,
+    kVnsrawi = 0b101101,
     kVnclipuvi = 0b101110,
     kVnclipvi = 0b101111,
     kMaxValue = 0b111111,
@@ -335,8 +336,8 @@ class Decoder {
     kVsravv = 0b101001,
     kVssrlvv = 0b101010,
     kVssravv = 0b101011,
-    kVnsrlvv = 0b101100,
-    kVnsravv = 0b101101,
+    kVnsrlwv = 0b101100,
+    kVnsrawv = 0b101101,
     kVnclipuvv = 0b101110,
     kVnclipvv = 0b101111,
     kVwredsumuvv = 0b110000,
@@ -415,14 +416,15 @@ class Decoder {
     kVsravx = 0b101001,
     kVssrlvx = 0b101010,
     kVssravx = 0b101011,
-    kVnsrlvx = 0b101100,
-    kVnsravx = 0b101101,
+    kVnsrlwx = 0b101100,
+    kVnsrawx = 0b101101,
     kVnclipuvx = 0b101110,
     kVnclipvx = 0b101111,
     kMaxValue = 0b111111
   };
 
   enum class VOpMVxOpcode : uint8_t {
+    kVXmXXx = 0b010000,
     kVmulhuvx = 0b100100,
     kVmulvx = 0b100101,
     kVmulhsuvx = 0b100110,
@@ -439,7 +441,13 @@ class Decoder {
     kMaxValue = 0b11111,
   };
 
+  enum class VXmXXxOpcode : uint8_t {
+    kVmvsx = 0b00000,
+    kMaxValue = 0b11111,
+  };
+
   enum class VXmXXsOpcode : uint8_t {
+    kVmvxs = 0b00000,
     kVcpopm = 0b10000,
     kVfirstm = 0b10001,
     kMaxValue = 0b11111,
@@ -449,6 +457,7 @@ class Decoder {
     kVmsbfm = 0b00001,
     kVmsofm = 0b00010,
     kVmsifm = 0b00011,
+    kVidv = 0b10001,
   };
 
   // Load/Store instruction include 3bit “width” field while all other floating-point instructions
@@ -687,6 +696,26 @@ class Decoder {
   using OpImmArgs = OpImmArgsTemplate<OpImmOpcode>;
   using OpImm32Args = OpImmArgsTemplate<OpImm32Opcode>;
 
+  struct VLoadIndexedArgs {
+    StoreOperandType width;
+    bool vm;
+    bool ordered;
+    uint8_t nf;
+    uint8_t dst;
+    uint8_t src;
+    uint8_t idx;
+  };
+
+  struct VLoadStrideArgs {
+    StoreOperandType width;
+    bool vm;
+    bool ordered;
+    uint8_t nf;
+    uint8_t dst;
+    uint8_t src;
+    uint8_t std;
+  };
+
   struct VLoadUnitStrideArgs {
     VLoadUnitStrideOpcode opcode;
     StoreOperandType width;
@@ -736,7 +765,10 @@ class Decoder {
     VOpMVxOpcode opcode;
     bool vm;
     uint8_t dst;
-    uint8_t src1;
+    union {
+      VXmXXxOpcode vXmXXx_opcode;
+      uint8_t src1;
+    };
     uint8_t src2;
   };
 
@@ -756,6 +788,26 @@ class Decoder {
     uint8_t dst;
     uint8_t src1;
     uint8_t src2;
+  };
+
+  struct VStoreIndexedArgs {
+    StoreOperandType width;
+    bool vm;
+    bool ordered;
+    uint8_t nf;
+    uint8_t src;
+    uint8_t idx;
+    uint8_t data;
+  };
+
+  struct VStoreStrideArgs {
+    StoreOperandType width;
+    bool vm;
+    bool ordered;
+    uint8_t nf;
+    uint8_t src;
+    uint8_t std;
+    uint8_t data;
   };
 
   struct VStoreUnitStrideArgs {
@@ -1340,18 +1392,6 @@ class Decoder {
     return 4;
   }
 
- private:
-  template <uint32_t start, uint32_t size>
-  auto GetBits() {
-    static_assert((start + size) <= 32 && size > 0, "Invalid start or size value");
-    using ResultType = std::conditional_t<
-        size == 1,
-        bool,
-        std::conditional_t<size <= 8, uint8_t, std::conditional_t<size <= 16, uint16_t, uint32_t>>>;
-    uint32_t shifted_val = code_ << (32 - start - size);
-    return static_cast<ResultType>(shifted_val >> (32 - size));
-  }
-
   // Signextend bits from size to the corresponding signed type of sizeof(Type) size.
   // If the result of this function is assigned to a wider signed type it'll automatically
   // sign-extend.
@@ -1365,6 +1405,18 @@ class Decoder {
     } holder = {.val = static_cast<SignedType>(val)};
     // Compiler takes care of sign-extension of the field with the specified bit-length.
     return static_cast<SignedType>(holder.val);
+  }
+
+ private:
+  template <uint32_t start, uint32_t size>
+  auto GetBits() {
+    static_assert((start + size) <= 32 && size > 0, "Invalid start or size value");
+    using ResultType = std::conditional_t<
+        size == 1,
+        bool,
+        std::conditional_t<size <= 8, uint8_t, std::conditional_t<size <= 16, uint16_t, uint32_t>>>;
+    uint32_t shifted_val = code_ << (32 - start - size);
+    return static_cast<ResultType>(shifted_val >> (32 - size));
   }
 
   void Undefined() {
@@ -1520,6 +1572,31 @@ class Decoder {
             };
             return insn_consumer_->OpVector(args);
           }
+          case 0b01:
+          case 0b11: {
+            const VLoadIndexedArgs args = {
+                .width = decoded_operand_type.eew,
+                .vm = GetBits<25, 1>(),
+                .ordered = GetBits<27, 1>(),
+                .nf = GetBits<29, 3>(),
+                .dst = GetBits<7, 5>(),
+                .src = GetBits<15, 5>(),
+                .idx = GetBits<20, 5>(),
+            };
+            return insn_consumer_->OpVector(args);
+          }
+          case 0b10: {
+            const VLoadStrideArgs args = {
+                .width = decoded_operand_type.eew,
+                .vm = GetBits<25, 1>(),
+                .ordered = GetBits<27, 1>(),
+                .nf = GetBits<29, 3>(),
+                .dst = GetBits<7, 5>(),
+                .src = GetBits<15, 5>(),
+                .std = GetBits<20, 5>(),
+            };
+            return insn_consumer_->OpVector(args);
+          }
           default:
             return Undefined();
         }
@@ -1555,6 +1632,31 @@ class Decoder {
                 .vm = GetBits<25, 1>(),
                 .nf = GetBits<29, 3>(),
                 .src = GetBits<15, 5>(),
+                .data = GetBits<7, 5>(),
+            };
+            return insn_consumer_->OpVector(args);
+          }
+          case 0b01:
+          case 0b11: {
+            const VStoreIndexedArgs args = {
+                .width = decoded_operand_type.eew,
+                .vm = GetBits<25, 1>(),
+                .ordered = GetBits<27, 1>(),
+                .nf = GetBits<29, 3>(),
+                .src = GetBits<15, 5>(),
+                .idx = GetBits<20, 5>(),
+                .data = GetBits<7, 5>(),
+            };
+            return insn_consumer_->OpVector(args);
+          }
+          case 0b10: {
+            const VStoreStrideArgs args = {
+                .width = decoded_operand_type.eew,
+                .vm = GetBits<25, 1>(),
+                .ordered = GetBits<27, 1>(),
+                .nf = GetBits<29, 3>(),
+                .src = GetBits<15, 5>(),
+                .std = GetBits<20, 5>(),
                 .data = GetBits<7, 5>(),
             };
             return insn_consumer_->OpVector(args);

@@ -575,8 +575,8 @@ class Interpreter {
   template <typename ElementType, typename VOpArgs, typename... ExtraArgs>
   void OpVector(const VOpArgs& args, Register vtype, ExtraArgs... extra_args) {
     int vemul = Decoder::SignExtend<3>(vtype & 0b111);
-    vemul += ((vtype >> 3) & 0b111);        // Multiply by SEW.
-    vemul -= static_cast<int>(args.width);  // Divide by EEW.
+    vemul -= ((vtype >> 3) & 0b111);        // Divide by SEW.
+    vemul += static_cast<int>(args.width);  // Multiply by EEW.
     if (vemul < -3 || vemul > 3) [[unlikely]] {
       return Unimplemented();
     }
@@ -715,12 +715,170 @@ class Interpreter {
             typename VOpArgs,
             typename... ExtraArgs>
   void OpVector(const VOpArgs& args, Register vtype, ExtraArgs... extra_args) {
-    if ((vtype >> 6) & 1) {
-      return OpVector<ElementType, kSegmentSize, vlmul, TailProcessing::kAgnostic, vma>(
+    // Indexed loads and stores have two operands with different ElementType's and lmul sizes,
+    // pass vtype to do further selection.
+    if constexpr (std::is_same_v<VOpArgs, Decoder::VLoadIndexedArgs> ||
+                  std::is_same_v<VOpArgs, Decoder::VStoreIndexedArgs>) {
+      // Because we know that we are dealing with indexed loads and stores and wouldn't need to
+      // convert elmul to anything else we can immediately turn it into kIndexRegistersInvolved
+      // here.
+      if ((vtype >> 6) & 1) {
+        return OpVector<kSegmentSize,
+                        ElementType,
+                        NumberOfRegistersInvolved(vlmul),
+                        TailProcessing::kAgnostic,
+                        vma>(args, vtype, extra_args...);
+      }
+      return OpVector<kSegmentSize,
+                      ElementType,
+                      NumberOfRegistersInvolved(vlmul),
+                      TailProcessing::kUndisturbed,
+                      vma>(args, vtype, extra_args...);
+    } else {
+      // For other instruction we have parsed all the information from vtype and only need to pass
+      // args and extra_args.
+      if ((vtype >> 6) & 1) {
+        return OpVector<ElementType, kSegmentSize, vlmul, TailProcessing::kAgnostic, vma>(
+            args, extra_args...);
+      }
+      return OpVector<ElementType, kSegmentSize, vlmul, TailProcessing::kUndisturbed, vma>(
           args, extra_args...);
     }
-    return OpVector<ElementType, kSegmentSize, vlmul, TailProcessing::kUndisturbed, vma>(
-        args, extra_args...);
+  }
+
+  template <int kSegmentSize,
+            typename IndexElementType,
+            size_t kIndexRegistersInvolved,
+            TailProcessing vta,
+            auto vma,
+            typename VOpArgs,
+            typename... ExtraArgs>
+  void OpVector(const VOpArgs& args, Register vtype, ExtraArgs... extra_args) {
+    VectorRegisterGroupMultiplier vlmul = static_cast<VectorRegisterGroupMultiplier>(vtype & 0b111);
+    switch (static_cast<VectorSelectElementWidth>((vtype >> 3) & 0b111)) {
+      case VectorSelectElementWidth::k8bit:
+        return OpVector<UInt8, kSegmentSize, IndexElementType, kIndexRegistersInvolved, vta, vma>(
+            args, vlmul, extra_args...);
+      case VectorSelectElementWidth::k16bit:
+        return OpVector<UInt16, kSegmentSize, IndexElementType, kIndexRegistersInvolved, vta, vma>(
+            args, vlmul, extra_args...);
+      case VectorSelectElementWidth::k32bit:
+        return OpVector<UInt32, kSegmentSize, IndexElementType, kIndexRegistersInvolved, vta, vma>(
+            args, vlmul, extra_args...);
+      case VectorSelectElementWidth::k64bit:
+        return OpVector<UInt64, kSegmentSize, IndexElementType, kIndexRegistersInvolved, vta, vma>(
+            args, vlmul, extra_args...);
+      default:
+        return Unimplemented();
+    }
+  }
+
+  template <typename DataElementType,
+            int kSegmentSize,
+            typename IndexElementType,
+            size_t kIndexRegistersInvolved,
+            TailProcessing vta,
+            auto vma,
+            typename VOpArgs,
+            typename... ExtraArgs>
+  void OpVector(const VOpArgs& args, VectorRegisterGroupMultiplier vlmul, ExtraArgs... extra_args) {
+    switch (vlmul) {
+      case VectorRegisterGroupMultiplier::k1register:
+        return OpVector<DataElementType,
+                        VectorRegisterGroupMultiplier::k1register,
+                        IndexElementType,
+                        kSegmentSize,
+                        kIndexRegistersInvolved,
+                        vta,
+                        vma>(args, extra_args...);
+      case VectorRegisterGroupMultiplier::k2registers:
+        return OpVector<DataElementType,
+                        VectorRegisterGroupMultiplier::k2registers,
+                        IndexElementType,
+                        kSegmentSize,
+                        kIndexRegistersInvolved,
+                        vta,
+                        vma>(args, extra_args...);
+      case VectorRegisterGroupMultiplier::k4registers:
+        return OpVector<DataElementType,
+                        VectorRegisterGroupMultiplier::k4registers,
+                        IndexElementType,
+                        kSegmentSize,
+                        kIndexRegistersInvolved,
+                        vta,
+                        vma>(args, extra_args...);
+      case VectorRegisterGroupMultiplier::k8registers:
+        return OpVector<DataElementType,
+                        VectorRegisterGroupMultiplier::k8registers,
+                        IndexElementType,
+                        kSegmentSize,
+                        kIndexRegistersInvolved,
+                        vta,
+                        vma>(args, extra_args...);
+      case VectorRegisterGroupMultiplier::kEigthOfRegister:
+        return OpVector<DataElementType,
+                        VectorRegisterGroupMultiplier::kEigthOfRegister,
+                        IndexElementType,
+                        kSegmentSize,
+                        kIndexRegistersInvolved,
+                        vta,
+                        vma>(args, extra_args...);
+      case VectorRegisterGroupMultiplier::kQuarterOfRegister:
+        return OpVector<DataElementType,
+                        VectorRegisterGroupMultiplier::kQuarterOfRegister,
+                        IndexElementType,
+                        kSegmentSize,
+                        kIndexRegistersInvolved,
+                        vta,
+                        vma>(args, extra_args...);
+      case VectorRegisterGroupMultiplier::kHalfOfRegister:
+        return OpVector<DataElementType,
+                        VectorRegisterGroupMultiplier::kHalfOfRegister,
+                        IndexElementType,
+                        kSegmentSize,
+                        kIndexRegistersInvolved,
+                        vta,
+                        vma>(args, extra_args...);
+      default:
+        return Unimplemented();
+    }
+  }
+
+  template <typename DataElementType,
+            VectorRegisterGroupMultiplier vlmul,
+            typename IndexElementType,
+            int kSegmentSize,
+            size_t kIndexRegistersInvolved,
+            TailProcessing vta,
+            auto vma>
+  void OpVector(const Decoder::VLoadIndexedArgs& args, Register src) {
+    return OpVector<DataElementType,
+                    kSegmentSize,
+                    NumberOfRegistersInvolved(vlmul),
+                    IndexElementType,
+                    kIndexRegistersInvolved,
+                    vta,
+                    vma>(args, src);
+  }
+
+  template <typename DataElementType,
+            int kSegmentSize,
+            size_t kNumRegistersInGroup,
+            typename IndexElementType,
+            size_t kIndexRegistersInvolved,
+            TailProcessing vta,
+            auto vma>
+  void OpVector(const Decoder::VLoadIndexedArgs& args, Register src) {
+    if (!IsAligned<kIndexRegistersInvolved>(args.idx)) {
+      return Unimplemented();
+    }
+    constexpr int kElementsCount =
+        static_cast<int>(sizeof(SIMD128Register) / sizeof(IndexElementType));
+    alignas(alignof(SIMD128Register))
+        IndexElementType indexes[kElementsCount * kIndexRegistersInvolved];
+    memcpy(indexes, state_->cpu.v + args.idx, sizeof(SIMD128Register) * kIndexRegistersInvolved);
+    return OpVectorLoad<DataElementType, kSegmentSize, kNumRegistersInGroup, vta, vma>(
+        args.dst, src, [&indexes](size_t index) { return indexes[index]; });
   }
 
   template <typename ElementType,
@@ -728,8 +886,57 @@ class Interpreter {
             VectorRegisterGroupMultiplier vlmul,
             TailProcessing vta,
             auto vma>
-  void OpVector(const Decoder::VLoadIndexedArgs& /*args*/, Register /*src*/) {
-    Unimplemented();
+  void OpVector(const Decoder::VLoadStrideArgs& args, Register src, Register stride) {
+    return OpVector<ElementType, kSegmentSize, NumberOfRegistersInvolved(vlmul), vta, vma>(
+        args, src, stride);
+  }
+
+  template <typename ElementType,
+            int kSegmentSize,
+            size_t kNumRegistersInGroup,
+            TailProcessing vta,
+            auto vma>
+  void OpVector(const Decoder::VLoadStrideArgs& args, Register src, Register stride) {
+    return OpVectorLoad<ElementType, kSegmentSize, kNumRegistersInGroup, vta, vma>(
+        args.dst, src, [stride](size_t index) { return stride * index; });
+  }
+
+  template <typename ElementType,
+            int kSegmentSize,
+            VectorRegisterGroupMultiplier vlmul,
+            TailProcessing vta,
+            auto vma>
+  void OpVector(const Decoder::VLoadUnitStrideArgs& args, Register src) {
+    return OpVector<ElementType, kSegmentSize, NumberOfRegistersInvolved(vlmul), vta, vma>(args,
+                                                                                           src);
+  }
+
+  template <typename ElementType,
+            int kSegmentSize,
+            size_t kNumRegistersInGroup,
+            TailProcessing vta,
+            auto vma>
+  void OpVector(const Decoder::VLoadUnitStrideArgs& args, Register src) {
+    switch (args.opcode) {
+      case Decoder::VLoadUnitStrideOpcode::kVleXXff:
+        return OpVectorLoad<ElementType,
+                            kSegmentSize,
+                            kNumRegistersInGroup,
+                            vta,
+                            vma,
+                            Decoder::VLoadUnitStrideOpcode::kVleXXff>(
+            args.dst, src, [](size_t index) { return kSegmentSize * sizeof(ElementType) * index; });
+      case Decoder::VLoadUnitStrideOpcode::kVleXX:
+        return OpVectorLoad<ElementType,
+                            kSegmentSize,
+                            kNumRegistersInGroup,
+                            vta,
+                            vma,
+                            Decoder::VLoadUnitStrideOpcode::kVleXX>(
+            args.dst, src, [](size_t index) { return kSegmentSize * sizeof(ElementType) * index; });
+      default:
+        return Unimplemented();
+    }
   }
 
   // The strided version of segmented load sounds like something very convoluted and complicated
@@ -758,23 +965,28 @@ class Interpreter {
   //   v5: {B:20.21}{B:30.21}
   // Now we have loaded a column from memory and all three colors are put into a different register
   // groups for further processing.
-  template <typename ElementType,
-            int kSegmentSize,
-            VectorRegisterGroupMultiplier vlmul,
-            TailProcessing vta,
-            auto vma>
-  void OpVector(const Decoder::VLoadStrideArgs& args, Register src, Register stride) {
+  template <
+      typename ElementType,
+      int kSegmentSize,
+      size_t kNumRegistersInGroup,
+      TailProcessing vta,
+      auto vma,
+      typename Decoder::VLoadUnitStrideOpcode opcode = typename Decoder::VLoadUnitStrideOpcode{},
+      typename GetElementOffsetLambdaType>
+  void OpVectorLoad(uint8_t dst, Register src, GetElementOffsetLambdaType GetElementOffset) {
     using MaskType = std::conditional_t<sizeof(ElementType) == sizeof(Int8), UInt16, UInt8>;
-    constexpr int kNumRegistersInGroup = static_cast<int>(NumberOfRegistersInvolved(vlmul));
-    if (!IsAligned<kNumRegistersInGroup>(args.dst)) {
+    if (!IsAligned<kNumRegistersInGroup>(dst)) {
       return Unimplemented();
     }
-    if (args.dst + kNumRegistersInGroup * kSegmentSize >= 32) {
+    if (dst + kNumRegistersInGroup * kSegmentSize >= 32) {
       return Unimplemented();
     }
     constexpr int kElementsCount = static_cast<int>(16 / sizeof(ElementType));
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
+    // In case of memory access fault we may set vstart to non-zero value, set it to zero here to
+    // simplify the logic below.
+    SetCsr<CsrName::kVstart>(0);
     if constexpr (vta == TailProcessing::kAgnostic) {
       vstart = std::min(vstart, vl);
     }
@@ -784,9 +996,9 @@ class Interpreter {
     // within group = 0), and v1, v3, v5 during the second iteration (id within group = 1). This
     // ensures that memory is always accessed in ordered fashion.
     std::array<SIMD128Register, kSegmentSize> result;
-    ElementType* ptr = ToHostAddr<ElementType>(src);
+    char* ptr = ToHostAddr<char>(src);
     auto mask = GetMaskForVectorOperations<vma>();
-    for (int within_group_id = vstart / kElementsCount; within_group_id < kNumRegistersInGroup;
+    for (size_t within_group_id = vstart / kElementsCount; within_group_id < kNumRegistersInGroup;
          ++within_group_id) {
       // No need to continue if we have kUndisturbed vta strategy.
       if constexpr (vta == TailProcessing::kUndisturbed) {
@@ -806,15 +1018,15 @@ class Interpreter {
             static_cast<InactiveProcessing>(vma) != InactiveProcessing::kUndisturbed ||
             register_mask == full_mask)) {
         for (int field = 0; field < kSegmentSize; ++field) {
-          result[field].Set(
-              state_->cpu.v[args.dst + within_group_id + field * kNumRegistersInGroup]);
+          result[field].Set(state_->cpu.v[dst + within_group_id + field * kNumRegistersInGroup]);
         }
       }
       // Read elements from memory, but only if there are any active ones.
-      for (int within_register_id = vstart % kElementsCount; within_register_id < kElementsCount;
+      for (size_t within_register_id = vstart % kElementsCount; within_register_id < kElementsCount;
            ++within_register_id) {
+        size_t element_index = kElementsCount * within_group_id + within_register_id;
         // Stop if we reached the vl limit.
-        if (vl <= kElementsCount * within_group_id + within_register_id) {
+        if (vl <= element_index) {
           break;
         }
         // Don't touch masked-out elements.
@@ -827,12 +1039,30 @@ class Interpreter {
         // Load segment from memory.
         for (int field = 0; field < kSegmentSize; ++field) {
           FaultyLoadResult mem_access_result =
-              FaultyLoad(reinterpret_cast<char*>(ptr + field) +
-                             stride * (within_group_id * kElementsCount + within_register_id),
+              FaultyLoad(ptr + field * sizeof(ElementType) + GetElementOffset(element_index),
                          sizeof(ElementType));
           if (mem_access_result.is_fault) {
-            exception_raised_ = true;
-            return;
+            // Documentation doesn't tell us what we are supposed to do to remaining elements when
+            // access fault happens but let's trigger an exception and treat the remaining elements
+            // using vta-specified strategy by simply just adjusting the vl.
+            vl = element_index;
+            if constexpr (opcode == Decoder::VLoadUnitStrideOpcode::kVleXXff) {
+              // Fail-first load only triggers exceptions for the first element, otherwise it
+              // changes vl to ensure that other operations would only process elements that are
+              // successfully loaded.
+              if (element_index == 0) [[unlikely]] {
+                exception_raised_ = true;
+              } else {
+                // TODO(b/323994286): Write a test case to verify vl changes correctly.
+                SetCsr<CsrName::kVl>(element_index);
+              }
+            } else {
+              // Most load instructions set vstart to failing element which then may be processed
+              // by exception handler.
+              exception_raised_ = true;
+              SetCsr<CsrName::kVstart>(element_index);
+            }
+            break;
           }
           result[field].template Set<ElementType>(static_cast<ElementType>(mem_access_result.value),
                                                   within_register_id);
@@ -893,82 +1123,14 @@ class Interpreter {
       }
       // Put values back into register file.
       for (int field = 0; field < kSegmentSize; ++field) {
-        state_->cpu.v[args.dst + within_group_id + field * kNumRegistersInGroup] =
+        state_->cpu.v[dst + within_group_id + field * kNumRegistersInGroup] =
             result[field].template Get<__uint128_t>();
       }
       // Next group should be fully processed.
       vstart = 0;
     }
-    SetCsr<CsrName::kVstart>(0);
   }
 
-  template <typename ElementType,
-            int kSegmentSize,
-            VectorRegisterGroupMultiplier vlmul,
-            TailProcessing vta,
-            auto vma>
-  void OpVector(const Decoder::VLoadUnitStrideArgs& args, Register src) {
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
-    ElementType* ptr = ToHostAddr<ElementType>(src);
-    SIMD128Register orig_result, result;
-    __uint128_t mask;
-    if constexpr (!std::is_same_v<decltype(vma), intrinsics::NoInactiveProcessing>) {
-      mask = state_->cpu.v[0];
-    }
-
-    switch (args.opcode) {
-      case Decoder::VLoadUnitStrideOpcode::kVleXXff:
-      case Decoder::VLoadUnitStrideOpcode::kVleXX: {
-        if (args.nf != 0) {
-          return Unimplemented();
-        }
-        int ptr_idx = 0;
-        for (size_t index = 0; index < kRegistersInvolved; ++index) {
-          orig_result.Set(state_->cpu.v[args.dst + index]);
-          result.Set(state_->cpu.v[args.dst + index]);
-          int element_count = std::min(static_cast<int>(16 / sizeof(ElementType)),
-                                       (vl - static_cast<int>(index * 16 / sizeof(ElementType))));
-
-          for (int element_index = 0; element_index < element_count; ++element_index) {
-            FaultyLoadResult src_result = FaultyLoad(ptr + ptr_idx, sizeof(ElementType));
-
-            if ((!std::is_same_v<decltype(vma), intrinsics::NoInactiveProcessing>)&&(
-                    ((mask >> ptr_idx) & 0b1) == 0)) {
-              if ((InactiveProcessing)vma == InactiveProcessing::kAgnostic) {
-                result.Set<ElementType>(~ElementType{0}, element_index);
-              }
-            } else if (vstart <= ptr_idx) {
-              if (src_result.is_fault) {
-                if ((args.opcode == Decoder::VLoadUnitStrideOpcode::kVleXXff) && (ptr_idx != 0)) {
-                  // TODO(b/323994286): Write a test case to verify vl changes correctly.
-                  SetCsr<CsrName::kVl>(ptr_idx);
-                } else {
-                  exception_raised_ = true;
-                  SetCsr<CsrName::kVstart>(ptr_idx);
-                }
-                return;
-              }
-              result.Set<ElementType>(static_cast<ElementType>(src_result.value), element_index);
-            }
-            ptr_idx++;
-          }
-
-          result = std::get<0>(intrinsics::VectorMasking<ElementType, vta>(
-              orig_result,
-              result,
-              vstart - index * (16 / sizeof(ElementType)),
-              vl - index * (16 / sizeof(ElementType))));
-          state_->cpu.v[args.dst + index] = result.Get<__uint128_t>();
-        }
-        SetCsr<CsrName::kVstart>(0);
-        break;
-      }
-      default:
-        return Unimplemented();
-    }
-  }
   template <typename ElementType, VectorRegisterGroupMultiplier vlmul, TailProcessing vta, auto vma>
   void OpVector(const Decoder::VOpIViArgs& args) {
     using SignedType = berberis::SignedType<ElementType>;
@@ -1207,6 +1369,60 @@ class Interpreter {
           default:
               return Unimplemented();
         }
+      case Decoder::VOpMVvOpcode::kVxunary0:
+        switch (args.vxunary0_opcode) {
+          case Decoder::Vxunary0Opcode::kVzextvf2m:
+              if constexpr (sizeof(UnsignedType) >= 2) {
+              return OpVectorExtend<intrinsics::Vextf2<UnsignedType>,
+                                    UnsignedType,
+                                    2,
+                                    vlmul,
+                                    vta,
+                                    vma>(args.dst, args.src1);
+              }
+              break;
+          case Decoder::Vxunary0Opcode::kVsextvf2m:
+              if constexpr (sizeof(SignedType) >= 2) {
+              return OpVectorExtend<intrinsics::Vextf2<SignedType>, SignedType, 2, vlmul, vta, vma>(
+                  args.dst, args.src1);
+              }
+              break;
+          case Decoder::Vxunary0Opcode::kVzextvf4m:
+              if constexpr (sizeof(UnsignedType) >= 4) {
+              return OpVectorExtend<intrinsics::Vextf4<UnsignedType>,
+                                    UnsignedType,
+                                    4,
+                                    vlmul,
+                                    vta,
+                                    vma>(args.dst, args.src1);
+              }
+              break;
+          case Decoder::Vxunary0Opcode::kVsextvf4m:
+              if constexpr (sizeof(SignedType) >= 4) {
+              return OpVectorExtend<intrinsics::Vextf4<SignedType>, SignedType, 4, vlmul, vta, vma>(
+                  args.dst, args.src1);
+              }
+              break;
+          case Decoder::Vxunary0Opcode::kVzextvf8m:
+              if constexpr (sizeof(UnsignedType) >= 8) {
+              return OpVectorExtend<intrinsics::Vextf8<UnsignedType>,
+                                    UnsignedType,
+                                    8,
+                                    vlmul,
+                                    vta,
+                                    vma>(args.dst, args.src1);
+              }
+              break;
+          case Decoder::Vxunary0Opcode::kVsextvf8m:
+              if constexpr (sizeof(SignedType) >= 8) {
+              return OpVectorExtend<intrinsics::Vextf8<SignedType>, SignedType, 8, vlmul, vta, vma>(
+                  args.dst, args.src1);
+              }
+              break;
+          default:
+              return Unimplemented();
+        }
+        return Unimplemented();
       case Decoder::VOpMVvOpcode::kVmsXf:
         switch (args.vmsXf_opcode) {
           case Decoder::VmsXfOpcode::kVmsbfm:
@@ -1252,7 +1468,7 @@ class Interpreter {
                       vlmul == VectorRegisterGroupMultiplier::k8registers) {
           return Unimplemented();
         } else {
-          return OpVectorWidenvv<intrinsics::Vwaddvv<ElementType>, ElementType, vlmul, vta, vma>(
+          return OpVectorWidenvv<intrinsics::Vwaddvv<SignedType>, SignedType, vlmul, vta, vma>(
               args.dst, args.src1, args.src2);
         }
       case Decoder::VOpMVvOpcode::kVwadduvv:
@@ -1260,7 +1476,7 @@ class Interpreter {
                       vlmul == VectorRegisterGroupMultiplier::k8registers) {
           return Unimplemented();
         } else {
-          return OpVectorWidenvv<intrinsics::Vwadduvv<ElementType>, ElementType, vlmul, vta, vma>(
+          return OpVectorWidenvv<intrinsics::Vwaddvv<UnsignedType>, UnsignedType, vlmul, vta, vma>(
               args.dst, args.src1, args.src2);
         }
       case Decoder::VOpMVvOpcode::kVwsubuvv:
@@ -1268,7 +1484,7 @@ class Interpreter {
                       vlmul == VectorRegisterGroupMultiplier::k8registers) {
           return Unimplemented();
         } else {
-          return OpVectorWidenvv<intrinsics::Vwsubuvv<ElementType>, ElementType, vlmul, vta, vma>(
+          return OpVectorWidenvv<intrinsics::Vwsubvv<UnsignedType>, UnsignedType, vlmul, vta, vma>(
               args.dst, args.src1, args.src2);
         }
       default:
@@ -1418,22 +1634,44 @@ class Interpreter {
     }
   }
 
-  template <typename ElementType,
-            int kSegmentSize,
+  template <typename DataElementType,
             VectorRegisterGroupMultiplier vlmul,
+            typename IndexElementType,
+            int kSegmentSize,
+            size_t kIndexRegistersInvolved,
+            TailProcessing vta,
+            auto vma>
+  void OpVector(const Decoder::VStoreIndexedArgs& args, Register src) {
+    return OpVector<DataElementType,
+                    kSegmentSize,
+                    NumberOfRegistersInvolved(vlmul),
+                    IndexElementType,
+                    kIndexRegistersInvolved,
+                    vta,
+                    vma>(args, src);
+  }
+
+  template <typename DataElementType,
+            int kSegmentSize,
+            size_t kNumRegistersInGroup,
+            typename IndexElementType,
+            size_t kIndexRegistersInvolved,
             TailProcessing vta,
             auto vma>
   void OpVector(const Decoder::VStoreIndexedArgs& /*args*/, Register /*src*/) {
     Unimplemented();
   }
-
   template <typename ElementType,
             int kSegmentSize,
             VectorRegisterGroupMultiplier vlmul,
             TailProcessing vta,
             auto vma>
-  void OpVector(const Decoder::VStoreStrideArgs& /*args*/, Register /*src*/, Register /*std*/) {
-    Unimplemented();
+  void OpVector(const Decoder::VStoreStrideArgs& args, Register src, Register stride) {
+    return OpVectorStore<ElementType,
+                         kSegmentSize,
+                         NumberOfRegistersInvolved(vlmul),
+                         !std::is_same_v<decltype(vma), intrinsics::NoInactiveProcessing>>(
+        args.data, src, [stride](size_t index) { return stride * index; });
   }
 
   template <typename ElementType,
@@ -1442,53 +1680,106 @@ class Interpreter {
             TailProcessing vta,
             auto vma>
   void OpVector(const Decoder::VStoreUnitStrideArgs& args, Register src) {
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
-    ElementType* ptr = ToHostAddr<ElementType>(src);
-    SIMD128Register source_reg;
-    __uint128_t mask;
-    if constexpr (!std::is_same_v<decltype(vma), intrinsics::NoInactiveProcessing>) {
-      mask = state_->cpu.v[0];
-    }
     switch (args.opcode) {
-      case Decoder::VStoreUnitStrideOpcode::kVseXX: {
-        if (args.nf != 0) {
-          return Unimplemented();
-        }
-        int ptr_idx = 0;
-        for (size_t index = 0; index < kRegistersInvolved; ++index) {
-          source_reg.Set(state_->cpu.v[args.data + index]);
-          const size_t element_count = static_cast<int>(16 / sizeof(ElementType));
-          for (size_t element_index = 0; element_index < element_count; ++element_index) {
-              bool skip_element = (ptr_idx < vstart) || (ptr_idx >= vl);
-              if ((!std::is_same_v<decltype(vma), intrinsics::NoInactiveProcessing>)&&(
-                      ((mask >> ptr_idx) & 1) == 0)) {
-                skip_element = true;
-              }
-              if (!skip_element) {
-                exception_raised_ = FaultyStore(
-                    ptr + ptr_idx, sizeof(ElementType), source_reg.Get<ElementType>(element_index));
-                if (exception_raised_) return;
-              }
-              ptr_idx++;
-          }
-        }
-        SetCsr<CsrName::kVstart>(0);
-        break;
-      }
+      case Decoder::VStoreUnitStrideOpcode::kVseXX:
+        return OpVectorStore<ElementType,
+                             kSegmentSize,
+                             NumberOfRegistersInvolved(vlmul),
+                             !std::is_same_v<decltype(vma), intrinsics::NoInactiveProcessing>,
+                             Decoder::VStoreUnitStrideOpcode::kVseXX>(
+            args.data, src, [](size_t index) {
+              return kSegmentSize * sizeof(ElementType) * index;
+            });
       default:
         return Unimplemented();
     }
   }
+
+  // Look for VLoadStrideArgs for explanation about semantics: VStoreStrideArgs is almost symmetric,
+  // except it ignores vta and vma modes and never alters inactive elements in memory.
+  template <
+      typename ElementType,
+      int kSegmentSize,
+      size_t kNumRegistersInGroup,
+      bool kUseMasking,
+      typename Decoder::VStoreUnitStrideOpcode opcode = typename Decoder::VStoreUnitStrideOpcode{},
+      typename GetElementOffsetLambdaType>
+  void OpVectorStore(uint8_t data, Register src, GetElementOffsetLambdaType GetElementOffset) {
+    using MaskType = std::conditional_t<sizeof(ElementType) == sizeof(Int8), UInt16, UInt8>;
+    if (!IsAligned<kNumRegistersInGroup>(data)) {
+      return Unimplemented();
+    }
+    if (data + kNumRegistersInGroup * kSegmentSize > 32) {
+      return Unimplemented();
+    }
+    constexpr int kElementsCount = static_cast<int>(16 / sizeof(ElementType));
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
+    // In case of memory access fault we may set vstart to non-zero value, set it to zero here to
+    // simplify the logic below.
+    SetCsr<CsrName::kVstart>(0);
+    char* ptr = ToHostAddr<char>(src);
+    // Note: within_group_id is the current register id within a register group. During one
+    // iteration of this loop we store results for all registers with the current id in all
+    // groups. E.g. for the example above we'd store data from v0, v2, v4 during the first iteration
+    // (id within group = 0), and v1, v3, v5 during the second iteration (id within group = 1). This
+    // ensures that memory is always accessed in ordered fashion.
+    auto mask = GetMaskForVectorOperationsIfNeeded<kUseMasking>();
+    for (size_t within_group_id = vstart / kElementsCount; within_group_id < kNumRegistersInGroup;
+         ++within_group_id) {
+      // No need to continue if we no longer have elements to store.
+      if (within_group_id * kElementsCount >= vl) {
+        break;
+      }
+      auto register_mask =
+          std::get<0>(intrinsics::MaskForRegisterInSequence<ElementType>(mask, within_group_id));
+      // Store elements to memory, but only if there are any active ones.
+      for (size_t within_register_id = vstart % kElementsCount; within_register_id < kElementsCount;
+           ++within_register_id) {
+        size_t element_index = kElementsCount * within_group_id + within_register_id;
+        // Stop if we reached the vl limit.
+        if (vl <= element_index) {
+          break;
+        }
+        // Don't touch masked-out elements.
+        if constexpr (kUseMasking) {
+          if ((MaskType(register_mask) & MaskType{static_cast<typename MaskType::BaseType>(
+                                             1 << within_register_id)}) == MaskType{0}) {
+            continue;
+          }
+        }
+        // Store segment to memory.
+        for (int field = 0; field < kSegmentSize; ++field) {
+          bool exception_raised = FaultyStore(
+              ptr + field * sizeof(ElementType) + GetElementOffset(element_index),
+              sizeof(ElementType),
+              SIMD128Register{state_->cpu.v[data + within_group_id + field * kNumRegistersInGroup]}
+                  .Get<ElementType>(within_register_id));
+          // Stop processing if memory is inaccessible. It's also the only case where we have to set
+          // vstart to non-zero value!
+          if (exception_raised) {
+            SetCsr<CsrName::kVstart>(element_index);
+            return;
+          }
+        }
+      }
+      // Next group should be fully processed.
+      vstart = 0;
+    }
+  }
+
   template <typename ElementType, VectorRegisterGroupMultiplier vlmul, TailProcessing vta, auto vma>
   void OpVectorVidv(uint8_t dst) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
+    return OpVectorVidv<ElementType, NumberOfRegistersInvolved(vlmul), vta, vma>(dst);
+  }
+
+  template <typename ElementType, size_t kRegistersInvolved, TailProcessing vta, auto vma>
+  void OpVectorVidv(uint8_t dst) {
     if (!IsAligned<kRegistersInvolved>(dst)) {
       return Unimplemented();
     }
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     auto mask = GetMaskForVectorOperations<vma>();
     for (size_t index = 0; index < kRegistersInvolved; ++index) {
       SIMD128Register result{state_->cpu.v[dst + index]};
@@ -1505,8 +1796,8 @@ class Interpreter {
 
   template <typename ElementType, TailProcessing vta>
   void OpvectorVmvsx(uint8_t dst, uint8_t src1) {
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     // Documentation doesn't specify what happenes when vstart is non-zero but less than vl.
     // But at least one hardware implementation treats it as NOP:
     //   https://github.com/riscv/riscv-v-spec/issues/937
@@ -1536,8 +1827,8 @@ class Interpreter {
 
   template <auto Intrinsic, auto vma>
   void OpVectorVXmXXs(uint8_t dst, uint8_t src1) {
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     if (vstart != 0) {
       return Unimplemented();
     }
@@ -1554,8 +1845,8 @@ class Interpreter {
 
   template <auto Intrinsic>
   void OpVectormm(uint8_t dst, uint8_t src1, uint8_t src2) {
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     SIMD128Register arg1(state_->cpu.v[src1]);
     SIMD128Register arg2(state_->cpu.v[src2]);
     SIMD128Register result;
@@ -1578,8 +1869,8 @@ class Interpreter {
 
   template <auto Intrinsic, auto vma>
   void OpVectorVmsXf(uint8_t dst, uint8_t src1) {
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     if (vstart != 0) {
       return Unimplemented();
     }
@@ -1612,7 +1903,7 @@ class Interpreter {
     if (((dst | src) & nf) != 0) {
       return Unimplemented();
     }
-    int vstart = GetCsr<CsrName::kVstart>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
     if (vstart == 0) [[likely]] {
       for (int index = 0; index <= nf; ++index) {
         state_->cpu.v[dst + index] = state_->cpu.v[src + index];
@@ -1642,20 +1933,25 @@ class Interpreter {
 
   template <auto Intrinsic, typename ElementType, VectorRegisterGroupMultiplier vlmul, auto vma>
   void OpVectormvv(uint8_t dst, uint8_t src1, uint8_t src2) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
+    return OpVectormvv<Intrinsic, ElementType, NumberOfRegistersInvolved(vlmul), vma>(
+        dst, src1, src2);
+  }
+
+  template <auto Intrinsic, typename ElementType, size_t kRegistersInvolved, auto vma>
+  void OpVectormvv(uint8_t dst, uint8_t src1, uint8_t src2) {
     if (!IsAligned<kRegistersInvolved>(src1 | src2)) {
       return Unimplemented();
     }
     SIMD128Register original_result(state_->cpu.v[dst]);
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     SIMD128Register result_before_vl_masking;
     if (vstart >= vl) [[unlikely]] {
       result_before_vl_masking = original_result;
       SetCsr<CsrName::kVstart>(0);
     } else {
       result_before_vl_masking =
-          CollectBitmaskResult<ElementType, vlmul>([this, src1, src2](auto index) {
+          CollectBitmaskResult<ElementType, kRegistersInvolved>([this, src1, src2](auto index) {
             SIMD128Register arg1(state_->cpu.v[src1 + static_cast<size_t>(index)]);
             SIMD128Register arg2(state_->cpu.v[src2 + static_cast<size_t>(index)]);
             return Intrinsic(arg1, arg2);
@@ -1681,20 +1977,25 @@ class Interpreter {
 
   template <auto Intrinsic, typename ElementType, VectorRegisterGroupMultiplier vlmul, auto vma>
   void OpVectormvx(uint8_t dst, uint8_t src1, ElementType arg2) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
+    return OpVectormvx<Intrinsic, ElementType, NumberOfRegistersInvolved(vlmul), vma>(
+        dst, src1, arg2);
+  }
+
+  template <auto Intrinsic, typename ElementType, size_t kRegistersInvolved, auto vma>
+  void OpVectormvx(uint8_t dst, uint8_t src1, ElementType arg2) {
     if (!IsAligned<kRegistersInvolved>(src1)) {
       return Unimplemented();
     }
     SIMD128Register original_result(state_->cpu.v[dst]);
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     SIMD128Register result_before_vl_masking;
     if (vstart >= vl) [[unlikely]] {
       result_before_vl_masking = original_result;
       SetCsr<CsrName::kVstart>(0);
     } else {
       result_before_vl_masking =
-          CollectBitmaskResult<ElementType, vlmul>([this, src1, arg2](auto index) {
+          CollectBitmaskResult<ElementType, kRegistersInvolved>([this, src1, arg2](auto index) {
             SIMD128Register arg1(state_->cpu.v[src1 + static_cast<size_t>(index)]);
             return Intrinsic(arg1, arg2);
           });
@@ -1723,12 +2024,21 @@ class Interpreter {
             TailProcessing vta,
             auto vma>
   void OpVectorvs(uint8_t dst, uint8_t src1, uint8_t src2) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
+    return OpVectorvs<Intrinsic, ElementType, NumberOfRegistersInvolved(vlmul), vta, vma>(
+        dst, src1, src2);
+  }
+
+  template <auto Intrinsic,
+            typename ElementType,
+            size_t kRegistersInvolved,
+            TailProcessing vta,
+            auto vma>
+  void OpVectorvs(uint8_t dst, uint8_t src1, uint8_t src2) {
     if (!IsAligned<kRegistersInvolved>(dst | src1 | src2)) {
       return Unimplemented();
     }
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     if (vstart != 0) {
       return Unimplemented();
     }
@@ -1737,8 +2047,8 @@ class Interpreter {
     ElementType arg1 = SIMD128Register{state_->cpu.v[src1]}.Get<ElementType>(0);
     for (size_t index = 0; index < kRegistersInvolved; ++index) {
       using MaskType = std::conditional_t<sizeof(ElementType) == sizeof(Int8), UInt16, UInt8>;
-      const MaskType element_count{static_cast<typename MaskType::BaseType>(
-          std::min(static_cast<int>(16 / sizeof(ElementType)), vl))};
+      const MaskType element_count{
+          static_cast<typename MaskType::BaseType>(std::min(16 / sizeof(ElementType), vl))};
       auto mask_bits = std::get<0>(intrinsics::MaskForRegisterInSequence<ElementType>(mask, index));
       SIMD128Register arg2(state_->cpu.v[src2 + index]);
       for (MaskType element_index = MaskType{0}; element_index < element_count;
@@ -1766,16 +2076,26 @@ class Interpreter {
             auto vma,
             typename... DstMaskType>
   void OpVectorvv(uint8_t dst, uint8_t src1, uint8_t src2, DstMaskType... dst_mask) {
+    return OpVectorvv<Intrinsic, ElementType, NumberOfRegistersInvolved(vlmul), vta, vma>(
+        dst, src1, src2, dst_mask...);
+  }
+
+  template <auto Intrinsic,
+            typename ElementType,
+            size_t kRegistersInvolved,
+            TailProcessing vta,
+            auto vma,
+            typename... DstMaskType>
+  void OpVectorvv(uint8_t dst, uint8_t src1, uint8_t src2, DstMaskType... dst_mask) {
     // Note: for the most instructions dst_mask is the same as dst and thus is not supplied
     // separately, but for vmerge.vvm it's the same as src1.
     // Since it's always one of dst, src1, or src2 there are no need to check alignment separately.
     static_assert(sizeof...(dst_mask) <= 1);
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
     if (!IsAligned<kRegistersInvolved>(dst | src1 | src2)) {
       return Unimplemented();
     }
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     auto mask = GetMaskForVectorOperations<vma>();
     for (size_t index = 0; index < kRegistersInvolved; ++index) {
       SIMD128Register result{state_->cpu.v[dst + index]};
@@ -1806,12 +2126,21 @@ class Interpreter {
             TailProcessing vta,
             auto vma>
   void OpVectorvvv(uint8_t dst, uint8_t src1, uint8_t src2) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
+    return OpVectorvvv<Intrinsic, ElementType, NumberOfRegistersInvolved(vlmul), vta, vma>(
+        dst, src1, src2);
+  }
+
+  template <auto Intrinsic,
+            typename ElementType,
+            size_t kRegistersInvolved,
+            TailProcessing vta,
+            auto vma>
+  void OpVectorvvv(uint8_t dst, uint8_t src1, uint8_t src2) {
     if (!IsAligned<kRegistersInvolved>(dst | src1 | src2)) {
       return Unimplemented();
     }
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     auto mask = GetMaskForVectorOperations<vma>();
     for (size_t index = 0; index < kRegistersInvolved; ++index) {
       SIMD128Register result(state_->cpu.v[dst + index]);
@@ -1836,13 +2165,26 @@ class Interpreter {
             TailProcessing vta,
             auto vma>
   void OpVectorWidenvv(uint8_t dst, uint8_t src1, uint8_t src2) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
-    constexpr size_t kDestRegistersInvolved = NumRegistersInvolvedForWideOperand(vlmul);
+    return OpVectorWidenvv<Intrinsic,
+                           ElementType,
+                           NumRegistersInvolvedForWideOperand(vlmul),
+                           NumberOfRegistersInvolved(vlmul),
+                           vta,
+                           vma>(dst, src1, src2);
+  }
+
+  template <auto Intrinsic,
+            typename ElementType,
+            int kDestRegistersInvolved,
+            size_t kRegistersInvolved,
+            TailProcessing vta,
+            auto vma>
+  void OpVectorWidenvv(uint8_t dst, uint8_t src1, uint8_t src2) {
     if (!IsAligned<kDestRegistersInvolved>(dst) || !IsAligned<kRegistersInvolved>(src1 | src2)) {
       return Unimplemented();
     }
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     auto mask = GetMaskForVectorOperations<vma>();
     for (size_t index = 0; index < kRegistersInvolved; ++index) {
       SIMD128Register result(state_->cpu.v[dst + 2 * index]);
@@ -1880,16 +2222,26 @@ class Interpreter {
             auto vma,
             typename... DstMaskType>
   void OpVectorvx(uint8_t dst, uint8_t src1, ElementType arg2, DstMaskType... dst_mask) {
+    return OpVectorvx<Intrinsic, ElementType, NumberOfRegistersInvolved(vlmul), vta, vma>(
+        dst, src1, arg2, dst_mask...);
+  }
+
+  template <auto Intrinsic,
+            typename ElementType,
+            size_t kRegistersInvolved,
+            TailProcessing vta,
+            auto vma,
+            typename... DstMaskType>
+  void OpVectorvx(uint8_t dst, uint8_t src1, ElementType arg2, DstMaskType... dst_mask) {
     // Note: for the most instructions dst_mask is the same as dst and thus is not supplied
     // separately, but for vmerge.vxm it's the same as src1.
     // Since it's always one of dst, src1, or src2 there are no need to check alignment separately.
     static_assert(sizeof...(dst_mask) <= 1);
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
     if (!IsAligned<kRegistersInvolved>(dst | src1)) {
       return Unimplemented();
     }
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     auto mask = GetMaskForVectorOperations<vma>();
     for (size_t index = 0; index < kRegistersInvolved; ++index) {
       SIMD128Register result(state_->cpu.v[dst + index]);
@@ -1920,20 +2272,37 @@ class Interpreter {
             TailProcessing vta,
             auto vma>
   void OpVectorNarrowwx(uint8_t dst, uint8_t src1, ElementType arg2) {
-    constexpr size_t kDestRegistersInvolved = NumberOfRegistersInvolved(vlmul);
-    constexpr size_t kSrcRegistersInvolved = NumRegistersInvolvedForWideOperand(vlmul);
-    if (!IsAligned<kDestRegistersInvolved>(dst) || !IsAligned<kSrcRegistersInvolved>(src1)) {
+    return OpVectorNarrowwx<Intrinsic,
+                            ElementType,
+                            NumberOfRegistersInvolved(vlmul),
+                            NumRegistersInvolvedForWideOperand(vlmul),
+                            vta,
+                            vma>(dst, src1, arg2);
+  }
+
+  template <auto Intrinsic,
+            typename ElementType,
+            int kDestRegistersInvolved,
+            int kSrcRegistersInvolved,
+            TailProcessing vta,
+            auto vma>
+  void OpVectorNarrowwx(uint8_t dst, uint8_t src1, ElementType arg2) {
+    if constexpr (kDestRegistersInvolved == kSrcRegistersInvolved) {
+      if (!IsAligned<kDestRegistersInvolved>(dst | src1)) {
+        return Unimplemented();
+      }
+    } else if (!IsAligned<kDestRegistersInvolved>(dst) || !IsAligned<kSrcRegistersInvolved>(src1)) {
       return Unimplemented();
     }
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     auto mask = GetMaskForVectorOperations<vma>();
-    for (size_t index = 0; index < kDestRegistersInvolved; index++) {
+    for (int index = 0; index < kDestRegistersInvolved; index++) {
       SIMD128Register orig_result(state_->cpu.v[dst + index]);
       SIMD128Register arg1_low(state_->cpu.v[src1 + 2 * index]);
       SIMD128Register intrinsic_result = std::get<0>(Intrinsic(arg1_low, arg2));
 
-      if (kSrcRegistersInvolved > 1) {
+      if constexpr (kSrcRegistersInvolved > 1) {
         SIMD128Register arg1_high(state_->cpu.v[src1 + 2 * index + 1]);
         SIMD128Register result_high = std::get<0>(Intrinsic(arg1_high, arg2));
         intrinsic_result = std::get<0>(
@@ -1959,14 +2328,31 @@ class Interpreter {
             TailProcessing vta,
             auto vma>
   void OpVectorNarrowwv(uint8_t dst, uint8_t src1, uint8_t src2) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
-    constexpr size_t kFirstSrcRegistersInvolved = NumRegistersInvolvedForWideOperand(vlmul);
-    if (!IsAligned<kRegistersInvolved>(dst | src2) ||
-        !IsAligned<kFirstSrcRegistersInvolved>(src1)) {
+    return OpVectorNarrowwv<Intrinsic,
+                            ElementType,
+                            NumberOfRegistersInvolved(vlmul),
+                            NumRegistersInvolvedForWideOperand(vlmul),
+                            vta,
+                            vma>(dst, src1, src2);
+  }
+
+  template <auto Intrinsic,
+            typename ElementType,
+            size_t kRegistersInvolved,
+            int kFirstSrcRegistersInvolved,
+            TailProcessing vta,
+            auto vma>
+  void OpVectorNarrowwv(uint8_t dst, uint8_t src1, uint8_t src2) {
+    if constexpr (kRegistersInvolved == kFirstSrcRegistersInvolved) {
+      if (!IsAligned<kRegistersInvolved>(dst | src1 | src2)) {
+        return Unimplemented();
+      }
+    } else if (!IsAligned<kRegistersInvolved>(dst | src2) ||
+               !IsAligned<kFirstSrcRegistersInvolved>(src1)) {
       return Unimplemented();
     }
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     auto mask = GetMaskForVectorOperations<vma>();
     for (size_t index = 0; index < kRegistersInvolved; index++) {
       SIMD128Register orig_result(state_->cpu.v[dst + index]);
@@ -1974,7 +2360,7 @@ class Interpreter {
       SIMD128Register arg2_low(state_->cpu.v[src2 + index]);
       SIMD128Register intrinsic_result = std::get<0>(Intrinsic(arg1_low, arg2_low));
 
-      if (kFirstSrcRegistersInvolved > 1) {
+      if constexpr (kFirstSrcRegistersInvolved > 1) {
         SIMD128Register arg1_high(state_->cpu.v[src1 + 2 * index + 1]);
         SIMD128Register arg2_high(state_->cpu.v[src2 + index] >> 64);
         SIMD128Register result_high = std::get<0>(Intrinsic(arg1_high, arg2_high));
@@ -1995,17 +2381,60 @@ class Interpreter {
   }
 
   template <auto Intrinsic,
+            typename DestElementType,
+            const uint8_t kFactor,
+            VectorRegisterGroupMultiplier vlmul,
+            TailProcessing vta,
+            auto vma>
+  void OpVectorExtend(uint8_t dst, uint8_t src) {
+    static_assert(kFactor == 2 || kFactor == 4 || kFactor == 8);
+    constexpr size_t kDestRegistersInvolved = NumberOfRegistersInvolved(vlmul);
+    constexpr size_t kSourceRegistersInvolved = (kDestRegistersInvolved / kFactor) ?: 1;
+    if (!IsAligned<kDestRegistersInvolved>(dst) || !IsAligned<kSourceRegistersInvolved>(src)) {
+      return Unimplemented();
+    }
+    int vstart = GetCsr<CsrName::kVstart>();
+    int vl = GetCsr<CsrName::kVl>();
+    auto mask = GetMaskForVectorOperations<vma>();
+    for (size_t dst_index = 0; dst_index < kDestRegistersInvolved; dst_index++) {
+      size_t src_index = dst_index / kFactor;
+      size_t src_elem = dst_index % kFactor;
+      SIMD128Register result{state_->cpu.v[dst + dst_index]};
+      SIMD128Register arg{state_->cpu.v[src + src_index] >> ((128 / kFactor) * src_elem)};
+
+      result = std::get<0>(intrinsics::VectorMasking<DestElementType, vta, vma>(
+          result,
+          std::get<0>(Intrinsic(arg)),
+          result,
+          vstart - dst_index * (16 / sizeof(DestElementType)),
+          vl - dst_index * (16 / sizeof(DestElementType)),
+          std::get<0>(intrinsics::MaskForRegisterInSequence<DestElementType>(mask, dst_index))));
+      state_->cpu.v[dst + dst_index] = result.Get<__uint128_t>();
+    }
+    SetCsr<CsrName::kVstart>(0);
+  }
+
+  template <auto Intrinsic,
             typename ElementType,
             VectorRegisterGroupMultiplier vlmul,
             TailProcessing vta,
             auto vma>
   void OpVectorvxv(uint8_t dst, uint8_t src1, ElementType arg2) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
+    return OpVectorvxv<Intrinsic, ElementType, NumberOfRegistersInvolved(vlmul), vta, vma>(
+        dst, src1, arg2);
+  }
+
+  template <auto Intrinsic,
+            typename ElementType,
+            size_t kRegistersInvolved,
+            TailProcessing vta,
+            auto vma>
+  void OpVectorvxv(uint8_t dst, uint8_t src1, ElementType arg2) {
     if (!IsAligned<kRegistersInvolved>(dst | src1)) {
       return Unimplemented();
     }
-    int vstart = GetCsr<CsrName::kVstart>();
-    int vl = GetCsr<CsrName::kVl>();
+    size_t vstart = GetCsr<CsrName::kVstart>();
+    size_t vl = GetCsr<CsrName::kVl>();
     auto mask = GetMaskForVectorOperations<vma>();
     for (size_t index = 0; index < kRegistersInvolved; ++index) {
       SIMD128Register result(state_->cpu.v[dst + index]);
@@ -2023,7 +2452,12 @@ class Interpreter {
 
   template <typename ElementType, VectorRegisterGroupMultiplier vlmul, TailProcessing vta, auto vma>
   void OpVectorslideup(uint8_t dst, uint8_t src, Register offset) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
+    return OpVectorslideup<ElementType, NumberOfRegistersInvolved(vlmul), vta, vma>(
+        dst, src, offset);
+  }
+
+  template <typename ElementType, size_t kRegistersInvolved, TailProcessing vta, auto vma>
+  void OpVectorslideup(uint8_t dst, uint8_t src, Register offset) {
     constexpr size_t kElementsPerRegister = 16 / sizeof(ElementType);
     if (!IsAligned<kRegistersInvolved>(dst | src)) {
       return Unimplemented();
@@ -2043,7 +2477,7 @@ class Interpreter {
     }
     auto mask = GetMaskForVectorOperations<vma>();
     // The slideup operation leaves Elements 0 through MAX(vstart, OFFSET) unchanged.
-    const size_t start_elem_index = std::max(vstart, offset);
+    const size_t start_elem_index = std::max<Register>(vstart, offset);
 
     // From 16.3.1: Destination elements OFFSET through vl-1 are written if
     // unmasked and if OFFSET < vl.
@@ -2079,7 +2513,12 @@ class Interpreter {
 
   template <typename ElementType, VectorRegisterGroupMultiplier vlmul, TailProcessing vta, auto vma>
   void OpVectorslidedown(uint8_t dst, uint8_t src, Register offset) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
+    return OpVectorslidedown<ElementType, NumberOfRegistersInvolved(vlmul), vta, vma>(
+        dst, src, offset);
+  }
+
+  template <typename ElementType, size_t kRegistersInvolved, TailProcessing vta, auto vma>
+  void OpVectorslidedown(uint8_t dst, uint8_t src, Register offset) {
     constexpr size_t kElementsPerRegister = 16 / sizeof(ElementType);
     if (!IsAligned<kRegistersInvolved>(dst | src)) {
       return Unimplemented();
@@ -2130,9 +2569,8 @@ class Interpreter {
   // Note that we are not handling tail here! These bits remain undefined and should be handled
   // later.
   // TODO(b/317757595): Add separate tests to verify the logic.
-  template <typename ElementType, VectorRegisterGroupMultiplier vlmul, typename Intrinsic>
+  template <typename ElementType, size_t kRegistersInvolved, typename Intrinsic>
   SIMD128Register CollectBitmaskResult(Intrinsic intrinsic) {
-    constexpr size_t kRegistersInvolved = NumberOfRegistersInvolved(vlmul);
     // We employ two distinct tactics to handle all possibilities:
     //   1. For 8bit/16bit types we get full UInt8/UInt16 result and thus use SIMD128Register.Set.
     //   2. For 32bit/64bit types we only get 2bit or 4bit from each call and thus need to use
@@ -2267,16 +2705,23 @@ class Interpreter {
 
   void CheckFpRegIsValid(uint8_t reg) const { CHECK_LT(reg, std::size(state_->cpu.f)); }
 
+  template <bool kUseMasking>
+  std::conditional_t<kUseMasking, SIMD128Register, intrinsics::NoInactiveProcessing>
+  GetMaskForVectorOperationsIfNeeded() {
+    if constexpr (kUseMasking) {
+      return {state_->cpu.v[0]};
+    } else {
+      return intrinsics::NoInactiveProcessing{};
+    }
+  }
+
   template <auto vma>
   std::conditional_t<std::is_same_v<decltype(vma), intrinsics::NoInactiveProcessing>,
                      intrinsics::NoInactiveProcessing,
                      SIMD128Register>
   GetMaskForVectorOperations() {
-    if constexpr (std::is_same_v<decltype(vma), intrinsics::NoInactiveProcessing>) {
-      return intrinsics::NoInactiveProcessing{};
-    } else {
-      return {state_->cpu.v[0]};
-    }
+    return GetMaskForVectorOperationsIfNeeded<
+        !std::is_same_v<decltype(vma), intrinsics::NoInactiveProcessing>>();
   }
 
   ThreadState* state_;

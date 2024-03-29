@@ -122,8 +122,6 @@ class LiteTranslator {
     Unimplemented();
   }
 
-  void FenceI(Register /*arg*/, int16_t /*imm*/) { Unimplemented(); }
-
   void Nop() {}
 
   //
@@ -476,6 +474,11 @@ class LiteTranslator {
   const LiteTranslateParams params_;
   bool is_region_end_reached_;
 };
+
+template <>
+[[nodiscard]] inline LiteTranslator::Register LiteTranslator::GetCsr<CsrName::kCycle>() {
+  return CPUClockCount();
+}
 
 template <>
 [[nodiscard]] inline LiteTranslator::Register LiteTranslator::GetCsr<CsrName::kFCsr>() {

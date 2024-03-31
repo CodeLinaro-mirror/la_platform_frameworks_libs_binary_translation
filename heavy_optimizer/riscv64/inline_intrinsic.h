@@ -43,23 +43,118 @@
 
 namespace berberis {
 
+template <auto kFunction, typename ResType, typename FlagRegister, typename... ArgType>
+bool TryInlineIntrinsicForHeavyOptimizer(x86_64::MachineIRBuilder* builder,
+                                         ResType result,
+                                         FlagRegister flag_register,
+                                         ArgType... args);
+
 template <auto kFunc>
 class InlineIntrinsic {
  public:
   template <typename ResType, typename FlagRegister, typename... ArgType>
-  static bool TryInline(x86_64::MachineIRBuilder* /* builder */,
-                        ResType /* result */,
-                        FlagRegister /* flag_register */,
-                        ArgType... /* args */) {
-    // TODO(b/232598137) Implement intrinsics
-    return false;
-  }
-
-  template <typename FlagRegister, typename... ArgType>
-  static bool TryInline(x86_64::MachineIRBuilder* /* builder */,
-                        FlagRegister /* flag_register */,
-                        ArgType... /* args */) {
-    // TODO(b/232598137) Implement intrinsics
+  static bool TryInlineWithHostRounding(x86_64::MachineIRBuilder* builder,
+                                        ResType result,
+                                        FlagRegister flag_register,
+                                        ArgType... args) {
+    std::tuple args_tuple = std::make_tuple(args...);
+    if constexpr (IsTagEq<&intrinsics::FMul<intrinsics::Float64>>()) {
+      auto [rm, frm, src1, src2] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FMulHostRounding<intrinsics::Float64>>(
+          builder, result, flag_register, src1, src2);
+    } else if constexpr (IsTagEq<&intrinsics::FMul<intrinsics::Float32>>()) {
+      auto [rm, frm, src1, src2] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FMulHostRounding<intrinsics::Float32>>(
+          builder, result, flag_register, src1, src2);
+    } else if constexpr (IsTagEq<&intrinsics::FAdd<intrinsics::Float64>>()) {
+      auto [rm, frm, src1, src2] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FAddHostRounding<intrinsics::Float64>>(
+          builder, result, flag_register, src1, src2);
+    } else if constexpr (IsTagEq<&intrinsics::FAdd<intrinsics::Float32>>()) {
+      auto [rm, frm, src1, src2] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FAddHostRounding<intrinsics::Float32>>(
+          builder, result, flag_register, src1, src2);
+    } else if constexpr (IsTagEq<&intrinsics::FSub<intrinsics::Float64>>()) {
+      auto [rm, frm, src1, src2] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FSubHostRounding<intrinsics::Float64>>(
+          builder, result, flag_register, src1, src2);
+    } else if constexpr (IsTagEq<&intrinsics::FSub<intrinsics::Float32>>()) {
+      auto [rm, frm, src1, src2] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FSubHostRounding<intrinsics::Float32>>(
+          builder, result, flag_register, src1, src2);
+    } else if constexpr (IsTagEq<&intrinsics::FDiv<intrinsics::Float64>>()) {
+      auto [rm, frm, src1, src2] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FDivHostRounding<intrinsics::Float64>>(
+          builder, result, flag_register, src1, src2);
+    } else if constexpr (IsTagEq<&intrinsics::FDiv<intrinsics::Float32>>()) {
+      auto [rm, frm, src1, src2] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FDivHostRounding<intrinsics::Float32>>(
+          builder, result, flag_register, src1, src2);
+    } else if constexpr (IsTagEq<&intrinsics::FCvtFloatToInteger<int64_t, intrinsics::Float64>>()) {
+      auto [rm, frm, src] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FCvtFloatToIntegerHostRounding<int64_t, intrinsics::Float64>>(
+          builder, result, flag_register, src);
+    } else if constexpr (IsTagEq<&intrinsics::FCvtFloatToInteger<int64_t, intrinsics::Float32>>()) {
+      auto [rm, frm, src] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FCvtFloatToIntegerHostRounding<int64_t, intrinsics::Float32>>(
+          builder, result, flag_register, src);
+    } else if constexpr (IsTagEq<&intrinsics::FCvtFloatToInteger<int32_t, intrinsics::Float64>>()) {
+      auto [rm, frm, src] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FCvtFloatToIntegerHostRounding<int32_t, intrinsics::Float64>>(
+          builder, result, flag_register, src);
+    } else if constexpr (IsTagEq<&intrinsics::FCvtFloatToInteger<int32_t, intrinsics::Float32>>()) {
+      auto [rm, frm, src] = args_tuple;
+      if (rm != FPFlags::DYN) {
+        return false;
+      }
+      return TryInlineIntrinsicForHeavyOptimizer<
+          &intrinsics::FCvtFloatToIntegerHostRounding<int32_t, intrinsics::Float32>>(
+          builder, result, flag_register, src);
+    }
     return false;
   }
 
@@ -71,7 +166,7 @@ class InlineIntrinsic {
   template <auto kFunction>
   class FunctionCompareTag;
 
-  // Note, if we define it as a variable clang doesn't consider it a constexpr in TryInline().
+  // Note, if we define it as a variable clang doesn't consider it a constexpr in TryInline funcs.
   template <auto kOtherFunction>
   static constexpr bool IsTagEq() {
     return std::is_same_v<FunctionCompareTag<kFunc>, FunctionCompareTag<kOtherFunction>>;
@@ -330,6 +425,19 @@ class TryBindingBasedInlineIntrinsicForHeavyOptimizer {
         MovFromInput<RegisterClass>(builder_, result_, std::get<arg_info.from>(input_args_));
         return std::tuple{result_};
       }
+    } else if constexpr (arg_info.arg_type == ArgInfo::IN_OUT_TMP_ARG) {
+      static_assert(!std::is_same_v<ResType, std::monostate>);
+      static_assert(std::is_same_v<Usage, intrinsics::bindings::UseDef>);
+      static_assert(RegisterClass::kIsImplicitReg);
+      if constexpr (kNumOut > 1) {
+        static_assert(kDependentTypeFalse<ArgTraits<ArgBinding>>);
+      } else {
+        CHECK(implicit_result_reg_.IsInvalidReg());
+        implicit_result_reg_ = AllocVReg();
+        MovFromInput<RegisterClass>(
+            builder_, implicit_result_reg_, std::get<arg_info.from>(input_args_));
+        return std::tuple{implicit_result_reg_};
+      }
     } else if constexpr (arg_info.arg_type == ArgInfo::IN_TMP_ARG) {
       if constexpr (RegisterClass::kIsImplicitReg) {
         auto implicit_reg = AllocVReg();
@@ -375,7 +483,8 @@ class TryBindingBasedInlineIntrinsicForHeavyOptimizer {
         if constexpr (RegisterClass::kAsRegister == 0) {
           return std::tuple{flag_register_};
         } else {
-          return std::tuple{};
+          auto implicit_reg = AllocVReg();
+          return std::tuple{implicit_reg};
         }
       } else {
         auto reg = AllocVReg();
@@ -435,7 +544,9 @@ class TryBindingBasedInlineIntrinsicForHeavyOptimizer {
                            RegisterClass::kAsRegister == 'x') {
         CHECK(!xmm_result_reg_.IsInvalidReg());
         MovToResult<RegisterClass>(builder_, result_, xmm_result_reg_);
-      } else if constexpr (arg_info.arg_type == ArgInfo::OUT_ARG && RegisterClass::kIsImplicitReg) {
+      } else if constexpr ((arg_info.arg_type == ArgInfo::OUT_ARG ||
+                            arg_info.arg_type == ArgInfo::IN_OUT_TMP_ARG) &&
+                           RegisterClass::kIsImplicitReg) {
         CHECK(!implicit_result_reg_.IsInvalidReg());
         MovToResult<RegisterClass>(builder_, result_, implicit_result_reg_);
       }
@@ -480,7 +591,8 @@ bool TryInlineIntrinsicForHeavyOptimizer(x86_64::MachineIRBuilder* builder,
                                          ResType result,
                                          FlagRegister flag_register,
                                          ArgType... args) {
-  if (InlineIntrinsic<kFunction>::TryInline(builder, result, flag_register, args...)) {
+  if (InlineIntrinsic<kFunction>::TryInlineWithHostRounding(
+          builder, result, flag_register, args...)) {
     return true;
   }
 
@@ -505,10 +617,6 @@ template <auto kFunction, typename FlagRegister, typename... ArgType>
 bool TryInlineIntrinsicForHeavyOptimizerVoid(x86_64::MachineIRBuilder* builder,
                                              FlagRegister flag_register,
                                              ArgType... args) {
-  if (InlineIntrinsic<kFunction>::TryInline(builder, flag_register, args...)) {
-    return true;
-  }
-
   return TryBindingBasedInlineIntrinsicForHeavyOptimizer<kFunction,
                                                          std::monostate,
                                                          FlagRegister,

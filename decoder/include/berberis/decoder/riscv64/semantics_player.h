@@ -43,10 +43,10 @@ class SemanticsPlayer {
     Register arg2 = GetRegOrZero(args.src2);
     Register result;
     switch (args.operand_type) {
-      case Decoder::StoreOperandType::k32bit:
+      case Decoder::MemoryDataOperandType::k32bit:
         result = Amo<int32_t>(args.opcode, arg1, arg2, args.aq, args.rl);
         break;
-      case Decoder::StoreOperandType::k64bit:
+      case Decoder::MemoryDataOperandType::k64bit:
         result = Amo<int64_t>(args.opcode, arg1, arg2, args.aq, args.rl);
         break;
       default:
@@ -345,9 +345,10 @@ class SemanticsPlayer {
     // args.opcode=0000, and standard software shall use only non-reserved configurations.
   }
 
-  void FenceI(const typename Decoder::FenceIArgs& args) {
-    Register arg = GetRegOrZero(args.src);
-    listener_->FenceI(arg, args.imm);
+  void FenceI(const typename Decoder::FenceIArgs& /* args */) {
+    // This instruction is not supported on linux. The recommendation is to use the
+    // riscv_flush_icache syscall instead.
+    Unimplemented();
     // The unused fields in the FENCE.I instruction, imm[11:0], rs1, and rd, are reserved for
     // finer-grain fences in future extensions. For forward compatibility, base implementations
     // shall ignore these fields, and standard software shall zero these fields.
@@ -410,6 +411,10 @@ class SemanticsPlayer {
     Register arg2 = GetRegOrZero(args.src2);
     Register result = Overloaded{[&](const typename Decoder::OpArgs& args) {
                                    switch (args.opcode) {
+                                     case Decoder::OpOpcode::kDiv:
+                                       return listener_->template Div<int64_t>(arg1, arg2);
+                                     case Decoder::OpOpcode::kDivu:
+                                       return listener_->template Div<uint64_t>(arg1, arg2);
                                      case Decoder::OpOpcode::kMax:
                                        return listener_->template Max<int64_t>(arg1, arg2);
                                      case Decoder::OpOpcode::kMaxu:
@@ -444,6 +449,10 @@ class SemanticsPlayer {
                                    switch (args.opcode) {
                                      case Decoder::Op32Opcode::kAdduw:
                                        return listener_->Adduw(arg1, arg2);
+                                     case Decoder::Op32Opcode::kDivw:
+                                       return listener_->template Div<int32_t>(arg1, arg2);
+                                     case Decoder::Op32Opcode::kDivuw:
+                                       return listener_->template Div<uint32_t>(arg1, arg2);
                                      case Decoder::Op32Opcode::kRolw:
                                        return listener_->template Rol<int32_t>(arg1, arg2);
                                      case Decoder::Op32Opcode::kRorw:
@@ -808,6 +817,15 @@ class SemanticsPlayer {
     Register arg2 = GetRegOrZero(args.src);
     listener_->OpVector(args, arg2);
   }
+
+  void OpVector(const typename Decoder::VOpFVfArgs& args) {
+    // Note: we don't have information here to chosee between GetFRegAndUnboxNan<Float32> and
+    // GetFRegAndUnboxNan<Float64> because that depends on vtype.
+    FpRegister arg2 = GetFpReg(args.src2);
+    listener_->OpVector(args, arg2);
+  }
+
+  void OpVector(const typename Decoder::VOpFVvArgs& args) { listener_->OpVector(args); }
 
   void OpVector(const typename Decoder::VOpIViArgs& args) { listener_->OpVector(args); }
 

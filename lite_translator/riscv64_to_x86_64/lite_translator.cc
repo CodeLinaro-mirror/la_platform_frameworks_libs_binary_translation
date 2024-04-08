@@ -105,7 +105,6 @@ Register LiteTranslator::Op(Decoder::OpOpcode opcode, Register arg1, Register ar
       as_.Mulq(arg2);
       as_.Movq(res, as_.rdx);
       break;
-    case OpOpcode::kDiv:
     case OpOpcode::kRem:
       as_.Movq(as_.rax, arg1);
       as_.Movq(as_.rdx, as_.rax);
@@ -113,7 +112,6 @@ Register LiteTranslator::Op(Decoder::OpOpcode opcode, Register arg1, Register ar
       as_.Idivq(arg2);
       as_.Movq(res, opcode == OpOpcode::kDiv ? as_.rax : as_.rdx);
       break;
-    case OpOpcode::kDivu:
     case OpOpcode::kRemu:
       as_.Movq(as_.rax, arg1);
       as_.Xorq(as_.rdx, as_.rdx);
@@ -181,20 +179,18 @@ Register LiteTranslator::Op32(Decoder::Op32Opcode opcode, Register arg1, Registe
       as_.Imull(res, arg2);
       as_.Movsxlq(res, res);
       break;
-    case Op32Opcode::kDivw:
     case Op32Opcode::kRemw:
       as_.Movl(as_.rax, arg1);
       as_.Movl(as_.rdx, as_.rax);
       as_.Sarl(as_.rdx, int8_t{31});
       as_.Idivl(arg2);
-      as_.Movsxlq(res, opcode == Op32Opcode::kDivw ? as_.rax : as_.rdx);
+      as_.Movsxlq(res, as_.rdx);
       break;
-    case Op32Opcode::kDivuw:
     case Op32Opcode::kRemuw:
       as_.Movl(as_.rax, arg1);
       as_.Xorl(as_.rdx, as_.rdx);
       as_.Divl(arg2);
-      as_.Movsxlq(res, opcode == Op32Opcode::kDivuw ? as_.rax : as_.rdx);
+      as_.Movsxlq(res, as_.rdx);
       break;
     default:
       Unimplemented();
@@ -441,7 +437,7 @@ Register LiteTranslator::Load(Decoder::LoadOperandType operand_type, Register ar
   return res;
 }
 
-void LiteTranslator::Store(Decoder::StoreOperandType operand_type,
+void LiteTranslator::Store(Decoder::MemoryDataOperandType operand_type,
                            Register arg,
                            int16_t offset,
                            Register data) {
@@ -450,16 +446,16 @@ void LiteTranslator::Store(Decoder::StoreOperandType operand_type,
 
   Assembler::Operand asm_memop{.base = arg, .disp = offset};
   switch (operand_type) {
-    case Decoder::StoreOperandType::k8bit:
+    case Decoder::MemoryDataOperandType::k8bit:
       as_.Movb(asm_memop, data);
       break;
-    case Decoder::StoreOperandType::k16bit:
+    case Decoder::MemoryDataOperandType::k16bit:
       as_.Movw(asm_memop, data);
       break;
-    case Decoder::StoreOperandType::k32bit:
+    case Decoder::MemoryDataOperandType::k32bit:
       as_.Movl(asm_memop, data);
       break;
-    case Decoder::StoreOperandType::k64bit:
+    case Decoder::MemoryDataOperandType::k64bit:
       as_.Movq(asm_memop, data);
       break;
     default:

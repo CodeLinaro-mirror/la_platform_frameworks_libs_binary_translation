@@ -90,7 +90,10 @@ class LiteTranslator {
   void ExitGeneratedCode(GuestAddr target);
   void ExitRegion(GuestAddr target);
   void ExitRegionIndirect(Register target);
-  void Store(Decoder::StoreOperandType operand_type, Register arg, int16_t offset, Register data);
+  void Store(Decoder::MemoryDataOperandType operand_type,
+             Register arg,
+             int16_t offset,
+             Register data);
   Register Load(Decoder::LoadOperandType operand_type, Register arg, int16_t offset);
 
   Register Ecall(Register syscall_nr,
@@ -118,8 +121,6 @@ class LiteTranslator {
     UNUSED(sw, sr, pw, pr);
     Unimplemented();
   }
-
-  void FenceI(Register /*arg*/, int16_t /*imm*/) { Unimplemented(); }
 
   void Nop() {}
 
@@ -473,6 +474,11 @@ class LiteTranslator {
   const LiteTranslateParams params_;
   bool is_region_end_reached_;
 };
+
+template <>
+[[nodiscard]] inline LiteTranslator::Register LiteTranslator::GetCsr<CsrName::kCycle>() {
+  return CPUClockCount();
+}
 
 template <>
 [[nodiscard]] inline LiteTranslator::Register LiteTranslator::GetCsr<CsrName::kFCsr>() {

@@ -26,7 +26,7 @@
 #include "berberis/base/checks.h"
 #include "berberis/base/dependent_false.h"
 #include "berberis/guest_state/guest_state.h"
-#include "berberis/intrinsics/guest_fp_flags.h"
+#include "berberis/intrinsics/guest_cpu_flags.h"
 #include "berberis/intrinsics/intrinsics_process_bindings.h"
 #include "berberis/intrinsics/macro_assembler.h"
 #include "berberis/runtime_primitives/platform.h"
@@ -380,6 +380,18 @@ class TryBindingBasedInlineIntrinsic {
           Mov<std::tuple_element_t<arg_info.from, typename AsmCallInfo::InputArguments>>(
               as_, reg, std::get<arg_info.from>(input_args_));
           return std::tuple{reg};
+        }
+      } else if constexpr (arg_info.arg_type == ArgInfo::IN_OUT_TMP_ARG) {
+        using Type = std::tuple_element_t<arg_info.from, typename AsmCallInfo::InputArguments>;
+        static_assert(std::is_same_v<Usage, intrinsics::bindings::UseDef>);
+        static_assert(RegisterClass::kIsImplicitReg);
+        if constexpr (RegisterClass::kAsRegister == 'a') {
+          CHECK_EQ(result_reg_.num, x86_64::Assembler::no_register.num);
+          Mov<Type>(as_, as_.rax, std::get<arg_info.from>(input_args_));
+          result_reg_ = as_.rax;
+          return std::tuple{};
+        } else {
+          static_assert(kDependentValueFalse<arg_info.arg_type>);
         }
       } else if constexpr (arg_info.arg_type == ArgInfo::OUT_ARG) {
         using Type = std::tuple_element_t<arg_info.to, typename AsmCallInfo::OutputArguments>;

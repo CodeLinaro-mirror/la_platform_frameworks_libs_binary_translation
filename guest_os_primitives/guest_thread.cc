@@ -104,6 +104,13 @@ GuestThread* GuestThread::CreateClone(const GuestThread* parent) {
   SetCPUState(*thread->state(), GetCPUState(*parent->state()));
   SetTlsAddr(*thread->state(), GetTlsAddr(*parent->state()));
 
+  // By default child shares signal handlers, but may unshare later
+  // using CloneSignalActionsTableTo.
+  // Currently parent's handlers have the same lifetime as the parent.
+  // We do not handle the case where the parent exits first. See RunClonedGuestThread.
+  // TODO(b/232598137): Investigate and fix.
+  thread->signal_actions_ = parent->signal_actions_;
+
   return thread;
 }
 
@@ -135,6 +142,19 @@ GuestThread* GuestThread::CreatePthread(void* stack, size_t stack_size, size_t g
     return nullptr;
   }
 
+  thread->SetDefaultSignalActionsTable();
+
+  return thread;
+}
+
+// static
+GuestThread* GuestThread::CreateForTest(ThreadState* state) {
+  void* thread_storage = Mmap(kGuestThreadPageAlignedSize);
+  if (thread_storage == MAP_FAILED) {
+    return nullptr;
+  }
+  GuestThread* thread = new (thread_storage) GuestThread;
+  thread->state_ = state;
   return thread;
 }
 

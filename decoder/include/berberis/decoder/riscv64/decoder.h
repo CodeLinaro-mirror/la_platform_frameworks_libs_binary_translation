@@ -498,6 +498,8 @@ class Decoder {
     kVslide1upvx = 0b001110,
     kVslide1downvx = 0b001111,
     kVRXUnary0 = 0b010000,
+    kVdivuvx = 0b100000,
+    kVdivvx = 0b100001,
     kVmulhuvx = 0b100100,
     kVmulvx = 0b100101,
     kVmulhsuvx = 0b100110,
@@ -551,6 +553,10 @@ class Decoder {
     kVfncvtrodffw = 0b10101,
     kVfncvtrtzxufw = 0b10110,
     kVfncvtrtzxfw = 0b10111,
+  };
+
+  enum class VFUnary1Opcode : uint8_t {
+    kVfrsqrt7v = 0b00100,
   };
 
   enum class VRXUnary0Opcode : uint8_t {
@@ -859,6 +865,7 @@ class Decoder {
     uint8_t src1;
     union {
       VFUnary0Opcode vfunary0_opcode;
+      VFUnary1Opcode vfunary1_opcode;
       uint8_t src2;
     };
   };

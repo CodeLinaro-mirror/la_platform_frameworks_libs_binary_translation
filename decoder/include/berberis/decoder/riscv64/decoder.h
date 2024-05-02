@@ -352,8 +352,8 @@ class Decoder {
     kVssravi = 0b101011,
     kVnsrlwi = 0b101100,
     kVnsrawi = 0b101101,
-    kVnclipuvi = 0b101110,
-    kVnclipvi = 0b101111,
+    kVnclipuwi = 0b101110,
+    kVnclipwi = 0b101111,
   };
 
   enum class VOpIVvOpcode : uint8_t {
@@ -391,8 +391,8 @@ class Decoder {
     kVssravv = 0b101011,
     kVnsrlwv = 0b101100,
     kVnsrawv = 0b101101,
-    kVnclipuvv = 0b101110,
-    kVnclipvv = 0b101111,
+    kVnclipuwv = 0b101110,
+    kVnclipwv = 0b101111,
     kVwredsumuvv = 0b110000,
     kVwredsumvv = 0b110001,
   };
@@ -436,8 +436,8 @@ class Decoder {
     kVssravx = 0b101011,
     kVnsrlwx = 0b101100,
     kVnsrawx = 0b101101,
-    kVnclipuvx = 0b101110,
-    kVnclipvx = 0b101111,
+    kVnclipuwx = 0b101110,
+    kVnclipwx = 0b101111,
   };
 
   enum class VOpMVvOpcode : uint8_t {
@@ -449,6 +449,10 @@ class Decoder {
     kVredminvs = 0b000101,
     kVredmaxuvs = 0b000110,
     kVredmaxvs = 0b000111,
+    kVaadduvv = 0b001000,
+    kVaaddvv = 0b001001,
+    kVasubuvv = 0b001010,
+    kVasubvv = 0b001011,
     kVWXUnary0 = 0b010000,
     kVFUnary0 = 0b010010,
     kVMUnary0 = 0b010100,
@@ -487,6 +491,10 @@ class Decoder {
   };
 
   enum class VOpMVxOpcode : uint8_t {
+    kVaadduvx = 0b001000,
+    kVaaddvx = 0b001001,
+    kVasubuvx = 0b001010,
+    kVasubvx = 0b001011,
     kVslide1upvx = 0b001110,
     kVslide1downvx = 0b001111,
     kVRXUnary0 = 0b010000,
@@ -507,6 +515,7 @@ class Decoder {
     kVwsubuwx = 0b110110,
     kVwsubwx = 0b110111,
     kVwmuluvx = 0b111000,
+    kVwmulsuvx = 0b111010,
     kVwmulvx = 0b111011,
     kVwmaccuvx = 0b111100,
     kVwmaccvx = 0b111101,
@@ -558,6 +567,7 @@ class Decoder {
     kVmsbfm = 0b00001,
     kVmsofm = 0b00010,
     kVmsifm = 0b00011,
+    kViotam = 0b10000,
     kVidv = 0b10001,
   };
 
@@ -1094,7 +1104,7 @@ class Decoder {
         DecodeCompressedStoresp<MemoryDataOperandType::k64bit>();
         break;
       default:
-        insn_consumer_->Unimplemented();
+        insn_consumer_->Undefined();
     }
     return 2;
   }
@@ -1379,8 +1389,8 @@ class Decoder {
     constexpr uint8_t kAddi4spnLow[16] = {
         0x0, 0x2, 0x1, 0x3, 0x10, 0x12, 0x11, 0x13, 0x20, 0x22, 0x21, 0x23, 0x30, 0x32, 0x31, 0x33};
     int16_t imm = (kAddi4spnHigh[GetBits<9, 4>()] | kAddi4spnLow[GetBits<5, 4>()]) << 2;
-    // If immediate is zero then this instruction is treated as unimplemented.
-    // This includes RISC-V dedicated 16bit “unimplemented instruction” 0x0000.
+    // If immediate is zero then this instruction is treated as undefined.
+    // This includes RISC-V dedicated 16bit “undefined instruction” 0x0000.
     if (imm == 0) {
       return Undefined();
     }
@@ -1519,7 +1529,7 @@ class Decoder {
         DecodeSystem();
         break;
       default:
-        insn_consumer_->Unimplemented();
+        insn_consumer_->Undefined();
     }
     return 4;
   }
@@ -1551,10 +1561,7 @@ class Decoder {
     return static_cast<ResultType>(shifted_val >> (32 - size));
   }
 
-  void Undefined() {
-    // TODO(b/265372622): Handle undefined differently from unimplemented.
-    insn_consumer_->Unimplemented();
-  }
+  void Undefined() { insn_consumer_->Undefined(); }
 
   void DecodeMiscMem() {
     uint8_t low_opcode = GetBits<12, 3>();

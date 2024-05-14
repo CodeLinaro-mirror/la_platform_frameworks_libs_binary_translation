@@ -876,6 +876,8 @@ std::tuple<ElementType> WideMultiplySignedUnsigned(ElementType arg1, ElementType
 
 DEFINE_1OP_ARITHMETIC_INTRINSIC_V(copy, auto [arg] = std::tuple{args...}; arg)
 DEFINE_1OP_ARITHMETIC_INTRINSIC_X(copy, auto [arg] = std::tuple{args...}; arg)
+DEFINE_1OP_ARITHMETIC_INTRINSIC_V(frsqrt7, RSqrtEstimate(args...))
+
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(add, (args + ...))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(add, (args + ...))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VS(redsum, (args + ...))
@@ -1029,6 +1031,16 @@ DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(mulhsu, auto [arg1, arg2] = std::tuple{args..
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(
     div,
     ElementType{std::get<0>(Div(static_cast<typename ElementType::BaseType>(args)...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(
+    div,
+    ElementType{std::get<0>(Div(static_cast<typename ElementType::BaseType>(args)...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(
+    rem,
+    ElementType{std::get<0>(Rem(static_cast<typename ElementType::BaseType>(args)...))})
+DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(
+    rem,
+    ElementType{std::get<0>(Rem(static_cast<typename ElementType::BaseType>(args)...))})
+
 DEFINE_2OP_WIDEN_ARITHMETIC_INTRINSIC_VV(add, (args + ...))
 DEFINE_2OP_WIDEN_ARITHMETIC_INTRINSIC_VX(add, (args + ...))
 DEFINE_2OP_WIDEN_ARITHMETIC_INTRINSIC_WV(add, (args + ...))

@@ -885,6 +885,22 @@ std::tuple<ElementType> WideMultiplySignedUnsigned(ElementType arg1, ElementType
       Vw##name##vx, Widenvvw, return ({ __VA_ARGS__; });     \
       , (SIMD128Register src1, ElementType src2, SIMD128Register src3), (), (src1, src2, src3))
 
+#define DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VVW(name, ...)                     \
+  DEFINE_W_ARITHMETIC_INTRINSIC(                                                      \
+      Vfw##name##vv, Widenvvw, return ({ __VA_ARGS__; });                             \
+      ,                                                                               \
+      (int8_t csr, SIMD128Register src1, SIMD128Register src2, SIMD128Register src3), \
+      (csr),                                                                          \
+      (src1, src2, src3))
+
+#define DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VXW(name, ...)                 \
+  DEFINE_W_ARITHMETIC_INTRINSIC(                                                  \
+      Vfw##name##vf, Widenvvw, return ({ __VA_ARGS__; });                         \
+      ,                                                                           \
+      (int8_t csr, SIMD128Register src1, ElementType src2, SIMD128Register src3), \
+      (csr),                                                                      \
+      (src1, src2, src3))
+
 #define DEFINE_2OP_NARROW_ARITHMETIC_INTRINSIC_WV(name, ...)                       \
   DEFINE_W_ARITHMETIC_INTRINSIC(Vn##name##wv, Narrowwv, return ({ __VA_ARGS__; }); \
                                 , (SIMD128Register src1, SIMD128Register src2), (), (src1, src2))
@@ -922,6 +938,9 @@ std::tuple<ElementType> WideMultiplySignedUnsigned(ElementType arg1, ElementType
 DEFINE_1OP_ARITHMETIC_INTRINSIC_V(copy, auto [arg] = std::tuple{args...}; arg)
 DEFINE_1OP_ARITHMETIC_INTRINSIC_X(copy, auto [arg] = std::tuple{args...}; arg)
 DEFINE_1OP_ARITHMETIC_INTRINSIC_V(frsqrt7, RSqrtEstimate(args...))
+DEFINE_1OP_ARITHMETIC_INTRINSIC_V(
+    fclass,
+    static_cast<typename TypeTraits<ElementType>::Int>(std::get<0>(FClass(args...))))
 
 DEFINE_1OP_1CSR_ARITHMETIC_INTRINSIC_V(fsqrt,
                                        CanonicalizeNanTuple(FSqrt(FPFlags::DYN, csr, args...)))
@@ -947,6 +966,29 @@ DEFINE_2OP_1CSR_ARITHMETIC_INTRINSIC_VV(
 DEFINE_2OP_1CSR_ARITHMETIC_INTRINSIC_VX(
     aadd,
     ElementType{std::get<0>(Aadd(csr, static_cast<typename ElementType::BaseType>(args)...))})
+
+DEFINE_2OP_1CSR_ARITHMETIC_INTRINSIC_VV(smul, auto [arg1, arg2] = std::tuple{args...}; ElementType{
+    Narrow(Saturating{std::get<0>(Roundoff(
+        csr,
+        static_cast<typename WideType<ElementType>::BaseType>(Widen(arg1) * Widen(arg2)),
+        static_cast<typename WideType<ElementType>::BaseType>((sizeof(ElementType) * CHAR_BIT) -
+                                                              1)))})})
+
+DEFINE_2OP_1CSR_ARITHMETIC_INTRINSIC_VX(smul, auto [arg1, arg2] = std::tuple{args...}; ElementType{
+    Narrow(Saturating{std::get<0>(Roundoff(
+        csr,
+        static_cast<typename WideType<ElementType>::BaseType>(Widen(arg1) * Widen(arg2)),
+        static_cast<typename WideType<ElementType>::BaseType>((sizeof(ElementType) * CHAR_BIT) -
+                                                              1)))})})
+
+DEFINE_2OP_1CSR_ARITHMETIC_INTRINSIC_VV(
+    ssr,
+    ElementType{std::get<0>(Roundoff(csr, static_cast<typename ElementType::BaseType>(args)...))})
+
+DEFINE_2OP_1CSR_ARITHMETIC_INTRINSIC_VX(
+    ssr,
+    ElementType{std::get<0>(Roundoff(csr, static_cast<typename ElementType::BaseType>(args)...))})
+
 DEFINE_2OP_1CSR_ARITHMETIC_INTRINSIC_VV(fadd,
                                         CanonicalizeNanTuple(FAdd(FPFlags::DYN, csr, args...)))
 DEFINE_2OP_1CSR_ARITHMETIC_INTRINSIC_VF(fadd,
@@ -1145,11 +1187,11 @@ DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(mulh, auto [arg1, arg2] = std::tuple{args...}
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(mulh, auto [arg1, arg2] = std::tuple{args...};
                                    NarrowTopHalf(Widen(arg2) * Widen(arg1)))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(mulhsu, auto [arg1, arg2] = std::tuple{args...};
-                                   NarrowTopHalf(BitCastToUnsigned(Widen(BitCastToSigned(arg2))) *
-                                                 Widen(BitCastToUnsigned(arg1))))
+                                   NarrowTopHalf(BitCastToUnsigned(Widen(BitCastToSigned(arg1))) *
+                                                 Widen(BitCastToUnsigned(arg2))))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VX(mulhsu, auto [arg1, arg2] = std::tuple{args...};
-                                   NarrowTopHalf(BitCastToUnsigned(Widen(BitCastToSigned(arg2))) *
-                                                 Widen(BitCastToUnsigned(arg1))))
+                                   NarrowTopHalf(BitCastToUnsigned(Widen(BitCastToSigned(arg1))) *
+                                                 Widen(BitCastToUnsigned(arg2))))
 DEFINE_2OP_ARITHMETIC_INTRINSIC_VV(
     div,
     ElementType{std::get<0>(Div(static_cast<typename ElementType::BaseType>(args)...))})
@@ -1189,7 +1231,30 @@ DEFINE_2OP_WIDEN_ARITHMETIC_INTRINSIC_VXW(maccsu, auto [arg1, arg2, arg3] = std:
 DEFINE_2OP_WIDEN_ARITHMETIC_INTRINSIC_VXW(maccus, auto [arg1, arg2, arg3] = std::tuple{args...};
                                           (std::get<0>(WideMultiplySignedUnsigned(arg1, arg2))) +
                                           arg3)
-
+DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VVW(
+    macc, auto [arg1, arg2, arg3] = std::tuple{args...};
+    std::get<0>(FMAdd(FPFlags::DYN, csr, arg2, arg1, arg3)))
+DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VXW(
+    macc, auto [arg1, arg2, arg3] = std::tuple{args...};
+    std::get<0>(FMAdd(FPFlags::DYN, csr, arg2, arg1, arg3)))
+DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VVW(
+    nmacc, auto [arg1, arg2, arg3] = std::tuple{args...};
+    std::get<0>(FNMSub(FPFlags::DYN, csr, arg2, arg1, arg3)))
+DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VXW(
+    nmacc, auto [arg1, arg2, arg3] = std::tuple{args...};
+    std::get<0>(FNMSub(FPFlags::DYN, csr, arg2, arg1, arg3)))
+DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VVW(
+    msac, auto [arg1, arg2, arg3] = std::tuple{args...};
+    std::get<0>(FMSub(FPFlags::DYN, csr, arg2, arg1, arg3)))
+DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VXW(
+    msac, auto [arg1, arg2, arg3] = std::tuple{args...};
+    std::get<0>(FMSub(FPFlags::DYN, csr, arg2, arg1, arg3)))
+DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VVW(
+    nmsac, auto [arg1, arg2, arg3] = std::tuple{args...};
+    std::get<0>(FNMAdd(FPFlags::DYN, csr, arg2, arg1, arg3)))
+DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VXW(
+    nmsac, auto [arg1, arg2, arg3] = std::tuple{args...};
+    std::get<0>(FNMAdd(FPFlags::DYN, csr, arg2, arg1, arg3)))
 DEFINE_2OP_NARROW_ARITHMETIC_INTRINSIC_WV(sr, auto [arg1, arg2] = std::tuple{args...};
                                           (arg1 >> arg2))
 DEFINE_2OP_NARROW_ARITHMETIC_INTRINSIC_WX(sr, auto [arg1, arg2] = std::tuple{args...};
@@ -1232,6 +1297,8 @@ DEFINE_2OP_1CSR_NARROW_ARITHMETIC_INTRINSIC_WX(
 #undef DEFINE_2OP_WIDEN_ARITHMETIC_INTRINSIC_WX
 #undef DEFINE_2OP_WIDEN_ARITHMETIC_INTRINSIC_VX
 #undef DEFINE_2OP_WIDEN_ARITHMETIC_INTRINSIC_VXW
+#undef DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VVW
+#undef DEFINE_3OP_1CSR_WIDEN_ARITHMETIC_INTRINSIC_VXW
 
 }  // namespace berberis::intrinsics
 

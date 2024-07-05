@@ -277,8 +277,8 @@ class Decoder {
     kVfwsubwf = 0b110110,
     kVfwmulvf = 0b111000,
     kVfwmaccvf = 0b111100,
-    kVfwnmaccvf = 0b111100,
-    kVfwmsacvf = 0b111100,
+    kVfwnmaccvf = 0b111101,
+    kVfwmsacvf = 0b111110,
     kVfwnmsacvf = 0b111111,
   };
 
@@ -319,8 +319,8 @@ class Decoder {
     kVfwsubwv = 0b110110,
     kVfwmulvv = 0b111000,
     kVfwmaccvv = 0b111100,
-    kVfwnmaccvv = 0b111100,
-    kVfwmsacvv = 0b111100,
+    kVfwnmaccvv = 0b111101,
+    kVfwmsacvv = 0b111110,
     kVfwnmsacvv = 0b111111,
   };
 
@@ -562,6 +562,7 @@ class Decoder {
   enum class VFUnary1Opcode : uint8_t {
     kVfsqrtv = 0b00000,
     kVfrsqrt7v = 0b00100,
+    kVfclassv = 0b10000,
   };
 
   enum class VRXUnary0Opcode : uint8_t {

@@ -31,7 +31,7 @@
 
 # Test binaries are build as native bridge targets. So we only enable test runs when native bridge
 # is configured for riscv64.
-ifeq ($(NATIVE_BRIDGE_ABI),riscv64)
+ifeq ($(TARGET_NATIVE_BRIDGE_ABI),riscv64)
 berberis_all: berberis_host_tests_result
 endif
 
@@ -135,6 +135,28 @@ $(eval $(call add_test,berberis_ndk_program_tests_heavy_optimize_or_interpret,\
 $(eval $(call add_test,berberis_ndk_program_tests_two_gear,\
 	run_test_x86_64_riscv64,\
 	$(TARGET_OUT_TESTCASES)/berberis_ndk_program_tests_static.native_bridge/x86_64/berberis_ndk_program_tests_static,\
+	BERBERIS_MODE=two-gear))
+
+# inline_asm_tests_riscv64
+
+$(eval $(call add_test,inline_asm_tests_riscv64_interpret_only,\
+	run_test_x86_64_riscv64,\
+	$(TARGET_OUT_TESTCASES)/inline_asm_tests_riscv64.native_bridge/x86_64/inline_asm_tests_riscv64,\
+	BERBERIS_MODE=interpret-only))
+
+$(eval $(call add_test,inline_asm_tests_riscv64_lite_translate_or_interpret,\
+	run_test_x86_64_riscv64,\
+	$(TARGET_OUT_TESTCASES)/inline_asm_tests_riscv64.native_bridge/x86_64/inline_asm_tests_riscv64,\
+	BERBERIS_MODE=lite-translate-or-interpret))
+
+$(eval $(call add_test,inline_asm_tests_riscv64_heavy_optimize_or_interpret,\
+	run_test_x86_64_riscv64,\
+	$(TARGET_OUT_TESTCASES)/inline_asm_tests_riscv64.native_bridge/x86_64/inline_asm_tests_riscv64,\
+	BERBERIS_MODE=heavy-optimize-or-interpret))
+
+$(eval $(call add_test,inline_asm_tests_riscv64_two_gear,\
+	run_test_x86_64_riscv64,\
+	$(TARGET_OUT_TESTCASES)/inline_asm_tests_riscv64.native_bridge/x86_64/inline_asm_tests_riscv64,\
 	BERBERIS_MODE=two-gear))
 
 # berberis_host_tests

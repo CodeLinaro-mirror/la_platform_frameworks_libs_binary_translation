@@ -28,6 +28,7 @@
 namespace berberis {
 
 struct LiteTranslateParams {
+  GuestAddr end_pc = GetGuestAddrRangeEnd();
   bool allow_dispatch = true;
   bool enable_reg_mapping = true;
   bool enable_self_profiling = false;

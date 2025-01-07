@@ -2655,6 +2655,13 @@ TEST(Arm64InsnTest, RecipSqrtEstimateF32) {
   ASSERT_EQ(AsmFrsqrte(bit_cast<uint32_t>(5.0f)), bit_cast<uint32_t>(0.4462890625f));
 }
 
+TEST(Arm64InsnTest, RecipSqrtEstimateF32x2) {
+  constexpr auto AsmFrsqrte = ASM_INSN_WRAP_FUNC_W_RES_W_ARG("frsqrte %0.2s, %1.2s");
+  __uint128_t arg = MakeF32x4(2.0f, 3.0f, 0, 0);
+  __uint128_t res = AsmFrsqrte(arg);
+  ASSERT_EQ(res, MakeF32x4(0.705078125f, 0.576171875f, 0, 0));
+}
+
 TEST(Arm64InsnTest, RecipSqrtEstimateF32x4) {
   constexpr auto AsmFrsqrte = ASM_INSN_WRAP_FUNC_W_RES_W_ARG("frsqrte %0.4s, %1.4s");
   __uint128_t arg = MakeF32x4(2.0f, 3.0f, 4.0f, 5.0f);
@@ -4080,6 +4087,12 @@ TEST(Arm64InsnTest, ShiftLeftLongInt8x8) {
   __uint128_t arg = MakeUInt128(0x2650697620201995ULL, 0x5484126500053944ULL);
   __uint128_t res = ASM_INSN_WRAP_FUNC_W_RES_W_ARG("shll %0.8h, %1.8b, #8")(arg);
   ASSERT_EQ(res, MakeUInt128(0x2000200019009500ULL, 0x2600500069007600ULL));
+}
+
+TEST(Arm64InsnTest, UnsignedShiftLeftLongInt8x8) {
+  __uint128_t arg = MakeUInt128(0x2650697620201995ULL, 0x5484126500053944ULL);
+  __uint128_t res = ASM_INSN_WRAP_FUNC_W_RES_W_ARG("ushll %0.8h, %1.8b, #4")(arg);
+  ASSERT_EQ(res, MakeUInt128(0x200020001900950ULL, 0x260050006900760ULL));
 }
 
 TEST(Arm64InsnTest, ShiftLeftLongInt8x8Upper) {

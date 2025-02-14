@@ -40,8 +40,7 @@ class MacroAssembler : public Assembler {
                                      typename Assembler::FinalAssembler>;
 
   template <typename... Args>
-  explicit MacroAssembler(Args&&... args) : Assembler(std::forward<Args>(args)...) {
-  }
+  constexpr explicit MacroAssembler(Args&&... args) : Assembler(std::forward<Args>(args)...) {}
 
 #define IMPORT_ASSEMBLER_FUNCTIONS
 #include "berberis/assembler/gen_assembler_x86_64-using-inl.h"
@@ -51,12 +50,12 @@ class MacroAssembler : public Assembler {
 #include "berberis/intrinsics/all_to_x86_32_or_x86_64/macro_assembler-inl.h"
 #undef DEFINE_MACRO_ASSEMBLER_GENERIC_FUNCTIONS
 
-  void PNot(XMMRegister result) {
-    Pandn(result, {.disp = constants_pool::kVectorConst<uint8_t{0b1111'1111}>});
+  constexpr void PNot(XMMRegister result) {
+    Pandn(result, {.disp = constants_offsets::kVectorConst<uint8_t{0b1111'1111}>});
   }
 
-  void Vpnot(XMMRegister result, XMMRegister src) {
-    Vpandn(result, src, {.disp = constants_pool::kVectorConst<uint8_t{0b1111'1111}>});
+  constexpr void Vpnot(XMMRegister result, XMMRegister src) {
+    Vpandn(result, src, {.disp = constants_offsets::kVectorConst<uint8_t{0b1111'1111}>});
   }
 
 #include "berberis/intrinsics/macro_assembler_interface-inl.h"  // NOLINT generated file

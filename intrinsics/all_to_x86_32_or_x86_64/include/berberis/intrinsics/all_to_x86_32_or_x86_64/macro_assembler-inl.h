@@ -174,6 +174,7 @@ DEFINE_EXPAND_INSTRUCTION(Register dest, Register src)
   }
 DEFINE_INT_INSTRUCTION(CmpXchg, CmpXchg, , kIntType, (Operand dest, Register src), (dest, src))
 DEFINE_INT_INSTRUCTION(CmpXchg, CmpXchg, , kIntType, (Register dest, Register src), (dest, src))
+DEFINE_INT_INSTRUCTION(Lea, Lea, , kIntTypeWLQ, (Register dest, Operand src), (dest, src))
 DEFINE_INT_INSTRUCTION(LockXadd, LockXadd, , kIntType, (Operand dest, Register src), (dest, src))
 DEFINE_INT_INSTRUCTION(LockCmpXchg,
                        LockCmpXchg,
@@ -430,7 +431,94 @@ DEFINE_XMM_INT_INSTRUCTIONS_GROUP(sub, sub, kIntType, , )
 DEFINE_XMM_INT_INSTRUCTIONS_GROUP(sl, sl, kIntTypeWLQ, l, l)
 DEFINE_XMM_INT_INSTRUCTIONS_GROUP(sr, sr, kIntTypePsr, a, l)
 #undef DEFINE_XMM_INT_INSTRUCTIONS_GROUP
+DEFINE_XMM_INT_INSTRUCTION(Pextr,
+                           Pextr,
+                           kIntType,
+                           (Register dest, XMMRegister src, int8_t imm),
+                           (dest, src, imm),
+                           , )
+DEFINE_XMM_INT_INSTRUCTION(Pextr,
+                           Pextr,
+                           kIntType,
+                           (Operand dest, XMMRegister src, int8_t imm),
+                           (dest, src, imm),
+                           , )
+DEFINE_XMM_INT_INSTRUCTION(Pinsr,
+                           Pinsr,
+                           kIntType,
+                           (XMMRegister dest, Register src, int8_t imm),
+                           (dest, src, imm),
+                           , )
+DEFINE_XMM_INT_INSTRUCTION(Pinsr,
+                           Pinsr,
+                           kIntType,
+                           (XMMRegister dest, Operand src, int8_t imm),
+                           (dest, src, imm),
+                           , )
+DEFINE_XMM_INT_INSTRUCTION(Vpextr,
+                           Vpextr,
+                           kIntType,
+                           (Register dest, XMMRegister src, int8_t imm),
+                           (dest, src, imm),
+                           , )
+DEFINE_XMM_INT_INSTRUCTION(Vpextr,
+                           Vpextr,
+                           kIntType,
+                           (Operand dest, XMMRegister src, int8_t imm),
+                           (dest, src, imm),
+                           , )
+DEFINE_XMM_INT_INSTRUCTION(Vpinsr,
+                           Vpinsr,
+                           kIntType,
+                           (XMMRegister dest, XMMRegister src1, Register src2, int8_t imm),
+                           (dest, src1, src2, imm),
+                           , )
+DEFINE_XMM_INT_INSTRUCTION(Vpinsr,
+                           Vpinsr,
+                           kIntType,
+                           (XMMRegister dest, XMMRegister src1, Operand src2, int8_t imm),
+                           (dest, src1, src2, imm),
+                           , )
 #undef DEFINE_XMM_INT_INSTRUCTION
+
+#define DEFINE_XMM_INT_EXPAND(insn_name, asm_name, parameters, arguments)                    \
+  template <typename FormatFrom, typename FormatTo>                                          \
+  std::enable_if_t<kIntTypeBWL<FormatFrom> && kIntTypeWLQ<FormatTo> &&                       \
+                   std::is_signed_v<FormatFrom> == std::is_signed_v<FormatTo> &&             \
+                   sizeof(FormatFrom) < sizeof(FormatTo)>                                    \
+      insn_name parameters {                                                                 \
+    if constexpr (kFormatIs<FormatFrom, int8_t> && kFormatIs<FormatTo, int16_t>) {           \
+      Assembler::asm_name##sxbw arguments;                                                   \
+    } else if constexpr (kFormatIs<FormatFrom, uint8_t> && kFormatIs<FormatTo, uint16_t>) {  \
+      Assembler::asm_name##zxbw arguments;                                                   \
+    } else if constexpr (kFormatIs<FormatFrom, int8_t> && kFormatIs<FormatTo, int32_t>) {    \
+      Assembler::asm_name##sxbd arguments;                                                   \
+    } else if constexpr (kFormatIs<FormatFrom, uint8_t> && kFormatIs<FormatTo, uint32_t>) {  \
+      Assembler::asm_name##zxbd arguments;                                                   \
+    } else if constexpr (kFormatIs<FormatFrom, int8_t> && kFormatIs<FormatTo, int64_t>) {    \
+      Assembler::asm_name##sxbq arguments;                                                   \
+    } else if constexpr (kFormatIs<FormatFrom, uint8_t> && kFormatIs<FormatTo, uint64_t>) {  \
+      Assembler::asm_name##zxbq arguments;                                                   \
+    } else if constexpr (kFormatIs<FormatFrom, int16_t> && kFormatIs<FormatTo, int32_t>) {   \
+      Assembler::asm_name##sxwd arguments;                                                   \
+    } else if constexpr (kFormatIs<FormatFrom, uint16_t> && kFormatIs<FormatTo, uint32_t>) { \
+      Assembler::asm_name##zxwd arguments;                                                   \
+    } else if constexpr (kFormatIs<FormatFrom, int16_t> && kFormatIs<FormatTo, int64_t>) {   \
+      Assembler::asm_name##sxwq arguments;                                                   \
+    } else if constexpr (kFormatIs<FormatFrom, uint16_t> && kFormatIs<FormatTo, uint64_t>) { \
+      Assembler::asm_name##zxwq arguments;                                                   \
+    } else if constexpr (kFormatIs<FormatFrom, int32_t> && kFormatIs<FormatTo, int64_t>) {   \
+      Assembler::asm_name##sxdq arguments;                                                   \
+    } else {                                                                                 \
+      static_assert(kFormatIs<FormatFrom, uint32_t> && kFormatIs<FormatTo, uint64_t>);       \
+      Assembler::asm_name##zxdq arguments;                                                   \
+    }                                                                                        \
+  }
+DEFINE_XMM_INT_EXPAND(Pmov, Pmov, (XMMRegister dest, XMMRegister src), (dest, src))
+DEFINE_XMM_INT_EXPAND(Pmov, Pmov, (XMMRegister dest, Operand src), (dest, src))
+DEFINE_XMM_INT_EXPAND(Vpmov, Vpmov, (XMMRegister dest, XMMRegister src), (dest, src))
+DEFINE_XMM_INT_EXPAND(Vpmov, Vpmov, (XMMRegister dest, Operand src), (dest, src))
+#undef DEFINE_XMM_INT_EXPAND
 
 #define DEFINE_MOVS_INSTRUCTION(insn_name, opt_check, parameters, arguments) \
   template <typename format>                                                 \
@@ -724,6 +812,7 @@ using Assembler::P2Align;
 using Assembler::TwoByte;
 
 using Assembler::gpr_a;
+using Assembler::gpr_b;
 using Assembler::gpr_c;
 using Assembler::gpr_d;
 

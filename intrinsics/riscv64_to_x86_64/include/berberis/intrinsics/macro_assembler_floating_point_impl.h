@@ -44,26 +44,30 @@ constexpr int32_t kRiscVRoundingModes = 0b1110'0111'00;
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroCanonicalizeNan(XMMRegister result, XMMRegister src) {
+constexpr void MacroAssembler<Assembler>::MacroCanonicalizeNan(XMMRegister result,
+                                                               XMMRegister src) {
   Pmov(result, src);
   Cmpords<FloatType>(result, src);
   Pand(src, result);
-  Pandn(result, {.disp = constants_pool::kCanonicalNans<FloatType>});
+  Pandn(result, {.disp = constants_offsets::kCanonicalNans<FloatType>});
   Por(result, src);
 }
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroCanonicalizeNanAVX(XMMRegister result, XMMRegister src) {
+constexpr void MacroAssembler<Assembler>::MacroCanonicalizeNanAVX(XMMRegister result,
+                                                                  XMMRegister src) {
   Vcmpords<FloatType>(result, src, src);
   Vpand(src, src, result);
-  Vpandn(result, result, {.disp = constants_pool::kCanonicalNans<FloatType>});
+  Vpandn(result, result, {.disp = constants_offsets::kCanonicalNans<FloatType>});
   Vpor(result, result, src);
 }
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroFeq(Register result, XMMRegister src1, XMMRegister src2) {
+constexpr void MacroAssembler<Assembler>::MacroFeq(Register result,
+                                                   XMMRegister src1,
+                                                   XMMRegister src2) {
   Cmpeqs<FloatType>(src1, src2);
   Mov<FloatType>(result, src1);
   And<int32_t>(result, 1);
@@ -71,10 +75,10 @@ void MacroAssembler<Assembler>::MacroFeq(Register result, XMMRegister src1, XMMR
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroFeqAVX(Register result,
-                                            XMMRegister src1,
-                                            XMMRegister src2,
-                                            XMMRegister tmp) {
+constexpr void MacroAssembler<Assembler>::MacroFeqAVX(Register result,
+                                                      XMMRegister src1,
+                                                      XMMRegister src2,
+                                                      XMMRegister tmp) {
   Vcmpeqs<FloatType>(tmp, src1, src2);
   Vmov<FloatType>(result, tmp);
   And<int32_t>(result, 1);
@@ -83,7 +87,8 @@ void MacroAssembler<Assembler>::MacroFeqAVX(Register result,
 // Note: result is returned in %rax which is implicit argument of that macro-instruction.
 // Explicit argument is temporary needed to handle Stmxcsr instruction.
 template <typename Assembler>
-void MacroAssembler<Assembler>::MacroFeGetExceptionsTranslate(const Operand& mxcsr_scratch) {
+constexpr void MacroAssembler<Assembler>::MacroFeGetExceptionsTranslate(
+    const Operand& mxcsr_scratch) {
   // Store x87 status word in the AX.
   Fnstsw();
   // Store MXCSR in scratch slot.
@@ -96,11 +101,11 @@ void MacroAssembler<Assembler>::MacroFeGetExceptionsTranslate(const Operand& mxc
   Expand<uint64_t, uint8_t>(gpr_a,
                             {.index = gpr_a,
                              .scale = Assembler::kTimesOne,
-                             .disp = constants_pool::kX87ToRiscVExceptions});
+                             .disp = constants_offsets::kX87ToRiscVExceptions});
 }
 
 template <typename Assembler>
-void MacroAssembler<Assembler>::MacroFeSetExceptionsAndRoundImmTranslate(
+constexpr void MacroAssembler<Assembler>::MacroFeSetExceptionsAndRoundImmTranslate(
     const Operand& fenv_scratch,
     int8_t exceptions_and_rm) {
   int8_t exceptions = exceptions_and_rm & 0b1'1111;
@@ -118,7 +123,7 @@ void MacroAssembler<Assembler>::MacroFeSetExceptionsAndRoundImmTranslate(
                    .disp = fenv_scratch.disp + 28};
   // Convert RISC-V exceptions into x87 exceptions.
   uint8_t x87_exceptions = bit_cast<unsigned char*>(
-      static_cast<uintptr_t>(constants_pool::kRiscVToX87Exceptions))[exceptions];
+      static_cast<uintptr_t>(constants_offsets::kRiscVToX87Exceptions))[exceptions];
   // We have to store the whole floating point environment since it's not possible to just change
   // status word without affecting other state.
   Fnstenv(fenv_scratch);
@@ -153,9 +158,10 @@ void MacroAssembler<Assembler>::MacroFeSetExceptionsAndRoundImmTranslate(
 }
 
 template <typename Assembler>
-void MacroAssembler<Assembler>::MacroFeSetExceptionsAndRoundTranslate(Register exceptions,
-                                                                      const Operand& fenv_scratch,
-                                                                      Register scratch_register) {
+constexpr void MacroAssembler<Assembler>::MacroFeSetExceptionsAndRoundTranslate(
+    Register exceptions,
+    const Operand& fenv_scratch,
+    Register scratch_register) {
   // Note: in 32bit/64bit mode it's at offset 4, not 2 as one may imagine.
   // Two bytes after control word are ignored.
   Operand x87_status_word = {.base = fenv_scratch.base,
@@ -176,7 +182,7 @@ void MacroAssembler<Assembler>::MacroFeSetExceptionsAndRoundTranslate(Register e
   Mov<uint8_t>(scratch_register,
                {.index = exceptions,
                 .scale = Assembler::kTimesOne,
-                .disp = constants_pool::kRiscVToX87Exceptions});
+                .disp = constants_offsets::kRiscVToX87Exceptions});
   // Clean exceptions in the x87 environment. Note: in 32bit/64bit mode it's at offset 4, not 2 as
   // one may imagine. Two bytes after control word are ignored.
   And<uint8_t>(x87_status_word, static_cast<uint8_t>(~kX87MxcsrExceptionBits));
@@ -210,8 +216,9 @@ void MacroAssembler<Assembler>::MacroFeSetExceptionsAndRoundTranslate(Register e
 }
 
 template <typename Assembler>
-void MacroAssembler<Assembler>::MacroFeSetExceptionsImmTranslate(const Operand& fenv_scratch,
-                                                                 int8_t exceptions) {
+constexpr void MacroAssembler<Assembler>::MacroFeSetExceptionsImmTranslate(
+    const Operand& fenv_scratch,
+    int8_t exceptions) {
   // Note: in 32bit/64bit mode it's at offset 4, not 2 as one may imagine.
   // Two bytes after control word are ignored.
   Operand x87_status_word = {.base = fenv_scratch.base,
@@ -225,7 +232,7 @@ void MacroAssembler<Assembler>::MacroFeSetExceptionsImmTranslate(const Operand& 
                    .disp = fenv_scratch.disp + 28};
   // Convert RISC-V exceptions into x87 exceptions.
   uint8_t x87_exceptions = bit_cast<unsigned char*>(
-      static_cast<uintptr_t>(constants_pool::kRiscVToX87Exceptions))[exceptions];
+      static_cast<uintptr_t>(constants_offsets::kRiscVToX87Exceptions))[exceptions];
   // We have to store the whole floating point environment since it's not possible to just change
   // status word without affecting other state.
   Fnstenv(fenv_scratch);
@@ -249,9 +256,9 @@ void MacroAssembler<Assembler>::MacroFeSetExceptionsImmTranslate(const Operand& 
 }
 
 template <typename Assembler>
-void MacroAssembler<Assembler>::MacroFeSetExceptionsTranslate(Register exceptions,
-                                                              const Operand& fenv_scratch,
-                                                              Register x87_exceptions) {
+constexpr void MacroAssembler<Assembler>::MacroFeSetExceptionsTranslate(Register exceptions,
+                                                                        const Operand& fenv_scratch,
+                                                                        Register x87_exceptions) {
   // Note: in 32bit/64bit mode it's at offset 4, not 2 as one may imagine.
   // Two bytes after control word are ignored.
   Operand x87_status_word = {.base = fenv_scratch.base,
@@ -272,7 +279,7 @@ void MacroAssembler<Assembler>::MacroFeSetExceptionsTranslate(Register exception
   Mov<uint8_t>(x87_exceptions,
                {.index = exceptions,
                 .scale = Assembler::kTimesOne,
-                .disp = constants_pool::kRiscVToX87Exceptions});
+                .disp = constants_offsets::kRiscVToX87Exceptions});
   // Clean exceptions in the x87 environment. Note: in 32bit/64bit mode it's at offset 4, not 2 as
   // one may imagine. Two bytes after control word are ignored.
   And<uint8_t>(x87_status_word, static_cast<uint8_t>(~kX87MxcsrExceptionBits));
@@ -291,9 +298,9 @@ void MacroAssembler<Assembler>::MacroFeSetExceptionsTranslate(Register exception
 // Note: actual rounding mode comes in %cl which is implicit argument of that macro-instruction.
 // All explicit arguments are temporaries.
 template <typename Assembler>
-void MacroAssembler<Assembler>::MacroFeSetRound(Register x87_sse_round,
-                                                const Operand& cw_scratch,
-                                                const Operand& mxcsr_scratch) {
+constexpr void MacroAssembler<Assembler>::MacroFeSetRound(Register x87_sse_round,
+                                                          const Operand& cw_scratch,
+                                                          const Operand& mxcsr_scratch) {
   // Store x87 control world in first scratch slot.
   Fnstcw(cw_scratch);
   // Store MXCSR in second scratch slot.
@@ -324,9 +331,9 @@ void MacroAssembler<Assembler>::MacroFeSetRound(Register x87_sse_round,
 }
 
 template <typename Assembler>
-void MacroAssembler<Assembler>::MacroFeSetRoundImmTranslate(const Operand& cw_scratch,
-                                                            const Operand& mxcsr_scratch,
-                                                            int8_t rm) {
+constexpr void MacroAssembler<Assembler>::MacroFeSetRoundImmTranslate(const Operand& cw_scratch,
+                                                                      const Operand& mxcsr_scratch,
+                                                                      int8_t rm) {
   // Store x87 control world in first scratch slot.
   Fnstcw(cw_scratch);
   // Store MXCSR in second scratch slot.
@@ -351,7 +358,9 @@ void MacroAssembler<Assembler>::MacroFeSetRoundImmTranslate(const Operand& cw_sc
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroFle(Register result, XMMRegister src1, XMMRegister src2) {
+constexpr void MacroAssembler<Assembler>::MacroFle(Register result,
+                                                   XMMRegister src1,
+                                                   XMMRegister src2) {
   Cmples<FloatType>(src1, src2);
   Mov<FloatType>(result, src1);
   And<int32_t>(result, 1);
@@ -359,16 +368,17 @@ void MacroAssembler<Assembler>::MacroFle(Register result, XMMRegister src1, XMMR
 
 template <typename Assembler>
 template <typename FormatTo, typename FormatFrom>
-void MacroAssembler<Assembler>::MacroFCvtFloatToInteger(Register result, XMMRegister src) {
+constexpr void MacroAssembler<Assembler>::MacroFCvtFloatToInteger(Register result,
+                                                                  XMMRegister src) {
   Cvt<FormatFrom, FormatTo>(result, src);
 }
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroFleAVX(Register result,
-                                            XMMRegister src1,
-                                            XMMRegister src2,
-                                            XMMRegister tmp) {
+constexpr void MacroAssembler<Assembler>::MacroFleAVX(Register result,
+                                                      XMMRegister src1,
+                                                      XMMRegister src2,
+                                                      XMMRegister tmp) {
   Vcmples<FloatType>(tmp, src1, src2);
   Vmov<FloatType>(result, tmp);
   And<int32_t>(result, 1);
@@ -376,7 +386,9 @@ void MacroAssembler<Assembler>::MacroFleAVX(Register result,
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroFlt(Register result, XMMRegister src1, XMMRegister src2) {
+constexpr void MacroAssembler<Assembler>::MacroFlt(Register result,
+                                                   XMMRegister src1,
+                                                   XMMRegister src2) {
   Cmplts<FloatType>(src1, src2);
   Mov<FloatType>(result, src1);
   And<int32_t>(result, 1);
@@ -384,10 +396,10 @@ void MacroAssembler<Assembler>::MacroFlt(Register result, XMMRegister src1, XMMR
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroFltAVX(Register result,
-                                            XMMRegister src1,
-                                            XMMRegister src2,
-                                            XMMRegister tmp) {
+constexpr void MacroAssembler<Assembler>::MacroFltAVX(Register result,
+                                                      XMMRegister src1,
+                                                      XMMRegister src2,
+                                                      XMMRegister tmp) {
   Vcmplts<FloatType>(tmp, src1, src2);
   Vmov<FloatType>(result, tmp);
   And<int32_t>(result, 1);
@@ -395,43 +407,44 @@ void MacroAssembler<Assembler>::MacroFltAVX(Register result,
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroNanBox(XMMRegister arg) {
+constexpr void MacroAssembler<Assembler>::MacroNanBox(XMMRegister arg) {
   static_assert(std::is_same_v<FloatType, Float32>);
 
-  Por(arg, {.disp = constants_pool::kNanBox<Float32>});
+  Por(arg, {.disp = constants_offsets::kNanBox<Float32>});
 }
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroNanBoxAVX(XMMRegister result, XMMRegister src) {
+constexpr void MacroAssembler<Assembler>::MacroNanBoxAVX(XMMRegister result, XMMRegister src) {
   static_assert(std::is_same_v<FloatType, Float32>);
 
-  Vpor(result, src, {.disp = constants_pool::kNanBox<Float32>});
+  Vpor(result, src, {.disp = constants_offsets::kNanBox<Float32>});
 }
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroUnboxNan(XMMRegister result, XMMRegister src) {
+constexpr void MacroAssembler<Assembler>::MacroUnboxNan(XMMRegister result, XMMRegister src) {
   static_assert(std::is_same_v<FloatType, Float32>);
 
   Pmov(result, src);
-  Pcmpeq<typename TypeTraits<FloatType>::Int>(result, {.disp = constants_pool::kNanBox<Float32>});
+  Pcmpeq<typename TypeTraits<FloatType>::Int>(result,
+                                              {.disp = constants_offsets::kNanBox<Float32>});
   Pshufd(result, result, kShuffleDDBB);
   Pand(src, result);
-  Pandn(result, {.disp = constants_pool::kNanBoxedNans<Float32>});
+  Pandn(result, {.disp = constants_offsets::kNanBoxedNans<Float32>});
   Por(result, src);
 }
 
 template <typename Assembler>
 template <typename FloatType>
-void MacroAssembler<Assembler>::MacroUnboxNanAVX(XMMRegister result, XMMRegister src) {
+constexpr void MacroAssembler<Assembler>::MacroUnboxNanAVX(XMMRegister result, XMMRegister src) {
   static_assert(std::is_same_v<FloatType, Float32>);
 
   Vpcmpeq<typename TypeTraits<FloatType>::Int>(
-      result, src, {.disp = constants_pool::kNanBox<Float32>});
+      result, src, {.disp = constants_offsets::kNanBox<Float32>});
   Vpshufd(result, result, kShuffleDDBB);
   Vpand(src, src, result);
-  Vpandn(result, result, {.disp = constants_pool::kNanBoxedNans<Float32>});
+  Vpandn(result, result, {.disp = constants_offsets::kNanBoxedNans<Float32>});
   Vpor(result, result, src);
 }
 

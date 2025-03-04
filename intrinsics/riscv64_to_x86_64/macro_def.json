@@ -287,8 +287,7 @@
         { "class": "GeneralReg64", "usage": "def_early_clobber" },
         { "class": "Mem16", "usage": "def_early_clobber" },
         { "class": "Mem32", "usage": "def_early_clobber" },
-        { "class": "CL", "usage": "use" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "CL", "usage": "use" }
       ],
       "asm": "MacroFeSetRound",
       "mnemo": "MACRO_FE_SET_ROUND"
@@ -308,8 +307,7 @@
       "args": [
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg32", "usage": "use_def" },
-        { "class": "FpReg32", "usage": "use" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg32", "usage": "use" }
       ],
       "asm": "MacroFeq<intrinsics::Float32>",
       "mnemo": "MACRO_FEQ_F32"
@@ -320,8 +318,7 @@
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg32", "usage": "use" },
         { "class": "FpReg32", "usage": "use" },
-        { "class": "FpReg32", "usage": "def" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg32", "usage": "def" }
       ],
       "asm": "MacroFeqAVX<intrinsics::Float32>",
       "mnemo": "MACRO_FEQ_F32"
@@ -331,8 +328,7 @@
       "args": [
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg64", "usage": "use_def" },
-        { "class": "FpReg64", "usage": "use" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg64", "usage": "use" }
       ],
       "asm": "MacroFeq<intrinsics::Float64>",
       "mnemo": "MACRO_FEQ_F64"
@@ -343,8 +339,7 @@
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg64", "usage": "use" },
         { "class": "FpReg64", "usage": "use" },
-        { "class": "FpReg64", "usage": "def" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg64", "usage": "def" }
       ],
       "asm": "MacroFeqAVX<intrinsics::Float64>",
       "mnemo": "MACRO_FEQ_F64"
@@ -354,8 +349,7 @@
       "args": [
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg32", "usage": "use_def" },
-        { "class": "FpReg32", "usage": "use" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg32", "usage": "use" }
       ],
       "asm": "MacroFle<intrinsics::Float32>",
       "mnemo": "MACRO_FLE_F32"
@@ -366,8 +360,7 @@
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg32", "usage": "use" },
         { "class": "FpReg32", "usage": "use" },
-        { "class": "FpReg32", "usage": "def" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg32", "usage": "def" }
       ],
       "asm": "MacroFleAVX<intrinsics::Float32>",
       "mnemo": "MACRO_FLE_F32"
@@ -377,8 +370,7 @@
       "args": [
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg64", "usage": "use_def" },
-        { "class": "FpReg64", "usage": "use" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg64", "usage": "use" }
       ],
       "asm": "MacroFle<intrinsics::Float64>",
       "mnemo": "MACRO_FLE_F64"
@@ -389,8 +381,7 @@
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg64", "usage": "use" },
         { "class": "FpReg64", "usage": "use" },
-        { "class": "FpReg64", "usage": "def" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg64", "usage": "def" }
       ],
       "asm": "MacroFleAVX<intrinsics::Float64>",
       "mnemo": "MACRO_FLE_F64"
@@ -400,8 +391,7 @@
       "args": [
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg32", "usage": "use_def" },
-        { "class": "FpReg32", "usage": "use" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg32", "usage": "use" }
       ],
       "asm": "MacroFlt<intrinsics::Float32>",
       "mnemo": "MACRO_FLT_F32"
@@ -412,8 +402,7 @@
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg32", "usage": "use" },
         { "class": "FpReg32", "usage": "use" },
-        { "class": "FpReg32", "usage": "def" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg32", "usage": "def" }
       ],
       "asm": "MacroFltAVX<intrinsics::Float32>",
       "mnemo": "MACRO_FLT_F32"
@@ -423,8 +412,7 @@
       "args": [
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg64", "usage": "use_def" },
-        { "class": "FpReg64", "usage": "use" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg64", "usage": "use" }
       ],
       "asm": "MacroFlt<intrinsics::Float64>",
       "mnemo": "MACRO_FLT_F64"
@@ -435,8 +423,7 @@
         { "class": "GeneralReg64", "usage": "def" },
         { "class": "FpReg64", "usage": "use" },
         { "class": "FpReg64", "usage": "use" },
-        { "class": "FpReg64", "usage": "def" },
-        { "class": "FLAGS", "usage": "def" }
+        { "class": "FpReg64", "usage": "def" }
       ],
       "asm": "MacroFltAVX<intrinsics::Float64>",
       "mnemo": "MACRO_FLT_F64"
@@ -523,7 +510,8 @@
     {
       "name": "Orcb",
       "args": [
-        { "class": "FpReg64", "usage": "use_def" }
+        { "class": "FpReg64", "usage": "use_def" },
+        { "class": "FLAGS", "usage": "def" }
       ],
       "asm": "MacroOrcb",
       "mnemo": "MACRO_ORCB"
@@ -532,7 +520,8 @@
       "name": "OrcbAVX",
       "args": [
         { "class": "FpReg64", "usage": "def" },
-        { "class": "FpReg64", "usage": "use" }
+        { "class": "FpReg64", "usage": "use" },
+        { "class": "FLAGS", "usage": "def" }
       ],
       "asm": "MacroOrcbAVX",
       "mnemo": "MACRO_ORCB"

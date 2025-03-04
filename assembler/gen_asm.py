@@ -22,7 +22,6 @@ import os
 import re
 import sys
 
-from enum import Enum
 
 INDENT = '  '
 
@@ -48,10 +47,6 @@ _imm_types = {
     'Shift64-Imm': 'Shift64Immediate'
 }
 
-class AssemblerMode(Enum):
-  BINARY_ASSEMBLER = 0
-  TEXT_ASSEMBLER = 1
-  VERIFIER_ASSEMBLER = 3
 
 def _get_arg_type_name(arg, insn_type):
   cls = arg.get('class')
@@ -102,7 +97,7 @@ def _get_params(insn, filter=None):
       continue
     if filter is not None and filter(arg):
       continue
-    result.append("[[maybe_unused]] %s arg%d" % (
+    result.append("%s arg%d" % (
       _get_arg_type_name(arg, insn.get('type', None)), arg_count))
     arg_count += 1
   return ', '.join(result)
@@ -122,22 +117,8 @@ def _get_template_name(insn):
       'typename' if re.search('[_a-zA-Z]', param) else 'int'
       for param in name.split('<',1)[1][:-1].split(',')), name.split('<')[0]
 
-def _gen_register_read_write_info(insn, arch):
-  # Process register uses before register defs. This ensures valid register uses are verified
-  # against register definitions that occurred only before the current instruction.
-  for usage in ('use', 'def'):
-    arg_count = 0
-    for arg in insn.get('args'):
-      if asm_defs.is_implicit_reg(arg.get('class')):
-        continue
-      if (_get_arg_type_name(arg, insn.get('type', None)) == 'Register'
-          and 'x86' in arch):
-        if arg.get('usage') == usage or arg.get('usage') == "use_def":
-          yield '  Register%s(arg%d);' % (usage.capitalize(), arg_count)
-      arg_count += 1
 
-
-def _gen_generic_functions_h(f, insns, arch, assembler_mode):
+def _gen_generic_functions_h(f, insns, binary_assembler, arch):
   template_names = set()
   for insn in insns:
     template, name = _get_template_name(insn)
@@ -167,7 +148,7 @@ def _gen_generic_functions_h(f, insns, arch, assembler_mode):
     #
     # Text assembled passes "real" work down to GNU as, this works fine with
     # just a simple generic implementation.
-    if assembler_mode == AssemblerMode.BINARY_ASSEMBLER:
+    if binary_assembler:
       if 'opcode' in insn:
         assert '' not in insn
         insn['opcodes'] = [insn['opcode']]
@@ -221,24 +202,13 @@ def _gen_generic_functions_h(f, insns, arch, assembler_mode):
                     'std::enable_if_t<std::is_integral_v<ImmType> && '
                     'sizeof(%s) < sizeof(ImmType)> = delete;') % (
                         name, params.replace(imm_type, 'ImmType'), imm_type), file=f)
-
-    elif assembler_mode == AssemblerMode.TEXT_ASSEMBLER:
-      print('constexpr void %s(%s) {' % (name, params), file=f)
+    else:
+      print('constexpr void %s(%s) {' % (name, params), file=f);
+      if 'feature' in insn:
+        print('  SetRequiredFeature%s();' % insn['feature'], file=f)
       print('  Instruction(%s);' % ', '.join(
           ['"%s"' % insn.get('native-asm', name)] +
           list(_gen_instruction_args(insn, arch))), file=f)
-      print('}', file=f)
-
-    else: # verifier_assembler
-      print('constexpr void %s(%s) {' % (name, params), file=f)
-      if 'feature' in insn:
-        print('  SetRequiredFeature%s();' % insn['feature'], file=f)
-      for arg in insn.get('args'):
-        if arg["class"] == "FLAGS":
-          print('  SetDefinesFLAGS();', file=f)
-          break
-      for register_read_write in _gen_register_read_write_info(insn, arch):
-        print(register_read_write, file=f)
       print('}', file=f)
 
 
@@ -528,17 +498,11 @@ def main(argv):
 
   if (mode != '--binary-assembler' and
       mode != '--text-assembler' and
-      mode != '--verifier-assembler' and
       mode != '--using'):
     assert False, 'unknown option %s' % (mode)
 
-  if mode == '--binary-assembler' or mode == '--text-assembler' or mode == "--verifier-assembler":
-    if mode == '--binary-assembler':
-      assembler_mode = AssemblerMode.BINARY_ASSEMBLER
-    elif mode == '--text-assembler':
-      assembler_mode = AssemblerMode.TEXT_ASSEMBLER
-    else:
-      assembler_mode = AssemblerMode.VERIFIER_ASSEMBLER
+  if mode == '--binary-assembler' or mode == '--text-assembler':
+    binary_assembler = mode == '--binary-assembler'
 
     assert len(argv) % 2 == 0
     filenames = argv[2:]
@@ -548,8 +512,8 @@ def main(argv):
     for out_filename, input_filename in filename_pairs:
       arch, loaded_defs = _load_asm_defs(input_filename)
       with open(out_filename, 'w') as out_file:
-        _gen_generic_functions_h(out_file, loaded_defs, arch, assembler_mode)
-        if assembler_mode == AssemblerMode.BINARY_ASSEMBLER and arch is not None and 'x86' in arch:
+        _gen_generic_functions_h(out_file, loaded_defs, binary_assembler, arch)
+        if binary_assembler and arch is not None and 'x86' in arch:
           _gen_memory_function_specializations_h(out_file, loaded_defs, arch)
   else:
     assert mode == '--using'

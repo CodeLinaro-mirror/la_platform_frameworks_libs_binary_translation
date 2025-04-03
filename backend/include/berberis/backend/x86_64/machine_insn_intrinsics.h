@@ -118,8 +118,8 @@ template <typename AsmCallInfo,
           auto kOpcode,
           typename... CtorArgs,
           typename... Bindings>
-class MachineInsn<AsmCallInfo, kMnemo, kOpcode, std::tuple<CtorArgs...>, Bindings...> final
-    : public MachineInsnX86_64 {
+class MachineInsn<AsmCallInfo, kMnemo, kOpcode, std::tuple<CtorArgs...>, std::tuple<Bindings...>>
+    final : public MachineInsnX86_64 {
  private:
   template <typename>
   struct GenMachineInsnInfoT;
@@ -128,11 +128,15 @@ class MachineInsn<AsmCallInfo, kMnemo, kOpcode, std::tuple<CtorArgs...>, Binding
 
  public:
   // This static simplifies constructing this MachineInsn in intrinsic implementations.
-  static constexpr MachineInsn* (MachineIRBuilder::*kGenFunc)(CtorArgs...) =
+  static constexpr MachineInsn* (MachineIRBuilder::*kGenFunc)(std::tuple<CtorArgs...>) =
       &MachineIRBuilder::template Gen<MachineInsn>;
 
-  explicit MachineInsn(CtorArgs... args) : MachineInsnX86_64(&kInfo) {
-    ProcessArgs<0 /* reg_idx */, 0 /* disp_idx */, Bindings...>(args...);
+  explicit MachineInsn(std::tuple<CtorArgs...> args) : MachineInsnX86_64(&kInfo) {
+    std::apply(
+        [this](auto... args) {
+          this->ProcessArgs<0 /* reg_idx */, 0 /* disp_idx */, Bindings...>(args...);
+        },
+        args);
   }
 
   static constexpr MachineInsnInfo kInfo = GenMachineInsnInfoT<RegBindings>::value;
@@ -158,21 +162,34 @@ class MachineInsn<AsmCallInfo, kMnemo, kOpcode, std::tuple<CtorArgs...>, Binding
             s += ", ";
           }
           if constexpr (ArgTraits<Binding>::Class::kIsImmediate) {
-            s += GetImmOperandDebugString(this);
+            // Without static_cast here compilation fails with extemely criptic error message:
+            // error: implicit instantiation of undefined template 'berberis::InOutArg<0, 0, …>'
+            //   …
+            // machine_insn_intrinsics.h:161:18: note: in instantiation of template class
+            //  'std::tuple<berberis::InOutArg<0, 0, …>, berberis::InArg<1, …>' requested here
+            // 161            s += GetImmOperandDebugString(this);
+            //
+            // Same below.
+            s += GetImmOperandDebugString(static_cast<const MachineInsnX86_64*>(this));
             arg_idx++;
           } else if constexpr (ArgTraits<Binding>::Class::kAsRegister == 'm') {
             if (disp_idx == 0) {
-              s += GetBaseDispMemOperandDebugString(this, reg_idx);
+              s += GetBaseDispMemOperandDebugString(static_cast<const MachineInsnX86_64*>(this),
+                                                    reg_idx);
             } else /* disp_idx == 1 */ {
               s += StringPrintf(
-                  "[%s + 0x%x]", GetRegOperandDebugString(this, reg_idx).c_str(), disp2());
+                  "[%s + 0x%x]",
+                  GetRegOperandDebugString(static_cast<const MachineInsnX86_64*>(this), reg_idx)
+                      .c_str(),
+                  disp2());
             }
             arg_idx++, reg_idx++, disp_idx++;
           } else if constexpr (ArgTraits<Binding>::RegisterClass::kIsImplicitReg) {
-            s += GetImplicitRegOperandDebugString(this, reg_idx);
+            s += GetImplicitRegOperandDebugString(static_cast<const MachineInsnX86_64*>(this),
+                                                  reg_idx);
             arg_idx++, reg_idx++;
           } else {
-            s += GetRegOperandDebugString(this, reg_idx);
+            s += GetRegOperandDebugString(static_cast<const MachineInsnX86_64*>(this), reg_idx);
             arg_idx++, reg_idx++;
           }
         }.template operator()<Bindings>(),
@@ -225,12 +242,7 @@ class MachineInsn<AsmCallInfo, kMnemo, kOpcode, std::tuple<CtorArgs...>, Binding
             }.template operator()<Bindings>()...));
   }
 
-  int32_t disp2() const { return disp2_; }
-  void set_disp2(int32_t val) { disp2_ = val; }
-
  private:
-  int32_t disp2_;
-
   template <size_t, size_t, typename...>
   void ProcessArgs() {}
 

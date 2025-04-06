@@ -19,6 +19,7 @@
 
 #include <cstdint>
 
+#include "berberis/base/checks.h"
 #include "berberis/base/dependent_false.h"
 #include "berberis/intrinsics/common/intrinsics_float.h"  // Float16/Float32/Float64
 
@@ -27,56 +28,199 @@ namespace berberis {
 class SIMD128Register;
 
 namespace intrinsics {
-#if !defined(__aarch64__)
-enum EnumFromTemplateType {
-  kInt8T,
-  kUInt8T,
-  kInt16T,
-  kUInt16T,
-  kInt32T,
-  kUInt32T,
-  kInt64T,
-  kUInt64T,
-  kFloat16,
-  kFloat32,
-  kFloat64,
-  kSIMD128Register,
+
+// Value that's passed as argument of function or lambda couldn't be constexpr, but if it's
+// passed as part of argument type then it's different.
+// Class Value is empty, but carries the required information in its type.
+// It can also be automatically converted into value of the specified type when needed.
+// That way we can pass argument into a template as normal, non-template argument.
+template <auto ValueParam>
+class Value {
+ public:
+  using ValueType = std::remove_cvref_t<decltype(ValueParam)>;
+  static constexpr auto kValue = ValueParam;
+  constexpr operator ValueType() const { return kValue; }
 };
 
+enum TemplateTypeId : uint8_t {
+  kInt8T = 1,
+  kUInt8T = 0,
+  kInt16T = 3,
+  kUInt16T = 2,
+  kInt32T = 5,
+  kUInt32T = 4,
+  kInt64T = 7,
+  kUInt64T = 6,
+  kFloat16 = 10,
+  kFloat32 = 12,
+  kFloat64 = 14,
+  kSIMD128Register = 16,
+};
+
+constexpr TemplateTypeId TemplateTypeIdToFloat(TemplateTypeId value) {
+  DCHECK(value >= kUInt16T && value <= kInt64T);
+  return TemplateTypeId{static_cast<uint8_t>((value & 0x6) + 8)};
+}
+
+constexpr TemplateTypeId TemplateTypeIdToInt(TemplateTypeId value) {
+  DCHECK((value >= kFloat16 && value <= kFloat64) && !(value & 1));
+  return TemplateTypeId{static_cast<uint8_t>(value - 8)};
+}
+
+constexpr TemplateTypeId TemplateTypeIdToNarrow(TemplateTypeId value) {
+  DCHECK((value >= kUInt16T && value <= kInt64T) ||
+         ((value >= kFloat32 && value <= kFloat64) && !(value & 1)));
+  return TemplateTypeId{static_cast<uint8_t>(value - 2)};
+}
+
+constexpr TemplateTypeId TemplateTypeIdToSigned(TemplateTypeId value) {
+  DCHECK(value <= kInt64T);
+  return TemplateTypeId{static_cast<uint8_t>(value | 1)};
+}
+
+constexpr int TemplateTypeIdSizeOf(TemplateTypeId value) {
+  if (value == kSIMD128Register) {
+    return 16;
+  }
+  return 1 << ((value & 0b110) >> 1);
+}
+
+constexpr TemplateTypeId TemplateTypeIdToUnsigned(TemplateTypeId value) {
+  DCHECK(value <= kInt64T);
+  return TemplateTypeId{static_cast<uint8_t>(value & ~1)};
+}
+
+constexpr TemplateTypeId TemplateTypeIdToWide(TemplateTypeId value) {
+  DCHECK(value <= kInt32T || ((value >= kFloat16 && value <= kFloat32) && !(value & 1)));
+  return TemplateTypeId{static_cast<uint8_t>(value + 2)};
+}
+
 template <typename Type>
-constexpr EnumFromTemplateType TypeToEnumFromTemplateType() {
+constexpr TemplateTypeId IdFromType() {
   if constexpr (std::is_same_v<int8_t, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kInt8T;
+    return TemplateTypeId::kInt8T;
   } else if constexpr (std::is_same_v<uint8_t, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kUInt8T;
+    return TemplateTypeId::kUInt8T;
   } else if constexpr (std::is_same_v<int16_t, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kUInt16T;
+    return TemplateTypeId::kInt16T;
   } else if constexpr (std::is_same_v<uint16_t, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kUInt16T;
+    return TemplateTypeId::kUInt16T;
   } else if constexpr (std::is_same_v<int32_t, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kUInt32T;
+    return TemplateTypeId::kInt32T;
   } else if constexpr (std::is_same_v<uint32_t, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kUInt32T;
+    return TemplateTypeId::kUInt32T;
   } else if constexpr (std::is_same_v<int64_t, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kUInt64T;
+    return TemplateTypeId::kInt64T;
   } else if constexpr (std::is_same_v<uint64_t, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kUInt64T;
+    return TemplateTypeId::kUInt64T;
   } else if constexpr (std::is_same_v<Float16, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kFloat16;
+    return TemplateTypeId::kFloat16;
   } else if constexpr (std::is_same_v<Float32, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kFloat32;
+    return TemplateTypeId::kFloat32;
   } else if constexpr (std::is_same_v<Float64, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kFloat64;
-  } else if constexpr (std::is_same_v<Float64, std::decay_t<Type>>) {
-    return EnumFromTemplateType::kSIMD128Register;
+    return TemplateTypeId::kFloat64;
+  } else if constexpr (std::is_same_v<SIMD128Register, std::decay_t<Type>>) {
+    return TemplateTypeId::kSIMD128Register;
   } else {
     static_assert(kDependentTypeFalse<Type>);
   }
 }
 
 template <typename Type>
-constexpr EnumFromTemplateType kEnumFromTemplateType = TypeToEnumFromTemplateType<Type>();
-#endif
+constexpr TemplateTypeId kIdFromType = IdFromType<Type>();
+
+constexpr TemplateTypeId IntSizeToTemplateTypeId(uint8_t size, bool is_signed = false) {
+  DCHECK(std::has_single_bit(size));
+  DCHECK(size < 16);
+  return static_cast<TemplateTypeId>((std::countr_zero(size) << 1) + is_signed);
+}
+
+template <enum TemplateTypeId>
+class TypeFromIdHelper;
+
+#pragma push_macro("DEFINE_TEMPLATE_TYPE_FROM_ENUM")
+#undef DEFINE_TEMPLATE_TYPE_FROM_ENUM
+#define DEFINE_TEMPLATE_TYPE_FROM_ENUM(kEnumValue, TemplateType) \
+  template <>                                                    \
+  class TypeFromIdHelper<kEnumValue> {                           \
+   public:                                                       \
+    using Type = TemplateType;                                   \
+  }
+
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kInt8T, int8_t);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kUInt8T, uint8_t);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kInt16T, int16_t);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kUInt16T, uint16_t);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kInt32T, int32_t);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kUInt32T, uint32_t);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kInt64T, int64_t);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kUInt64T, uint64_t);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kFloat16, Float16);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kFloat32, Float32);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kFloat64, Float64);
+DEFINE_TEMPLATE_TYPE_FROM_ENUM(kSIMD128Register, SIMD128Register);
+
+#pragma pop_macro("DEFINE_TEMPLATE_TYPE_FROM_ENUM")
+
+template <enum TemplateTypeId kEnumValue>
+using TypeFromId = TypeFromIdHelper<kEnumValue>::Type;
+
+// If we carry TemplateTypeId then we can do the exact same manipulations wuth it as with
+// normal value, but also can get actual type from it and do appropriate operations:
+// make signed, make unsigned, widen, narrow, etc.
+template <TemplateTypeId ValueParam>
+class Value<ValueParam> {
+ public:
+  using Type = TypeFromId<ValueParam>;
+  using ValueType = TemplateTypeId;
+  static constexpr auto kValue = ValueParam;
+  constexpr operator TemplateTypeId() const { return kValue; }
+};
+
+#pragma push_macro("DEFINE_VALUE_FUNCTION")
+#undef DEFINE_VALUE_FUNCTION
+#define DEFINE_VALUE_FUNCTION(FunctionName)                                   \
+  template <TemplateTypeId ValueParam>                                        \
+  constexpr Value<FunctionName(ValueParam)> FunctionName(Value<ValueParam>) { \
+    return {};                                                                \
+  }
+
+DEFINE_VALUE_FUNCTION(TemplateTypeIdToFloat)
+DEFINE_VALUE_FUNCTION(TemplateTypeIdToInt)
+DEFINE_VALUE_FUNCTION(TemplateTypeIdToNarrow)
+DEFINE_VALUE_FUNCTION(TemplateTypeIdToSigned)
+DEFINE_VALUE_FUNCTION(TemplateTypeIdSizeOf)
+DEFINE_VALUE_FUNCTION(TemplateTypeIdToUnsigned)
+DEFINE_VALUE_FUNCTION(TemplateTypeIdToWide)
+
+#pragma pop_macro("DEFINE_VALUE_FUNCTION")
+
+#pragma push_macro("DEFINE_VALUE_OPERATOR")
+#undef DEFINE_VALUE_OPERATOR
+#define DEFINE_VALUE_OPERATOR(operator_name)                                       \
+  template <auto ValueParam1, auto ValueParam2>                                    \
+  constexpr Value<(ValueParam1 operator_name ValueParam2)> operator operator_name( \
+      Value<ValueParam1>, Value<ValueParam2>) {                                    \
+    return {};                                                                     \
+  }
+
+DEFINE_VALUE_OPERATOR(+)
+DEFINE_VALUE_OPERATOR(-)
+DEFINE_VALUE_OPERATOR(*)
+DEFINE_VALUE_OPERATOR(/)
+DEFINE_VALUE_OPERATOR(<<)
+DEFINE_VALUE_OPERATOR(>>)
+DEFINE_VALUE_OPERATOR(==)
+DEFINE_VALUE_OPERATOR(!=)
+DEFINE_VALUE_OPERATOR(>)
+DEFINE_VALUE_OPERATOR(<)
+DEFINE_VALUE_OPERATOR(<=)
+DEFINE_VALUE_OPERATOR(>=)
+DEFINE_VALUE_OPERATOR(&&)
+DEFINE_VALUE_OPERATOR(||)
+
+#pragma pop_macro("DEFINE_VALUE_OPERATOR")
+
 // A solution for the inability to call generic implementation from specialization.
 // Declaration:
 //   template <typename Type,

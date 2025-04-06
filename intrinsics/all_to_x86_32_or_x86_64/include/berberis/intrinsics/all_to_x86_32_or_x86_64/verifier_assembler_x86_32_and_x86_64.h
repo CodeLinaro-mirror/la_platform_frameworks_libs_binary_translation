@@ -26,6 +26,7 @@
 #include "berberis/base/config.h"
 #include "berberis/base/dependent_false.h"
 #include "berberis/intrinsics/all_to_x86_32_or_x86_64/intrinsics_bindings.h"
+#include "berberis/intrinsics/common/intrinsics_bindings.h"
 
 namespace berberis {
 
@@ -73,6 +74,7 @@ class VerifierAssembler {
 
   struct Label {
     size_t id;
+    int index = -1;
     bool bound = false;
   };
 
@@ -80,11 +82,17 @@ class VerifierAssembler {
 
   class Register {
    public:
-    constexpr Register(int arg_no) : arg_no_(arg_no) {}
+    constexpr Register(int arg_no)
+        : arg_no_(arg_no), binding_kind_(intrinsics::bindings::kUndefined) {}
+    constexpr Register(int arg_no, intrinsics::bindings::RegBindingKind binding_kind)
+        : arg_no_(arg_no), binding_kind_(binding_kind) {}
+
     constexpr int arg_no() const {
       CHECK_NE(arg_no_, kNoRegister);
       return arg_no_;
     }
+
+    constexpr bool register_initialised() const { return (arg_no_ != kNoRegister); }
 
     constexpr bool operator==(const Register& other) const { return arg_no() == other.arg_no(); }
     constexpr bool operator!=(const Register& other) const { return arg_no() != other.arg_no(); }
@@ -94,6 +102,10 @@ class VerifierAssembler {
     // Used in Operand to deal with references to scratch area.
     static constexpr int kScratchPointer = -3;
 
+    constexpr intrinsics::bindings::RegBindingKind get_binding_kind() const {
+      return binding_kind_;
+    }
+
    private:
     friend struct Operand;
 
@@ -102,6 +114,7 @@ class VerifierAssembler {
     //
     // Default value (-1) means it's not assigned yet (thus couldn't be used).
     int arg_no_;
+    intrinsics::bindings::RegBindingKind binding_kind_;
   };
 
   class X87Register {
@@ -128,8 +141,13 @@ class VerifierAssembler {
   class SIMDRegister {
    public:
     friend class SIMDRegister<384 - kBits>;
-    constexpr SIMDRegister(int arg_no) : arg_no_(arg_no) {}
-    int arg_no() const {
+    constexpr SIMDRegister(int arg_no)
+        : arg_no_(arg_no), binding_kind_(intrinsics::bindings::kUndefined) {}
+
+    constexpr SIMDRegister(int arg_no, intrinsics::bindings::RegBindingKind binding_kind)
+        : arg_no_(arg_no), binding_kind_(binding_kind) {}
+
+    constexpr int arg_no() const {
       CHECK_NE(arg_no_, kNoRegister);
       return arg_no_;
     }
@@ -142,10 +160,14 @@ class VerifierAssembler {
     }
 
     constexpr auto To128Bit() const {
-      return std::enable_if_t<kBits != 128, SIMDRegister<128>>{arg_no_};
+      return std::enable_if_t<kBits != 128, SIMDRegister<128>>{arg_no_, binding_kind_};
     }
     constexpr auto To256Bit() const {
-      return std::enable_if_t<kBits != 256, SIMDRegister<256>>{arg_no_};
+      return std::enable_if_t<kBits != 256, SIMDRegister<256>>{arg_no_, binding_kind_};
+    }
+
+    constexpr intrinsics::bindings::RegBindingKind get_binding_kind() const {
+      return binding_kind_;
     }
 
    private:
@@ -155,10 +177,13 @@ class VerifierAssembler {
     // Default value (-1) means it's not assigned yet (thus couldn't be used).
     static constexpr int kNoRegister = -1;
     int arg_no_;
+    intrinsics::bindings::RegBindingKind binding_kind_;
   };
 
   using XMMRegister = SIMDRegister<128>;
   using YMMRegister = SIMDRegister<256>;
+
+  using XRegister = XMMRegister;
 
   struct Operand {
     Register base = Register{Register::kNoRegister};
@@ -206,6 +231,7 @@ class VerifierAssembler {
   bool need_fma4 = false;
   bool need_lzcnt = false;
   bool need_popcnt = false;
+  bool need_sse_or_sse2 = false;
   bool need_sse3 = false;
   bool need_ssse3 = false;
   bool need_sse4_1 = false;
@@ -214,10 +240,198 @@ class VerifierAssembler {
   bool need_vpclmulqd = false;
   bool has_custom_capability = false;
 
-  constexpr void Bind([[maybe_unused]] Label* label) {}
+  bool defines_flags = false;
 
-  // Currently label_ is meaningless. Verifier assembler does not yet have a need for it.
-  constexpr Label* MakeLabel() { return &label_; }
+  bool intrinsic_is_non_linear = false;
+
+  // We assume that maximum number of XMM/general/fixed registers binded to the intrinsic is 16.
+  // VerifierAssembler thus assumes arg_no will never be higher than this number. We use arrays of
+  // size 16 to track individual registers. If there is a register with an arg_no higher than 16, we
+  // will see a compiler error, since we detect out-of-bounds access to the array in constexpr.
+  static constexpr int kMaxRegisters = 16;
+
+  // Verifier Assmebler checks that 'def' or 'def_early_clober' XMM registers aren't read before
+  // they are written to, unless they are used in a dependency breaking instruction. However, many
+  // intrinsics first use and define an XMM register in a non dependency breaking instruction. This
+  // check is default disabled, but can be enabled to view and manually check these intrinsics.
+  static constexpr bool kCheckDefOrDefEarlyClobberXMMRegistersAreWrittenBeforeRead = false;
+
+  class RegisterUsageFlags {
+   public:
+    constexpr void CheckValidRegisterUse(bool is_fixed) {
+      if (intrinsic_defined_def_general_register ||
+          (intrinsic_defined_def_fixed_register && !is_fixed)) {
+        printf(
+            "error: intrinsic used a 'use' general register after writing to a 'def' general  "
+            "register\n");
+      }
+    }
+
+    constexpr void CheckValidXMMRegisterUse() {
+      if (intrinsic_defined_def_xmm_register) {
+        printf(
+            "error: intrinsic used a 'use' xmm register after writing to a 'def' xmm  "
+            "register\n");
+      }
+    }
+
+    constexpr void CheckAppropriateDefEarlyClobbers() {
+      for (int i = 0; i < kMaxRegisters; i++) {
+        if (intrinsic_defined_def_early_clobber_fixed_register[i] &&
+            !valid_def_early_clobber_register[i]) {
+          printf(
+              "error: intrinsic never used a 'use' general register after writing to a "
+              "'def_early_clobber' fixed register");
+        }
+        if (intrinsic_defined_def_early_clobber_general_register[i] &&
+            !valid_def_early_clobber_register[i]) {
+          printf(
+              "error: intrinsic never used a 'use' general/fixed register after writing to a "
+              "'def_early_clobber' general register");
+        }
+        if (intrinsic_defined_def_early_clobber_xmm_register[i] &&
+            !valid_def_early_clobber_register[i]) {
+          printf(
+              "error: intrinsic never used a 'use' xmm register after writing to a "
+              "'def_early_clobber' xmm register");
+        }
+      }
+    }
+
+    constexpr void CheckValidDefOrDefEarlyClobberRegisterUse(int reg_arg_no) {
+      if (!intrinsic_defined_def_or_def_early_clobber_register[reg_arg_no]) {
+        printf("error: intrinsic read a def/def_early_clobber register before writing to it");
+      }
+    }
+
+    constexpr void UpdateIntrinsicRegisterDef(bool is_fixed) {
+      if (is_fixed) {
+        intrinsic_defined_def_fixed_register = true;
+      } else {
+        intrinsic_defined_def_general_register = true;
+      }
+    }
+
+    constexpr void UpdateIntrinsicDefineDefOrDefEarlyClobberReigster(int reg_arg_no) {
+      intrinsic_defined_def_or_def_early_clobber_register[reg_arg_no] = true;
+    }
+
+    constexpr void UpdateIntrinsicRegisterDefEarlyClobber(int reg_arg_no, bool is_fixed) {
+      if (is_fixed) {
+        intrinsic_defined_def_early_clobber_fixed_register[reg_arg_no] = true;
+      } else {
+        intrinsic_defined_def_early_clobber_general_register[reg_arg_no] = true;
+      }
+    }
+
+    constexpr void UpdateIntrinsicRegisterUse([[maybe_unused]] bool is_fixed) {
+      for (int i = 0; i < kMaxRegisters; i++) {
+        if (intrinsic_defined_def_early_clobber_general_register[i]) {
+          valid_def_early_clobber_register[i] = true;
+        }
+        if (intrinsic_defined_def_early_clobber_fixed_register[i] && !is_fixed) {
+          valid_def_early_clobber_register[i] = true;
+        }
+      }
+    }
+
+    constexpr void UpdateIntrinsicXMMRegisterDef() { intrinsic_defined_def_xmm_register = true; }
+
+    constexpr void UpdateIntrinsicXMMRegisterDefEarlyClobber(int reg_arg_no) {
+      intrinsic_defined_def_early_clobber_xmm_register[reg_arg_no] = true;
+    }
+
+    constexpr void UpdateIntrinsicXMMRegisterUse() {
+      for (int i = 0; i < kMaxRegisters; i++) {
+        if (intrinsic_defined_def_early_clobber_xmm_register[i]) {
+          valid_def_early_clobber_register[i] = true;
+        }
+      }
+    }
+
+   private:
+    bool intrinsic_defined_def_general_register = false;
+    bool intrinsic_defined_def_fixed_register = false;
+    bool intrinsic_defined_def_xmm_register = false;
+
+    bool intrinsic_defined_def_or_def_early_clobber_register[kMaxRegisters] = {};
+
+    bool intrinsic_defined_def_early_clobber_fixed_register[kMaxRegisters] = {};
+    bool intrinsic_defined_def_early_clobber_general_register[kMaxRegisters] = {};
+    bool intrinsic_defined_def_early_clobber_xmm_register[kMaxRegisters] = {};
+
+    bool valid_def_early_clobber_register[kMaxRegisters] = {};
+  };
+
+  RegisterUsageFlags register_usage_flags;
+
+  struct Instruction {
+    constexpr void UpdateInstructionRegisterDef(bool is_fixed) {
+      if (is_fixed) {
+        instruction_defined_def_fixed_register = true;
+      } else {
+        instruction_defined_def_general_register = true;
+      }
+    }
+
+    constexpr void UpdateInstructionXMMRegisterDef() {
+      instruction_defined_def_xmm_register = true;
+    }
+
+    constexpr void UpdateInstructionRegisterUse(bool is_fixed) {
+      if (is_fixed) {
+        instruction_used_use_fixed_register = true;
+      } else {
+        instruction_used_use_general_register = true;
+      }
+    }
+
+    constexpr void UpdateInstructionXMMRegisterUse() { instruction_used_use_xmm_register = true; }
+
+    bool instruction_defined_def_fixed_register = false;
+    bool instruction_defined_def_general_register = false;
+    bool instruction_defined_def_xmm_register = false;
+
+    bool instruction_used_use_fixed_register = false;
+    bool instruction_used_use_general_register = false;
+    bool instruction_used_use_xmm_register = false;
+
+    bool is_unconditional_jump = false;
+    bool is_conditional_jump = false;
+    Label* jump_target = nullptr;
+  };
+
+  constexpr void CheckAppropriateDefEarlyClobbers() {
+    if (intrinsic_is_non_linear) {
+      return;
+    }
+    register_usage_flags.CheckAppropriateDefEarlyClobbers();
+  }
+
+  constexpr void CheckLabelsAreBound() {
+    if (!intrinsic_is_non_linear) {
+      return;
+    }
+    for (int i = 0; i < current_instruction; i++) {
+      if (instructions[i].is_conditional_jump || instructions[i].is_unconditional_jump) {
+        if (instructions[i].jump_target->bound == false) {
+          printf("error: intrinsic jumps to a label that was never bound\n");
+        }
+      }
+    }
+  }
+
+  constexpr void Bind(Label* label) {
+    CHECK_EQ(label->bound, false);
+    intrinsic_is_non_linear = true;
+    label->index = current_instruction;
+    label->bound = true;
+  }
+
+  constexpr Label* MakeLabel() {
+    labels_[num_labels_] = {{num_labels_}};
+    return &labels_[num_labels_++];
+  }
 
   template <typename... Args>
   constexpr void Byte([[maybe_unused]] Args... args) {
@@ -244,6 +458,13 @@ class VerifierAssembler {
   // Verify CPU vendor and SSE restrictions.
   template <typename CPUIDRestriction>
   constexpr void CheckCPUIDRestriction() {
+    // Technically AVX implies SSE but mixing AVX and SSE instructions can cause a performance
+    // penalty. Thus, we first ensure that AVX-using intrinsics don't use SSE instructions, before
+    // propagating required feature dependencies correctly.
+    if (need_avx && need_sse_or_sse2) {
+      printf("error: intrinsic used both AVX and SSE instructions\n");
+    }
+
     constexpr bool expect_bmi = std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasBMI>;
     constexpr bool expect_f16c = std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasF16C>;
     constexpr bool expect_fma = std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasFMA>;
@@ -254,12 +475,10 @@ class VerifierAssembler {
         std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasVPCLMULQD>;
     constexpr bool expect_aesavx =
         std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasAESAVX> || expect_vaes;
-    constexpr bool expect_aes =
-        std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasAES> || expect_aesavx;
+    constexpr bool expect_aes = std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasAES>;
     constexpr bool expect_clmulavx =
         std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasCLMULAVX> || expect_vpclmulqd;
-    constexpr bool expect_clmul =
-        std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasCLMUL> || expect_clmulavx;
+    constexpr bool expect_clmul = std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasCLMUL>;
     constexpr bool expect_popcnt =
         std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasPOPCNT>;
     constexpr bool expect_avx = std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasAVX> ||
@@ -267,13 +486,15 @@ class VerifierAssembler {
                                 expect_fma4;
     constexpr bool expect_sse4_2 =
         std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasSSE4_2> || expect_aes ||
-        expect_clmul || expect_avx;
+        expect_clmul;
     constexpr bool expect_sse4_1 =
         std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasSSE4_1> || expect_sse4_2;
     constexpr bool expect_ssse3 =
         std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasSSSE3> || expect_sse4_1;
     constexpr bool expect_sse3 =
         std::is_same_v<CPUIDRestriction, intrinsics::bindings::HasSSE3> || expect_ssse3;
+
+    // Note that we don't check SSE or SSE2, since we assume SSE2 is always available.
 
     if (expect_aesavx != need_aesavx) {
       printf("error: expect_aesavx != need_aesavx\n");
@@ -328,6 +549,12 @@ class VerifierAssembler {
     }
   }
 
+  constexpr void CheckFlagsBinding(bool expect_flags) {
+    if (expect_flags != defines_flags) {
+      printf("error: expect_flags != defines_flags\n");
+    }
+  }
+
 // Instructions.
 #include "gen_verifier_assembler_common_x86-inl.h"  // NOLINT generated file
 
@@ -355,7 +582,6 @@ class VerifierAssembler {
 
   constexpr void SetRequiredFeatureAESAVX() {
     need_aesavx = true;
-    SetRequiredFeatureAES();
     SetRequiredFeatureAVX();
   }
 
@@ -365,8 +591,10 @@ class VerifierAssembler {
   }
 
   constexpr void SetRequiredFeatureAVX() {
+    // Technically AVX implies SSE but mixing AVX and SSE instructions can cause a performance
+    // penalty. Thus, we first ensure that AVX-using intrinsics don't use SSE instructions, before
+    // propagating required feature dependencies correctly.
     need_avx = true;
-    SetRequiredFeatureSSE4_2();
   }
 
   constexpr void SetRequiredFeatureAVX2() {
@@ -380,7 +608,6 @@ class VerifierAssembler {
 
   constexpr void SetRequiredFeatureCLMULAVX() {
     need_clmulavx = true;
-    SetRequiredFeatureCLMUL();
     SetRequiredFeatureAVX();
   }
 
@@ -408,10 +635,11 @@ class VerifierAssembler {
 
   constexpr void SetRequiredFeaturePOPCNT() { need_popcnt = true; }
 
+  constexpr void SetRequiredFeatureSSEOrSSE2() { need_sse_or_sse2 = true; }
+
   constexpr void SetRequiredFeatureSSE3() {
     need_sse3 = true;
-    // Note: we assume that SSE2 is always available thus we don't have have_sse2 or have_sse1
-    // variables.
+    SetRequiredFeatureSSEOrSSE2();
   }
 
   constexpr void SetRequiredFeatureSSSE3() {
@@ -441,40 +669,144 @@ class VerifierAssembler {
 
   constexpr void SetHasCustomCapability() { has_custom_capability = true; }
 
-  template <typename... Args>
-  constexpr void Instruction(const char* name, Condition cond, const Args&... args);
+  constexpr void SetDefinesFLAGS() { defines_flags = true; }
 
-  template <typename... Args>
-  constexpr void Instruction(const char* name, const Args&... args);
+  constexpr bool RegisterIsFixed(Register reg) {
+    if (gpr_a.register_initialised()) {
+      if (reg == gpr_a) return true;
+    }
+    if (gpr_b.register_initialised()) {
+      if (reg == gpr_b) return true;
+    }
+    if (gpr_c.register_initialised()) {
+      if (reg == gpr_c) return true;
+    }
+    if (gpr_d.register_initialised()) {
+      if (reg == gpr_d) return true;
+    }
+    return false;
+  }
 
-  void EmitString() {}
+  constexpr void RegisterDef(Register reg) {
+    if (reg.get_binding_kind() == intrinsics::bindings::kDef ||
+        reg.get_binding_kind() == intrinsics::bindings::kDefEarlyClobber) {
+      register_usage_flags.UpdateIntrinsicDefineDefOrDefEarlyClobberReigster(reg.arg_no());
+    }
+    if (reg.get_binding_kind() == intrinsics::bindings::kDef) {
+      instructions[current_instruction].UpdateInstructionRegisterDef(RegisterIsFixed(reg));
+      register_usage_flags.UpdateIntrinsicRegisterDef(RegisterIsFixed(reg));
+    } else if (reg.get_binding_kind() == intrinsics::bindings::kDefEarlyClobber) {
+      register_usage_flags.UpdateIntrinsicRegisterDefEarlyClobber(reg.arg_no(),
+                                                                  RegisterIsFixed(reg));
+    }
+    if (reg.get_binding_kind() == intrinsics::bindings::kUse) {
+      printf("error: intrinsic defined a 'use' register\n");
+    }
+  }
 
-  void EmitString([[maybe_unused]] const std::string& s) {}
+  constexpr void RegisterDef(XMMRegister reg) {
+    if (reg.get_binding_kind() == intrinsics::bindings::kDef ||
+        reg.get_binding_kind() == intrinsics::bindings::kDefEarlyClobber) {
+      register_usage_flags.UpdateIntrinsicDefineDefOrDefEarlyClobberReigster(reg.arg_no());
+    }
+    if (reg.get_binding_kind() == intrinsics::bindings::kDef) {
+      instructions[current_instruction].UpdateInstructionXMMRegisterDef();
+      register_usage_flags.UpdateIntrinsicXMMRegisterDef();
+    } else if (reg.get_binding_kind() == intrinsics::bindings::kDefEarlyClobber) {
+      register_usage_flags.UpdateIntrinsicXMMRegisterDefEarlyClobber(reg.arg_no());
+    }
+    if (reg.get_binding_kind() == intrinsics::bindings::kUse) {
+      printf("error: intrinsic defined a 'use' XMM register\n");
+    }
+  }
 
-  template <typename... Args>
-  void EmitString([[maybe_unused]] const std::string& s, [[maybe_unused]] const Args&... args) {}
+  constexpr void RegisterUse(Register reg) {
+    if (reg.get_binding_kind() == intrinsics::bindings::kUse) {
+      instructions[current_instruction].UpdateInstructionRegisterUse(RegisterIsFixed(reg));
+    }
+    if (intrinsic_is_non_linear) {
+      return;
+    }
+    if (reg.get_binding_kind() == intrinsics::bindings::kUse) {
+      register_usage_flags.CheckValidRegisterUse(RegisterIsFixed(reg));
+      register_usage_flags.UpdateIntrinsicRegisterUse(RegisterIsFixed(reg));
+    }
+    if (reg.get_binding_kind() == intrinsics::bindings::kDef ||
+        reg.get_binding_kind() == intrinsics::bindings::kDefEarlyClobber) {
+      register_usage_flags.CheckValidDefOrDefEarlyClobberRegisterUse(reg.arg_no());
+    }
+  }
+
+  constexpr void RegisterUse(XMMRegister reg) {
+    if (reg.get_binding_kind() == intrinsics::bindings::kUse) {
+      instructions[current_instruction].UpdateInstructionXMMRegisterUse();
+    }
+    if (intrinsic_is_non_linear) {
+      return;
+    }
+    if (reg.get_binding_kind() == intrinsics::bindings::kUse) {
+      register_usage_flags.CheckValidXMMRegisterUse();
+      register_usage_flags.UpdateIntrinsicXMMRegisterUse();
+    }
+    if (!kCheckDefOrDefEarlyClobberXMMRegistersAreWrittenBeforeRead) {
+      return;
+    }
+    if (reg.get_binding_kind() == intrinsics::bindings::kDef ||
+        reg.get_binding_kind() == intrinsics::bindings::kDefEarlyClobber) {
+      register_usage_flags.CheckValidDefOrDefEarlyClobberRegisterUse(reg.arg_no());
+    }
+  }
+
+  template <typename RegisterType>
+  constexpr void HandleDefOrDefEarlyClobberRegisterReset(RegisterType reg1, RegisterType reg2) {
+    if (reg1 == reg2 && (reg1.get_binding_kind() == intrinsics::bindings::kDef ||
+                         reg1.get_binding_kind() == intrinsics::bindings::kDefEarlyClobber)) {
+      register_usage_flags.UpdateIntrinsicDefineDefOrDefEarlyClobberReigster(reg1.arg_no());
+    }
+  }
+
+  constexpr void HandleDefOrDefEarlyClobberRegisterReset(XMMRegister reg1,
+                                                         XMMRegister reg2,
+                                                         XMMRegister reg3) {
+    if (reg2 == reg3 && (reg1.get_binding_kind() == intrinsics::bindings::kDef ||
+                         reg1.get_binding_kind() == intrinsics::bindings::kDefEarlyClobber)) {
+      register_usage_flags.UpdateIntrinsicDefineDefOrDefEarlyClobberReigster(reg1.arg_no());
+    }
+  }
+
+  constexpr void HandleConditionalJump([[maybe_unused]] const Label& label) {
+    instructions[current_instruction].is_conditional_jump = true;
+    instructions[current_instruction].jump_target = const_cast<Label*>(&label);
+  }
+
+  constexpr void HandleUnconditionalJump([[maybe_unused]] const Label& label) {
+    instructions[current_instruction].is_unconditional_jump = true;
+    instructions[current_instruction].jump_target = const_cast<Label*>(&label);
+  }
+
+  constexpr void HandleUnconditionalJumpRegister() {
+    printf("error: intrinsic does jump to register\n");
+  }
+
+  constexpr void EndInstruction() { current_instruction++; }
 
  private:
-  Label label_;
+  // Time complexity of checking correct use/def register bindings for non linear intrinsics is 2^n.
+  // Therefore, we only handle intrinsics with maximum of 5 labels. Also, no intrinsics exist with >
+  // 5 labels, so we can use this array for all intrinsics.
+  static constexpr int kMaxLabels = 5;
+  Label labels_[kMaxLabels];
+  size_t num_labels_ = 0;
+
+  int current_instruction = 0;
+  static constexpr int kMaxInstructions = 300;
+  Instruction instructions[kMaxInstructions] = {};
 
   VerifierAssembler(const VerifierAssembler&) = delete;
   VerifierAssembler(VerifierAssembler&&) = delete;
   void operator=(const VerifierAssembler&) = delete;
   void operator=(VerifierAssembler&&) = delete;
 };
-
-template <typename DerivedAssemblerType>
-template <typename... Args>
-constexpr void VerifierAssembler<DerivedAssemblerType>::Instruction(
-    [[maybe_unused]] const char* name,
-    [[maybe_unused]] Condition cond,
-    [[maybe_unused]] const Args&... args) {}
-
-template <typename DerivedAssemblerType>
-template <typename... Args>
-constexpr void VerifierAssembler<DerivedAssemblerType>::Instruction(
-    [[maybe_unused]] const char* name,
-    [[maybe_unused]] const Args&... args) {}
 
 }  // namespace x86_32_and_x86_64
 

@@ -22,6 +22,7 @@ import os
 import re
 import sys
 
+from enum import Enum
 
 INDENT = '  '
 
@@ -47,6 +48,10 @@ _imm_types = {
     'Shift64-Imm': 'Shift64Immediate'
 }
 
+class AssemblerMode(Enum):
+  BINARY_ASSEMBLER = 0
+  TEXT_ASSEMBLER = 1
+  VERIFIER_ASSEMBLER = 3
 
 def _get_arg_type_name(arg, insn_type):
   cls = arg.get('class')
@@ -97,7 +102,7 @@ def _get_params(insn, filter=None):
       continue
     if filter is not None and filter(arg):
       continue
-    result.append("%s arg%d" % (
+    result.append("[[maybe_unused]] %s arg%d" % (
       _get_arg_type_name(arg, insn.get('type', None)), arg_count))
     arg_count += 1
   return ', '.join(result)
@@ -117,8 +122,98 @@ def _get_template_name(insn):
       'typename' if re.search('[_a-zA-Z]', param) else 'int'
       for param in name.split('<',1)[1][:-1].split(',')), name.split('<')[0]
 
+def _handle_jump(insn, jump_is_conditional, f):
+  arg_count = 0
+  for arg in insn.get('args'):
+    if _get_arg_type_name(arg, insn.get('type', None)) ==  "const Label&":
+      if jump_is_conditional:
+        print('  HandleConditionalJump(arg%d);' %
+        arg_count, file=f)
+        return
+      print('  HandleUnconditionalJump(arg%d);' %
+        arg_count, file=f)
+      return
+    if _get_arg_type_name(arg, insn.get('type', None)) ==  "Register":
+      assert(not jump_is_conditional)
+      print('  HandleUnconditionalJumpRegister();', file=f)
+    arg_count += 1
 
-def _gen_generic_functions_h(f, insns, binary_assembler, arch):
+def _check_insn_is_dependency_breaking(insn):
+  if "dependency_breaking" in insn:
+    return True
+
+def _handle_def_register_reset(name, insn, arch, f):
+  """
+  'def'/'def_early_clobber' registers in an intrinsic must be defined before they can be used.
+  Verifier assembler checks intrinsics to ensure that this is the case.
+  However, there are a number of special instructions where it is valid for a 'def'
+  register to be both read and written when it's first defined.
+  Example: A Xor instruction, using the same register as both input and output arguments sets this
+  register to 0, regardless of its initial value, effectively resetting the register.
+  Thus, it is valid for this instruction to read and write a 'def' register, even if it hasn't
+  been written to yet in the intrinsic.
+  """
+  if not _check_insn_is_dependency_breaking(insn):
+    return
+  if name.startswith("P") or name.startswith("V") or name.endswith("pd") or name.endswith("ps"):
+    register_type = "XMMRegister"
+  else:
+    register_type = "Register"
+  num_registers = 3 if name.startswith("V") else 2
+  arg_count = 0
+  registers = []
+  for arg in insn.get('args'):
+      if asm_defs.is_implicit_reg(arg.get('class')):
+        continue
+      if (_get_arg_type_name(arg, insn.get('type', None)) == register_type
+          and 'x86' in arch):
+        registers.append(arg_count)
+      arg_count += 1
+  if (len(registers) != num_registers):
+    return
+  if num_registers == 2:
+    print('  HandleDefOrDefEarlyClobberRegisterReset(arg%d, arg%d);' %
+    (registers[0], registers[1]), file=f)
+  else:
+    print('  HandleDefOrDefEarlyClobberRegisterReset(arg%d, arg%d, arg%d);' %
+    (registers[0], registers[1], registers[2]), file=f)
+
+def _get_implicit_fixed_register(arg_class):
+  if arg_class in ["AL", "AX", "EAX", "RAX"]:
+    return "gpr_a"
+  if arg_class in ["EBX", "RBX"]:
+    return "gpr_b"
+  if arg_class in ["CL", "CX", "ECX", "RCX"]:
+    return "gpr_c"
+  if arg_class in ["DL", "DX", "EDX", "RDX"]:
+    return "gpr_d"
+  return False
+
+def _gen_register_read_write_info(insn, arch):
+  # Process register uses before register defs. This ensures valid register uses are verified
+  # against register definitions that occurred only before the current instruction.
+  register_types_to_gen = ['Register', 'XMMRegister']
+  for usage in ('use', 'def'):
+    arg_count = 0
+    for arg in insn.get('args'):
+      if asm_defs.is_implicit_reg(arg.get('class')):
+        implicit_fixed_reg = _get_implicit_fixed_register(arg.get('class'))
+        if implicit_fixed_reg and (arg.get('usage') == usage or arg.get('usage') == "use_def"):
+          yield '  Register%s(%s);' % (usage.capitalize(), implicit_fixed_reg)
+        continue
+      if (_get_arg_type_name(arg, insn.get('type', None)) in register_types_to_gen
+          and 'x86' in arch):
+        if arg.get('usage') == usage or arg.get('usage') == "use_def":
+          yield '  Register%s(arg%d);' % (usage.capitalize(), arg_count)
+      arg_count += 1
+
+def _check_insn_uses_xmm(insn, arch):
+  for arg in insn.get('args'):
+    if (asm_defs.is_xreg(arg.get('class')) and 'x86' in arch):
+      return True
+  return False
+
+def _gen_generic_functions_h(f, insns, arch, assembler_mode):
   template_names = set()
   for insn in insns:
     template, name = _get_template_name(insn)
@@ -148,7 +243,7 @@ def _gen_generic_functions_h(f, insns, binary_assembler, arch):
     #
     # Text assembled passes "real" work down to GNU as, this works fine with
     # just a simple generic implementation.
-    if binary_assembler:
+    if assembler_mode == AssemblerMode.BINARY_ASSEMBLER:
       if 'opcode' in insn:
         assert '' not in insn
         insn['opcodes'] = [insn['opcode']]
@@ -202,13 +297,35 @@ def _gen_generic_functions_h(f, insns, binary_assembler, arch):
                     'std::enable_if_t<std::is_integral_v<ImmType> && '
                     'sizeof(%s) < sizeof(ImmType)> = delete;') % (
                         name, params.replace(imm_type, 'ImmType'), imm_type), file=f)
-    else:
-      print('constexpr void %s(%s) {' % (name, params), file=f);
-      if 'feature' in insn:
-        print('  SetRequiredFeature%s();' % insn['feature'], file=f)
+
+    elif assembler_mode == AssemblerMode.TEXT_ASSEMBLER:
+      print('constexpr void %s(%s) {' % (name, params), file=f)
       print('  Instruction(%s);' % ', '.join(
           ['"%s"' % insn.get('native-asm', name)] +
           list(_gen_instruction_args(insn, arch))), file=f)
+      print('}', file=f)
+
+    else: # verifier_assembler
+      print('constexpr void %s(%s) {' % (name, params), file=f)
+      if (name == "Jcc" or name == "Jmp") and 'x86' in arch:
+        jump_is_conditional = name == "Jcc"
+        _handle_jump(insn, jump_is_conditional, f)
+        print(' EndInstruction();', file=f)
+        print('}', file=f)
+        continue
+      if 'feature' in insn:
+        print('  SetRequiredFeature%s();' % insn['feature'], file=f)
+      else:
+        if _check_insn_uses_xmm(insn, arch):
+          print('  SetRequiredFeatureSSEOrSSE2();', file=f)
+      for arg in insn.get('args'):
+        if arg["class"] == "FLAGS":
+          print('  SetDefinesFLAGS();', file=f)
+          break
+      _handle_def_register_reset(name, insn, arch, f)
+      for register_read_write in _gen_register_read_write_info(insn, arch):
+        print(register_read_write, file=f)
+      print('  EndInstruction();', file=f)
       print('}', file=f)
 
 
@@ -498,11 +615,17 @@ def main(argv):
 
   if (mode != '--binary-assembler' and
       mode != '--text-assembler' and
+      mode != '--verifier-assembler' and
       mode != '--using'):
     assert False, 'unknown option %s' % (mode)
 
-  if mode == '--binary-assembler' or mode == '--text-assembler':
-    binary_assembler = mode == '--binary-assembler'
+  if mode == '--binary-assembler' or mode == '--text-assembler' or mode == "--verifier-assembler":
+    if mode == '--binary-assembler':
+      assembler_mode = AssemblerMode.BINARY_ASSEMBLER
+    elif mode == '--text-assembler':
+      assembler_mode = AssemblerMode.TEXT_ASSEMBLER
+    else:
+      assembler_mode = AssemblerMode.VERIFIER_ASSEMBLER
 
     assert len(argv) % 2 == 0
     filenames = argv[2:]
@@ -512,8 +635,8 @@ def main(argv):
     for out_filename, input_filename in filename_pairs:
       arch, loaded_defs = _load_asm_defs(input_filename)
       with open(out_filename, 'w') as out_file:
-        _gen_generic_functions_h(out_file, loaded_defs, binary_assembler, arch)
-        if binary_assembler and arch is not None and 'x86' in arch:
+        _gen_generic_functions_h(out_file, loaded_defs, arch, assembler_mode)
+        if assembler_mode == AssemblerMode.BINARY_ASSEMBLER and arch is not None and 'x86' in arch:
           _gen_memory_function_specializations_h(out_file, loaded_defs, arch)
   else:
     assert mode == '--using'

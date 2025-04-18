@@ -109,7 +109,7 @@ template <auto kIntrinsicTemplateName,
           typename PreciseNanOperationsHandlingTemplateValue,
           bool kSideEffectsTemplateValue,
           typename... Types>
-class AsmCallInfo;
+class IntrinsicBindingInfo;
 
 template <auto kIntrinsicTemplateName,
           auto kMacroInstructionTemplateName,
@@ -121,16 +121,16 @@ template <auto kIntrinsicTemplateName,
           typename... InputArgumentsTypes,
           typename... OutputArgumentsTypes,
           typename... BindingsTypes>
-class AsmCallInfo<kIntrinsicTemplateName,
-                  kMacroInstructionTemplateName,
-                  kMnemo,
-                  GetOpcode,
-                  CPUIDRestrictionTemplateValue,
-                  PreciseNanOperationsHandlingTemplateValue,
-                  kSideEffectsTemplateValue,
-                  std::tuple<InputArgumentsTypes...>,
-                  std::tuple<OutputArgumentsTypes...>,
-                  std::tuple<BindingsTypes...>>
+class IntrinsicBindingInfo<kIntrinsicTemplateName,
+                           kMacroInstructionTemplateName,
+                           kMnemo,
+                           GetOpcode,
+                           CPUIDRestrictionTemplateValue,
+                           PreciseNanOperationsHandlingTemplateValue,
+                           kSideEffectsTemplateValue,
+                           std::tuple<InputArgumentsTypes...>,
+                           std::tuple<OutputArgumentsTypes...>,
+                           std::tuple<BindingsTypes...>>
     final {
  public:
   static constexpr auto kIntrinsic = kIntrinsicTemplateName;
@@ -162,24 +162,16 @@ class AsmCallInfo<kIntrinsicTemplateName,
   using IntrinsicType = std::conditional_t<std::tuple_size_v<OutputArguments> == 0,
                                            void (*)(InputArgumentsTypes...),
                                            OutputArguments (*)(InputArgumentsTypes...)>;
-  template <template <typename, auto, auto, typename...> typename MachineInsnType,
-            template <typename...> typename ConstructorArgs,
-            typename Opcode>
-  using MachineInsn = MachineInsnType<AsmCallInfo,
-                                      kMnemo,
-                                      kOpcode<Opcode>,
-                                      ConstructorArgs<BindingsTypes...>,
-                                      std::tuple<BindingsTypes...>>;
 };
 
 }  // namespace intrinsics::bindings
 
-template <typename AsmCallInfo>
+template <typename IntrinsicBindingInfo>
 constexpr void AssignRegisterNumbers(int* register_numbers) {
   // Assign number for output (and temporary) arguments.
   std::size_t id = 0;
   int arg_counter = 0;
-  AsmCallInfo::ProcessBindings([&id, &arg_counter, &register_numbers](auto arg) {
+  IntrinsicBindingInfo::ProcessBindings([&id, &arg_counter, &register_numbers](auto arg) {
     if constexpr (!IsImmediate(decltype(arg)::arg_info)) {
       using RegisterClass = typename decltype(arg)::RegisterClass;
       if constexpr (!std::is_same_v<RegisterClass, intrinsics::bindings::FLAGS>) {
@@ -192,7 +184,7 @@ constexpr void AssignRegisterNumbers(int* register_numbers) {
   });
   // Assign numbers for input arguments.
   arg_counter = 0;
-  AsmCallInfo::ProcessBindings([&id, &arg_counter, &register_numbers](auto arg) {
+  IntrinsicBindingInfo::ProcessBindings([&id, &arg_counter, &register_numbers](auto arg) {
     if constexpr (!IsImmediate(decltype(arg)::arg_info)) {
       using RegisterClass = typename decltype(arg)::RegisterClass;
       if constexpr (!std::is_same_v<RegisterClass, intrinsics::bindings::FLAGS>) {
@@ -219,10 +211,10 @@ constexpr bool CheckIntrinsicHasFlagsBinding() {
   return expect_flags;
 }
 
-template <typename AsmCallInfo, typename AssemblerType>
+template <typename IntrinsicBindingInfo, typename AssemblerType>
 constexpr void CallVerifierAssembler(AssemblerType* as, int* register_numbers) {
   int arg_counter = 0;
-  AsmCallInfo::ProcessBindings([&arg_counter, &as, register_numbers](auto arg) {
+  IntrinsicBindingInfo::ProcessBindings([&arg_counter, &as, register_numbers](auto arg) {
     if constexpr (!IsImmediate(decltype(arg)::arg_info)) {
       using RegisterClass = typename decltype(arg)::RegisterClass;
       if constexpr (!std::is_same_v<RegisterClass, intrinsics::bindings::FLAGS>) {
@@ -260,13 +252,13 @@ constexpr void CallVerifierAssembler(AssemblerType* as, int* register_numbers) {
   arg_counter = 0;
   int scratch_counter = 0;
   std::apply(
-      AsmCallInfo::kMacroInstruction,
+      IntrinsicBindingInfo::kMacroInstruction,
       std::tuple_cat(
           std::tuple<AssemblerType&>{*as},
-          AsmCallInfo::MakeTuplefromBindings([&as,
-                                              &arg_counter,
-                                              &scratch_counter,
-                                              register_numbers](auto arg) {
+          IntrinsicBindingInfo::MakeTuplefromBindings([&as,
+                                                       &arg_counter,
+                                                       &scratch_counter,
+                                                       register_numbers](auto arg) {
             if constexpr (IsImmediate(decltype(arg)::arg_info)) {
               // TODO(b/394278175): We don't have access to the value of the immediate argument
               // here. The value of the immediate argument often decides which instructions in

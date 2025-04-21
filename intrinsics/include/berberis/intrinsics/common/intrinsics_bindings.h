@@ -64,32 +64,7 @@ class Mem64 {
   static constexpr char kAsRegister = 'm';
 };
 
-// Tag classes. They are never instantioned, only used as tags to pass information about
-// bindings.
-class Def;
-class DefEarlyClobber;
-class Use;
-class UseDef;
-
-template <typename Tag, typename MachineRegKind>
-constexpr auto ToRegKind() {
-  if constexpr (std::is_same_v<Tag, Def>) {
-    return MachineRegKind::kDef;
-  } else if constexpr (std::is_same_v<Tag, DefEarlyClobber>) {
-    return MachineRegKind::kDefEarlyClobber;
-  } else if constexpr (std::is_same_v<Tag, Use>) {
-    return MachineRegKind::kUse;
-  } else if constexpr (std::is_same_v<Tag, UseDef>) {
-    return MachineRegKind::kUseDef;
-  } else {
-    static_assert(kDependentTypeFalse<Tag>);
-  }
-}
-
-template <typename Tag, typename MachineRegKind>
-inline constexpr auto kRegKind = ToRegKind<Tag, MachineRegKind>();
-
-enum RegBindingKind { kDef, kDefEarlyClobber, kUse, kUseDef, kUndefined };
+enum RegBindingKind { kDef = 2, kDefEarlyClobber = 3, kUse = 5, kUseDef = 7 };
 
 // Tag classes. They are never instantioned, only used as tags to pass information about
 // bindings.
@@ -175,7 +150,7 @@ constexpr void AssignRegisterNumbers(int* register_numbers) {
     if constexpr (!IsImmediate(decltype(arg)::arg_info)) {
       using RegisterClass = typename decltype(arg)::RegisterClass;
       if constexpr (!std::is_same_v<RegisterClass, intrinsics::bindings::FLAGS>) {
-        if constexpr (!std::is_same_v<typename decltype(arg)::Usage, intrinsics::bindings::Use>) {
+        if constexpr (decltype(arg)::kUsage != intrinsics::bindings::kUse) {
           register_numbers[arg_counter] = id++;
         }
         ++arg_counter;
@@ -188,7 +163,7 @@ constexpr void AssignRegisterNumbers(int* register_numbers) {
     if constexpr (!IsImmediate(decltype(arg)::arg_info)) {
       using RegisterClass = typename decltype(arg)::RegisterClass;
       if constexpr (!std::is_same_v<RegisterClass, intrinsics::bindings::FLAGS>) {
-        if constexpr (std::is_same_v<typename decltype(arg)::Usage, intrinsics::bindings::Use>) {
+        if constexpr (decltype(arg)::kUsage == intrinsics::bindings::kUse) {
           register_numbers[arg_counter] = id++;
         }
         ++arg_counter;
@@ -221,26 +196,18 @@ constexpr void CallVerifierAssembler(AssemblerType* as, int* register_numbers) {
         if constexpr (RegisterClass::kAsRegister != 'm') {
           if constexpr (RegisterClass::kIsImplicitReg) {
             if constexpr (RegisterClass::kAsRegister == 'a') {
-              as->gpr_a = typename AssemblerType::Register(
-                  register_numbers[arg_counter],
-                  intrinsics::bindings::ToRegKind<typename decltype(arg)::Usage,
-                                                  intrinsics::bindings::RegBindingKind>());
+              as->gpr_a =
+                  typename AssemblerType::Register{register_numbers[arg_counter], arg.kUsage};
             } else if constexpr (RegisterClass::kAsRegister == 'b') {
-              as->gpr_b = typename AssemblerType::Register(
-                  register_numbers[arg_counter],
-                  intrinsics::bindings::ToRegKind<typename decltype(arg)::Usage,
-                                                  intrinsics::bindings::RegBindingKind>());
+              as->gpr_b =
+                  typename AssemblerType::Register{register_numbers[arg_counter], arg.kUsage};
             } else if constexpr (RegisterClass::kAsRegister == 'c') {
-              as->gpr_c = typename AssemblerType::Register(
-                  register_numbers[arg_counter],
-                  intrinsics::bindings::ToRegKind<typename decltype(arg)::Usage,
-                                                  intrinsics::bindings::RegBindingKind>());
+              as->gpr_c =
+                  typename AssemblerType::Register{register_numbers[arg_counter], arg.kUsage};
             } else {
               static_assert(RegisterClass::kAsRegister == 'd');
-              as->gpr_d = typename AssemblerType::Register(
-                  register_numbers[arg_counter],
-                  intrinsics::bindings::ToRegKind<typename decltype(arg)::Usage,
-                                                  intrinsics::bindings::RegBindingKind>());
+              as->gpr_d =
+                  typename AssemblerType::Register{register_numbers[arg_counter], arg.kUsage};
             }
           }
         }
@@ -248,7 +215,10 @@ constexpr void CallVerifierAssembler(AssemblerType* as, int* register_numbers) {
       }
     }
   });
-  as->gpr_macroassembler_constants = typename AssemblerType::Register(arg_counter);
+  // Macroassembler constants register points to the constant pool. Intrinsics can read from it
+  // but shouldn't change it's address, that's why it's always kUse.
+  as->gpr_macroassembler_constants =
+      typename AssemblerType::Register{arg_counter, intrinsics::bindings::kUse};
   arg_counter = 0;
   int scratch_counter = 0;
   std::apply(
@@ -272,12 +242,13 @@ constexpr void CallVerifierAssembler(AssemblerType* as, int* register_numbers) {
               using RegisterClass = typename decltype(arg)::RegisterClass;
               if constexpr (!std::is_same_v<RegisterClass, intrinsics::bindings::FLAGS>) {
                 if constexpr (RegisterClass::kAsRegister == 'm') {
+                  static_assert(decltype(arg)::kUsage == intrinsics::bindings::kDefEarlyClobber);
                   if (scratch_counter == 0) {
-                    as->gpr_macroassembler_scratch =
-                        typename AssemblerType::Register(arg_counter++);
+                    as->gpr_macroassembler_scratch = typename AssemblerType::Register(
+                        arg_counter++, intrinsics::bindings::kDefEarlyClobber);
                   } else if (scratch_counter == 1) {
-                    as->gpr_macroassembler_scratch2 =
-                        typename AssemblerType::Register(arg_counter++);
+                    as->gpr_macroassembler_scratch2 = typename AssemblerType::Register(
+                        arg_counter++, intrinsics::bindings::kDefEarlyClobber);
                   } else {
                     FATAL("Only two scratch registers are supported for now");
                   }
@@ -294,15 +265,11 @@ constexpr void CallVerifierAssembler(AssemblerType* as, int* register_numbers) {
                 } else {
                   if constexpr (RegisterClass::kAsRegister == 'q' ||
                                 RegisterClass::kAsRegister == 'r') {
-                    return std::tuple{typename AssemblerType::Register(
-                        register_numbers[arg_counter++],
-                        intrinsics::bindings::ToRegKind<typename decltype(arg)::Usage,
-                                                        intrinsics::bindings::RegBindingKind>())};
+                    return std::tuple{typename AssemblerType::Register{
+                        register_numbers[arg_counter++], arg.kUsage}};
                   } else if constexpr (RegisterClass::kAsRegister == 'x') {
-                    return std::tuple{typename AssemblerType::XRegister(
-                        register_numbers[arg_counter++],
-                        intrinsics::bindings::ToRegKind<typename decltype(arg)::Usage,
-                                                        intrinsics::bindings::RegBindingKind>())};
+                    return std::tuple{typename AssemblerType::XRegister{
+                        register_numbers[arg_counter++], arg.kUsage}};
                   } else {
                     static_assert(kDependentValueFalse<RegisterClass::kAsRegister>);
                   }

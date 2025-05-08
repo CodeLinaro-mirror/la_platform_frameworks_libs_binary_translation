@@ -209,10 +209,6 @@ class TryBindingBasedInlineIntrinsic {
                                                                 Result def_result,
                                                                 Args&&... args);
   template <auto kIntrinsicTemplateName,
-            auto kMacroInstructionTemplateName,
-            auto kMnemo,
-            auto GetOpcode,
-            typename kCPUIDRestrictionTemplateValue,
             typename kPreciseNanOperationsHandlingTemplateValue,
             bool kSideEffectsTemplateValue,
             typename... Types>
@@ -319,13 +315,12 @@ class TryBindingBasedInlineIntrinsic {
   }
 
   template <typename ArgBinding, typename OperandInfo, typename IntrinsicBindingInfo>
-  auto /*MakeTuplefromBindingsClient*/ operator()(ArgTraits<ArgBinding, OperandInfo>,
-                                                  IntrinsicBindingInfo) {
+  auto /*MakeTuplefromBindingsClient*/ operator()(IntrinsicBindingInfo) {
     static constexpr const auto& arg_info = ArgTraits<ArgBinding, OperandInfo>::arg_info;
     if constexpr (arg_info.arg_type == ArgInfo::IMM_ARG) {
       return ProcessArgInput<ArgBinding, OperandInfo, IntrinsicBindingInfo>(reg_alloc_);
     } else {
-      using RegisterClass = typename ArgTraits<ArgBinding, OperandInfo>::RegisterClass;
+      using RegisterClass = typename OperandInfo::Class;
       if constexpr (RegisterClass::kAsRegister == 'x') {
         return ProcessArgInput<ArgBinding, OperandInfo, IntrinsicBindingInfo>(simd_reg_alloc_);
       } else {
@@ -343,7 +338,7 @@ class TryBindingBasedInlineIntrinsic {
     if constexpr (arg_info.arg_type == ArgInfo::IMM_ARG) {
       return std::tuple{std::get<arg_info.from>(input_args_)};
     } else {
-      using RegisterClass = typename ArgTraits<ArgBinding, OperandInfo>::RegisterClass;
+      using RegisterClass = typename OperandInfo::Class;
       static constexpr auto kUsage = ArgTraits<ArgBinding, OperandInfo>::kUsage;
       if constexpr (arg_info.arg_type == ArgInfo::IN_ARG) {
         using Type =

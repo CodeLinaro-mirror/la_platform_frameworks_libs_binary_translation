@@ -271,10 +271,6 @@ class TryBindingBasedInlineIntrinsicForHeavyOptimizer {
                                                                 Args&&... args);
 
   template <auto kIntrinsicTemplateName,
-            auto kMacroInstructionTemplateName,
-            auto kMnemo,
-            auto GetOpcode,
-            typename CPUIDRestrictionTemplateValue,
             typename PreciseNanOperationsHandlingTemplateValue,
             bool kSideEffectsTemplateValue,
             typename... Types>
@@ -354,17 +350,19 @@ class TryBindingBasedInlineIntrinsicForHeavyOptimizer {
       static_assert(berberis::kDependentValueFalse<IntrinsicBindingInfo::kCPUIDRestriction>);
     }
 
-    (builder_->*berberis::x86_64::MachineInsn<IntrinsicBindingInfo>::kGenFunc)(std::tuple_cat(
-        UnwrapSimdReg(IntrinsicBindingInfo::template MakeTuplefromBindings<
-                      TryBindingBasedInlineIntrinsicForHeavyOptimizer&>(*this, asm_call_info))));
+    (builder_->*berberis::x86_64::MachineInsn<typename IntrinsicBindingInfo::AsmCallInfo,
+                                              IntrinsicBindingInfo::kSideEffects>::kGenFunc)(
+        std::tuple_cat(UnwrapSimdReg(
+            IntrinsicBindingInfo::template MakeTuplefromBindings<
+                TryBindingBasedInlineIntrinsicForHeavyOptimizer&>(*this, asm_call_info))));
     ProcessBindingsResults<IntrinsicBindingInfo>(
-        type_wrapper<typename IntrinsicBindingInfo::Bindings>());
+        type_wrapper<typename IntrinsicBindingInfo::Bindings>(),
+        type_wrapper<typename IntrinsicBindingInfo::Operands>());
     return true;
   }
 
   template <typename ArgBinding, typename OperandInfo, typename IntrinsicBindingInfo>
-  auto /*MakeTuplefromBindingsClient*/ operator()(ArgTraits<ArgBinding, OperandInfo>,
-                                                  IntrinsicBindingInfo) {
+  auto /*MakeTuplefromBindingsClient*/ operator()(IntrinsicBindingInfo) {
     static constexpr const auto& arg_info = ArgTraits<ArgBinding, OperandInfo>::arg_info;
     if constexpr (arg_info.arg_type == ArgInfo::IMM_ARG) {
       auto imm = std::get<arg_info.from>(input_args_);
@@ -377,8 +375,8 @@ class TryBindingBasedInlineIntrinsicForHeavyOptimizer {
   template <typename ArgBinding, typename OperandInfo, typename IntrinsicBindingInfo>
   auto ProcessArgInput() {
     static constexpr const auto& arg_info = ArgTraits<ArgBinding, OperandInfo>::arg_info;
-    using RegisterClass = typename ArgTraits<ArgBinding, OperandInfo>::RegisterClass;
-    static constexpr auto kUsage = ArgTraits<ArgBinding, OperandInfo>::kUsage;
+    using RegisterClass = typename OperandInfo::Class;
+    static constexpr auto kUsage = OperandInfo::kUsage;
     static constexpr auto kNumOut =
         std::tuple_size_v<typename IntrinsicBindingInfo::OutputArguments>;
 
@@ -500,7 +498,8 @@ class TryBindingBasedInlineIntrinsicForHeavyOptimizer {
   };
 
   template <typename IntrinsicBindingInfo, typename... ArgBinding, typename... OperandInfo>
-  void ProcessBindingsResults(type_wrapper<std::tuple<ArgTraits<ArgBinding, OperandInfo>...>>) {
+  void ProcessBindingsResults(type_wrapper<std::tuple<ArgBinding...>>,
+                              type_wrapper<std::tuple<OperandInfo...>>) {
     (ProcessBindingResult<ArgBinding, OperandInfo, IntrinsicBindingInfo>(), ...);
     if constexpr (std::tuple_size_v<typename IntrinsicBindingInfo::OutputArguments> == 0) {
       // No return value. Do nothing.
@@ -534,7 +533,7 @@ class TryBindingBasedInlineIntrinsicForHeavyOptimizer {
     if constexpr (ArgTraits<ArgBinding, OperandInfo>::Class::kIsImmediate) {
       return;
     } else {
-      using RegisterClass = typename ArgTraits<ArgBinding, OperandInfo>::RegisterClass;
+      using RegisterClass = typename OperandInfo::Class;
       static constexpr const auto& arg_info = ArgTraits<ArgBinding, OperandInfo>::arg_info;
       if constexpr (RegisterClass::kAsRegister == 'm' || RegisterClass::kAsRegister == 0) {
         return;

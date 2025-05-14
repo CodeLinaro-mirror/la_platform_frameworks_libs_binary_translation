@@ -84,6 +84,38 @@ void TryRegRegInsnFolding(bool is_64bit_mov_imm, uint64_t imm = 0x7777ffffULL) {
 }
 
 template <typename InsnTypeRegReg, typename InsnTypeRegImm>
+void TryRegRegInsnFoldingExtraPseudoCopy(bool is_64bit_mov_imm, uint64_t imm = 0x7777ffffULL) {
+  Arena arena;
+  MachineIR machine_ir(&arena);
+  auto* bb = machine_ir.NewBasicBlock();
+
+  MachineIRBuilder builder(&machine_ir);
+
+  MachineReg vreg1 = machine_ir.AllocVReg();
+  MachineReg vreg2 = machine_ir.AllocVReg();
+  MachineReg vreg3 = machine_ir.AllocVReg();
+  MachineReg flags = machine_ir.AllocVReg();
+
+  builder.StartBasicBlock(bb);
+  if (is_64bit_mov_imm) {
+    builder.Gen<MovqRegImm>(vreg1, imm);
+  } else {
+    builder.Gen<MovlRegImm>(vreg1, imm);
+  }
+  builder.Gen<PseudoCopy>(vreg2, vreg1, 8);
+  builder.Gen<InsnTypeRegReg>(vreg3, vreg2, flags);
+
+  FoldInsns(&machine_ir);
+  auto insn_it = std::prev(bb->insn_list().end());
+  MachineInsn* folded_insn = *insn_it;
+  EXPECT_EQ(InsnTypeRegImm::kInfo.opcode, folded_insn->opcode());
+  EXPECT_EQ(vreg3, folded_insn->RegAt(0));
+  EXPECT_EQ(flags, folded_insn->RegAt(1));
+  EXPECT_EQ(static_cast<uint64_t>(static_cast<int32_t>(imm)),
+            AsMachineInsnX86_64(folded_insn)->imm());
+}
+
+template <typename InsnTypeRegReg, typename InsnTypeRegImm>
 void TryMovInsnFolding(bool is_64bit_mov_imm, uint64_t imm) {
   Arena arena;
   MachineIR machine_ir(&arena);
@@ -130,6 +162,56 @@ void TryMovInsnFolding(bool is_64bit_mov_imm, uint64_t imm) {
     EXPECT_EQ(static_cast<uint64_t>(static_cast<int32_t>(imm)),
               AsMachineInsnX86_64(folded_insn)->imm());
   }
+}
+
+template <typename InsnTypeRegImm>
+void TryTwoImmediatesRegImmInsnFolding(uint64_t imm1, int32_t imm2, uint64_t expected_op_result) {
+  Arena arena;
+  MachineIR machine_ir(&arena);
+
+  MachineIRBuilder builder(&machine_ir);
+
+  auto* bb = machine_ir.NewBasicBlock();
+
+  MachineReg vreg1 = machine_ir.AllocVReg();
+  MachineReg vreg2 = machine_ir.AllocVReg();
+  MachineReg flags = machine_ir.AllocVReg();
+
+  builder.StartBasicBlock(bb);
+  builder.Gen<MovqRegImm>(vreg1, imm1);
+  builder.Gen<PseudoCopy>(vreg2, vreg1, 8);
+  builder.Gen<InsnTypeRegImm>(vreg2, imm2, flags);
+
+  FoldInsns(&machine_ir);
+  auto insn_it = std::prev(bb->insn_list().end());
+  MachineInsn* insn = *insn_it;
+  EXPECT_EQ(insn->opcode(), kMachineOpMovqRegImm);
+  EXPECT_EQ(AsMachineInsnX86_64(insn)->imm(), expected_op_result);
+}
+
+template <typename InsnTypeRegReg>
+void TryTwoImmediatesRegRegInsnFolding(uint64_t imm1, uint64_t imm2, uint64_t expected_op_result) {
+  Arena arena;
+  MachineIR machine_ir(&arena);
+
+  MachineIRBuilder builder(&machine_ir);
+
+  auto* bb = machine_ir.NewBasicBlock();
+
+  MachineReg vreg1 = machine_ir.AllocVReg();
+  MachineReg vreg2 = machine_ir.AllocVReg();
+  MachineReg flags = machine_ir.AllocVReg();
+
+  builder.StartBasicBlock(bb);
+  builder.Gen<MovqRegImm>(vreg1, imm1);
+  builder.Gen<MovqRegImm>(vreg2, imm2);
+  builder.Gen<InsnTypeRegReg>(vreg2, vreg1, flags);
+
+  FoldInsns(&machine_ir);
+  auto insn_it = std::prev(bb->insn_list().end());
+  MachineInsn* insn = *insn_it;
+  EXPECT_EQ(insn->opcode(), kMachineOpMovqRegImm);
+  EXPECT_EQ(AsMachineInsnX86_64(insn)->imm(), expected_op_result);
 }
 
 TEST(InsnFoldingTest, DefMapGetsLatestDef) {
@@ -375,6 +457,22 @@ TEST(InsnFoldingTest, RegRegInsnTypeFolding) {
     TryRegRegInsnFolding<XorlRegReg, XorlRegImm>(is_64bit_mov_imm);
     TryRegRegInsnFolding<AndlRegReg, AndlRegImm>(is_64bit_mov_imm);
     TryRegRegInsnFolding<TestlRegReg, TestlRegImm>(is_64bit_mov_imm);
+
+    TryRegRegInsnFoldingExtraPseudoCopy<AddqRegReg, AddqRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<SubqRegReg, SubqRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<CmpqRegReg, CmpqRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<OrqRegReg, OrqRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<XorqRegReg, XorqRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<AndqRegReg, AndqRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<TestqRegReg, TestqRegImm>(is_64bit_mov_imm);
+
+    TryRegRegInsnFoldingExtraPseudoCopy<AddlRegReg, AddlRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<SublRegReg, SublRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<CmplRegReg, CmplRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<OrlRegReg, OrlRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<XorlRegReg, XorlRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<AndlRegReg, AndlRegImm>(is_64bit_mov_imm);
+    TryRegRegInsnFoldingExtraPseudoCopy<TestlRegReg, TestlRegImm>(is_64bit_mov_imm);
   }
 }
 
@@ -722,52 +820,21 @@ TEST(InsnFoldingTest, CountTrailingZeroesFoldingCancelledIfArgNotAlive) {
   EXPECT_EQ(insn->opcode(), kMachineOpLzcntqRegReg);
 }
 
-TEST(InsnFoldingTest, FoldTwoImmediatesShiftLeft) {
-  Arena arena;
-  MachineIR machine_ir(&arena);
-
-  MachineIRBuilder builder(&machine_ir);
-
-  auto* bb = machine_ir.NewBasicBlock();
-
-  MachineReg vreg1 = machine_ir.AllocVReg();
-  MachineReg vreg2 = machine_ir.AllocVReg();
-  MachineReg flags = machine_ir.AllocVReg();
-
-  builder.StartBasicBlock(bb);
-  builder.Gen<MovqRegImm>(vreg1, 0x5a82);
-  builder.Gen<PseudoCopy>(vreg2, vreg1, 8);
-  builder.Gen<ShlqRegImm>(vreg2, 0x10, flags);
-
-  FoldInsns(&machine_ir);
-  auto insn_it = std::prev(bb->insn_list().end());
-  MachineInsn* insn = *insn_it;
-  EXPECT_EQ(insn->opcode(), kMachineOpMovqRegImm);
-  EXPECT_EQ(AsMachineInsnX86_64(insn)->imm(), uint64_t{0x5a82} << 0x10);
+TEST(InsnFoldingTest, FoldTwoImmediatesRegImmInsn) {
+  uint64_t imm = 0x1234'5678'9abc'def0;
+  TryTwoImmediatesRegImmInsnFolding<ShlqRegImm>(imm, 10, imm << 10);
+  TryTwoImmediatesRegImmInsnFolding<ShrqRegImm>(imm, 11, imm >> 11);
+  TryTwoImmediatesRegImmInsnFolding<AndqRegImm>(
+      imm, static_cast<int32_t>(0xf0f0'f0f0), imm & uint64_t{0xffff'ffff'f0f0'f0f0});
+  TryTwoImmediatesRegImmInsnFolding<OrqRegImm>(
+      imm, static_cast<int32_t>(0xf0f0'f0f0), imm | uint64_t{0xffff'ffff'f0f0'f0f0});
 }
 
-TEST(InsnFoldingTest, FoldTwoImmediatesShiftRight) {
-  Arena arena;
-  MachineIR machine_ir(&arena);
-
-  MachineIRBuilder builder(&machine_ir);
-
-  auto* bb = machine_ir.NewBasicBlock();
-
-  MachineReg vreg1 = machine_ir.AllocVReg();
-  MachineReg vreg2 = machine_ir.AllocVReg();
-  MachineReg flags = machine_ir.AllocVReg();
-
-  builder.StartBasicBlock(bb);
-  builder.Gen<MovqRegImm>(vreg1, 0x5a82'0000);
-  builder.Gen<PseudoCopy>(vreg2, vreg1, 8);
-  builder.Gen<ShrqRegImm>(vreg2, 11, flags);
-
-  FoldInsns(&machine_ir);
-  auto insn_it = std::prev(bb->insn_list().end());
-  MachineInsn* insn = *insn_it;
-  EXPECT_EQ(insn->opcode(), kMachineOpMovqRegImm);
-  EXPECT_EQ(AsMachineInsnX86_64(insn)->imm(), uint64_t{0x5a82'0000} >> 11);
+TEST(InsnFoldingTest, FoldTwoImmediatesRegRegInsn) {
+  uint64_t imm1 = 0x1234'5678'9abc'def0;
+  uint64_t imm2 = 0xf0f0'f0f0'f0f0'f0f0;
+  TryTwoImmediatesRegRegInsnFolding<AndqRegReg>(imm1, imm2, imm1 & imm2);
+  TryTwoImmediatesRegRegInsnFolding<OrqRegReg>(imm1, imm2, imm1 | imm2);
 }
 
 }  // namespace

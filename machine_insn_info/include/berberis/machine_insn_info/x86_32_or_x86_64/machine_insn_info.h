@@ -23,36 +23,55 @@
 
 #include "berberis/machine_insn_info/common/machine_insn_info.h"
 
-namespace berberis::x86_32_or_x86_64::machine_insn_info_backend {
+// Note: normally using namespace is forbidden in headers, but these two namespaces literally
+// only exist to be imported here (and in other device CPU-specific headers).
+
+namespace berberis::x86_32_or_x86_64::machine_insn_info {
+
+using namespace berberis::machine_insn_info;
 
 class Imm2 {
  public:
   using Type = int8_t;
+  static constexpr bool kIsImmediate = true;
 };
 
 class Imm8 {
  public:
   using Type = int8_t;
+  static constexpr bool kIsImmediate = true;
 };
 
 class Imm16 {
  public:
   using Type = int16_t;
+  static constexpr bool kIsImmediate = true;
 };
 
 class Imm32 {
  public:
   using Type = int32_t;
+  static constexpr bool kIsImmediate = true;
 };
 
 class Imm64 {
  public:
   using Type = int64_t;
+  static constexpr bool kIsImmediate = true;
+};
+
+class MemX87 {
+ public:
+  // MemX87 can only be used as temporary argument, but having type here simplifies metaprogramming:
+  // it can not be used as actual type of variable or parameter, but can be used with
+  // std::conditional_t to pick some other type.
+  using Type = void;
+  static constexpr bool kIsImmediate = false;
+  static constexpr char kAsRegister = 'm';
 };
 
 // Tag classes. They are never instantioned, only used as tags to pass information about
 // bindings.
-class NoCPUIDRestriction;
 class Has3DNOW;
 class Has3DNOWP;
 class HasADX;
@@ -114,6 +133,6 @@ class HasX87;
 class HasCustomCapability;
 class IsAuthenticAMD;
 
-}  // namespace berberis::x86_32_or_x86_64::machine_insn_info_backend
+}  // namespace berberis::x86_32_or_x86_64::machine_insn_info
 
 #endif  // BERBERIS_MACHINE_INSN_INFO_ALL_TO_X86_32_OR_x86_64_MACHINE_INSN_INFO_H_

@@ -23,7 +23,6 @@
 #include <variant>
 
 #include "berberis/backend/code_emitter.h"
-#include "berberis/backend/common/machine_ir.h"
 #include "berberis/backend/x86_64/code_debug.h"
 #include "berberis/backend/x86_64/code_emit.h"
 #include "berberis/backend/x86_64/machine_ir.h"
@@ -73,6 +72,7 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
 
  public:
   // This static simplifies constructing this MachineInsn in intrinsic implementations.
+  template <typename MachineIRBuilder>
   static constexpr MachineInsn* (MachineIRBuilder::*kGenFunc)(ConstructorArgs) =
       &MachineIRBuilder::template Gen<MachineInsn>;
 

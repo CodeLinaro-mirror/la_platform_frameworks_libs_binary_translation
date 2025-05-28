@@ -69,14 +69,15 @@ class Operand(object):
 
 
 def _get_reg_operand_info(usage, kind):
+  kind = 'kRegisterClass<machine_insn_info::%s>' % kind
   if usage == 'use':
-    return '{ &k%s, MachineRegKind::kUse }' % (kind)
+    return '{ &%s, MachineRegKind::kUse }' % (kind)
   if usage == 'def':
-    return '{ &k%s, MachineRegKind::kDef }' % (kind)
+    return '{ &%s, MachineRegKind::kDef }' % (kind)
   if usage == 'use_def':
-    return '{ &k%s, MachineRegKind::kUseDef }' % (kind)
+    return '{ &%s, MachineRegKind::kUseDef }' % (kind)
   if usage == 'def_early_clobber':
-    return '{ &k%s, MachineRegKind::kDefEarlyClobber }' % (kind)
+    return '{ &%s, MachineRegKind::kDefEarlyClobber }' % (kind)
   assert False, 'unknown operand usage %s' % (usage)
 
 
@@ -318,6 +319,9 @@ def _gen_insn_emit(f, insn):
   operands, _ = _get_insn_operands(insn)
   asm_args = [op.asm_arg for op in operands if op.asm_arg]
   print('void %s::Emit(CodeEmitter* as) const {' % (name), file=f)
+  for float in ['Float16', 'Float32', 'Float64']:
+    if float in asm:
+      print('  using intrinsics::%s;' % float, file=f)
   print('%sas->%s(%s);' % (INDENT, asm, ', '.join(asm_args)), file=f)
   print('}', file=f)
 

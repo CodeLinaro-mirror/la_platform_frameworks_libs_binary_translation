@@ -152,13 +152,13 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
                   return std::tuple{Assembler::Operand{.base = GetGReg(this->RegAt(reg_idx++)),
                                                        .disp = static_cast<int32_t>(disp2())}};
                 }
+              } else if constexpr (Operand::Class::kIsImplicitReg) {
+                return std::tuple{};
               } else if constexpr (Operand::Class::kAsRegister == 'x') {
                 return std::tuple{GetXReg(this->RegAt(reg_idx++))};
               } else if constexpr (Operand::Class::kAsRegister == 'r' ||
                                    Operand::Class::kAsRegister == 'q') {
                 return std::tuple{GetGReg(this->RegAt(reg_idx++))};
-              } else if constexpr (Operand::Class::kIsImplicitReg) {
-                return std::tuple{};
               } else {
                 static_assert(kDependentTypeFalse<Operand>);
               }
@@ -228,7 +228,7 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
   struct RegInfo;
   template <typename Operand>
   struct RegInfo<Operand, std::enable_if_t<machine_insn_info::kIsRegister<Operand>>> {
-    static constexpr auto kRegClass = &Operand::Class::template kRegClass<MachineInsnX86_64>;
+    static constexpr auto kRegClass = &kRegisterClass<typename Operand::Class>;
     static constexpr auto kRegKind = static_cast<MachineRegKind::StandardAccess>(Operand::kUsage);
     static_assert(MachineRegKind::kDef ==
                   static_cast<MachineRegKind::StandardAccess>(machine_insn_info::kDef));

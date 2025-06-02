@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-#ifndef BERBERIS_MACHINE_INSN_INFO_COMMON_MACHINE_INSN_INFO_H_
-#define BERBERIS_MACHINE_INSN_INFO_COMMON_MACHINE_INSN_INFO_H_
+#ifndef BERBERIS_DEVICE_ARCH_INFO_COMMON_DEVICE_ARCH_INFO_H_
+#define BERBERIS_DEVICE_ARCH_INFO_COMMON_DEVICE_ARCH_INFO_H_
 
 #include <cstdint>
 
-namespace berberis::machine_insn_info {
+namespace berberis::device_arch_info {
 
 class Mem8 {
  public:
@@ -120,45 +120,41 @@ class OperandInfo {
 // bindings.
 class NoCPUIDRestriction;  // All CPUs have at least “no CPUID restriction” mode.
 
-template <auto kMacroInstructionTemplateName,
-          auto kMnemo,
-          bool kSideEffects,
-          auto GetOpcode,
-          typename... Types>
-class AsmCallInfo;
+template <auto kEmitInsnFunc, auto kMnemo, bool kSideEffects, auto GetOpcode, typename... Types>
+class DeviceInsnInfo;
 
-template <auto kMacroInstructionTemplateName,
+template <auto kEmitInsnFunc_,
           auto kMnemo,
-          bool kSideEffectsTemplateValue,
+          bool kSideEffects_,
           auto GetOpcode,
-          typename CPUIDRestrictionTemplateValue,
-          typename... OperandsTypes>
-class AsmCallInfo<kMacroInstructionTemplateName,
-                  kMnemo,
-                  kSideEffectsTemplateValue,
-                  GetOpcode,
-                  CPUIDRestrictionTemplateValue,
-                  std::tuple<OperandsTypes...>>
+          typename CPUIDRestriction_,
+          typename... Operands_>
+class DeviceInsnInfo<kEmitInsnFunc_,
+                     kMnemo,
+                     kSideEffects_,
+                     GetOpcode,
+                     CPUIDRestriction_,
+                     std::tuple<Operands_...>>
     final {
  public:
-  static constexpr auto kMacroInstruction = kMacroInstructionTemplateName;
-  static constexpr bool kSideEffects = kSideEffectsTemplateValue;
-  using CPUIDRestriction = CPUIDRestrictionTemplateValue;
+  static constexpr auto kEmitInsnFunc = kEmitInsnFunc_;
+  static constexpr bool kSideEffects = kSideEffects_;
+  using CPUIDRestriction = CPUIDRestriction_;
   template <typename Callback, typename... Args>
   constexpr static void ProcessOperands(Callback&& callback, Args&&... args) {
-    (callback(OperandsTypes{}, std::forward<Args>(args)...), ...);
+    (callback(Operands_{}, std::forward<Args>(args)...), ...);
   }
   template <typename Callback, typename... Args>
   constexpr static bool VerifyOperands(Callback&& callback, Args&&... args) {
-    return (callback(OperandsTypes{}, std::forward<Args>(args)...) && ...);
+    return (callback(Operands_{}, std::forward<Args>(args)...) && ...);
   }
   template <typename Callback, typename... Args>
   constexpr static auto MakeTuplefromOperands(Callback&& callback, Args&&... args) {
-    return std::tuple_cat(callback(OperandsTypes{}, std::forward<Args>(args)...)...);
+    return std::tuple_cat(callback(Operands_{}, std::forward<Args>(args)...)...);
   }
-  using Operands = std::tuple<OperandsTypes...>;
+  using Operands = std::tuple<Operands_...>;
 };
 
-}  // namespace berberis::machine_insn_info
+}  // namespace berberis::device_arch_info
 
-#endif  // BERBERIS_MACHINE_INSN_INFO_COMMON_MACHINE_INSN_INFO_H_
+#endif  // BERBERIS_DEVICE_ARCH_INFO_COMMON_DEVICE_ARCH_INFO_H_

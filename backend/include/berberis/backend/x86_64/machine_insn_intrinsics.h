@@ -35,56 +35,82 @@
 namespace berberis::x86_64 {
 
 template <typename IntrinsicBindingInfo>
-class MachineInsn;
+class MachineInsnOperandsHelper;
 
-// Use specialization to extract the tuple parameter pack generated from constructor_args_t above.
-template <auto kMacroInstruction,
+template <auto kEmitInsnFunc,
           auto kMnemo,
           auto GetOpcode,
           typename CPUIDRestriction,
           typename... Operands,
           bool kSideEffects>
-class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
-                                                 kMnemo,
-                                                 kSideEffects,
-                                                 GetOpcode,
-                                                 CPUIDRestriction,
-                                                 std::tuple<Operands...>>>
-    final : public MachineInsnX86_64 {
- private:
-  template <typename>
-  struct GenMachineInsnInfoT;
+class MachineInsnOperandsHelper<device_arch_info::DeviceInsnInfo<kEmitInsnFunc,
+                                                                 kMnemo,
+                                                                 kSideEffects,
+                                                                 GetOpcode,
+                                                                 CPUIDRestriction,
+                                                                 std::tuple<Operands...>>>
+    final {
+ public:
   // We want to filter out any operands that are not used for Register args.
   // Note: memory operands accept register and offset, thus they are included.
-  using RegOperands = decltype(std::tuple_cat(
-      std::declval<std::conditional_t<machine_insn_info::kIsRegister<Operands> ||
-                                          machine_insn_info::kIsMemoryOperand<Operands>,
+  using RegOperandsTuple = decltype(std::tuple_cat(
+      std::declval<std::conditional_t<device_arch_info::kIsRegister<Operands> ||
+                                          device_arch_info::kIsMemoryOperand<Operands>,
                                       std::tuple<Operands>,
                                       std::tuple<>>>()...));
   // Note: immediates accept appropriate type, register operands includes only register while memory
   // operand needs both base register and offset.
-  using ConstructorArgs = decltype(std::tuple_cat(
-      std::declval<std::conditional_t<machine_insn_info::kIsImmediate<Operands>,
+  using ConstructorArgsTuple = decltype(std::tuple_cat(
+      std::declval<std::conditional_t<device_arch_info::kIsImmediate<Operands>,
                                       std::tuple<typename Operands::Class::Type>,
-                                      std::conditional_t<machine_insn_info::kIsRegister<Operands>,
+                                      std::conditional_t<device_arch_info::kIsRegister<Operands>,
                                                          std::tuple<MachineReg>,
                                                          std::tuple<MachineReg, int32_t>>>>()...));
+};
+
+template <typename IntrinsicBindingInfo,
+          typename = typename MachineInsnOperandsHelper<IntrinsicBindingInfo>::RegOperandsTuple,
+          typename = typename MachineInsnOperandsHelper<IntrinsicBindingInfo>::ConstructorArgsTuple>
+class MachineInsn;
+
+template <auto kEmitInsnFunc,
+          auto kMnemo,
+          auto GetOpcode,
+          typename CPUIDRestriction,
+          typename... Operands,
+          typename... RegOperands,
+          typename... ConstructorArgs,
+          bool kSideEffects>
+class MachineInsn<device_arch_info::DeviceInsnInfo<kEmitInsnFunc,
+                                                   kMnemo,
+                                                   kSideEffects,
+                                                   GetOpcode,
+                                                   CPUIDRestriction,
+                                                   std::tuple<Operands...>>,
+                  std::tuple<RegOperands...>,
+                  std::tuple<ConstructorArgs...>>
+    final : public MachineInsnX86_64 {
+ private:
+  static constexpr MachineInsnInfo GenMachineInsnInfo();
 
  public:
   // This static simplifies constructing this MachineInsn in intrinsic implementations.
   template <typename MachineIRBuilder>
-  static constexpr MachineInsn* (MachineIRBuilder::*kGenFunc)(ConstructorArgs) =
+  static constexpr MachineInsn* (MachineIRBuilder::*kGenFunc)(ConstructorArgs...) =
       &MachineIRBuilder::template Gen<MachineInsn>;
 
-  explicit MachineInsn(ConstructorArgs args) : MachineInsnX86_64(&kInfo) {
-    std::apply(
-        [this](auto... args) {
-          this->ProcessArgs<0 /* reg_idx */, 0 /* disp_idx */, Operands...>(args...);
-        },
-        args);
+  using DeviceInsnInfo = device_arch_info::DeviceInsnInfo<kEmitInsnFunc,
+                                                          kMnemo,
+                                                          kSideEffects,
+                                                          GetOpcode,
+                                                          CPUIDRestriction,
+                                                          std::tuple<Operands...>>;
+
+  explicit MachineInsn(ConstructorArgs... args) : MachineInsnX86_64(&kInfo) {
+    this->ProcessArgs<0 /* reg_idx */, 0 /* disp_idx */, Operands...>(args...);
   }
 
-  static constexpr MachineInsnInfo kInfo = GenMachineInsnInfoT<RegOperands>::value;
+  static constexpr MachineInsnInfo kInfo = GenMachineInsnInfo();
 
   static constexpr int NumRegOperands() { return kInfo.num_reg_operands; }
   static constexpr const MachineRegKind& RegKindAt(int i) { return kInfo.reg_kinds[i]; }
@@ -92,7 +118,7 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
   std::string GetDebugString() const override {
     std::string s(kMnemo);
     // Code below assumes that we have at most two memory operands.
-    static_assert((machine_insn_info::kIsMemoryOperand<Operands> + ... + 0) <= 2);
+    static_assert((device_arch_info::kIsMemoryOperand<Operands> + ... + 0) <= 2);
     size_t arg_idx{}, reg_idx{}, disp_idx{};
     (
         [&s, &arg_idx, &reg_idx, &disp_idx, this]<typename Operand> {
@@ -100,10 +126,10 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
           if (arg_idx > 0) {
             s += ", ";
           }
-          if constexpr (machine_insn_info::kIsImmediate<Operand>) {
+          if constexpr (device_arch_info::kIsImmediate<Operand>) {
             s += GetImmOperandDebugString(this);
             arg_idx++;
-          } else if constexpr (machine_insn_info::kIsMemoryOperand<Operand>) {
+          } else if constexpr (device_arch_info::kIsMemoryOperand<Operand>) {
             if (disp_idx == 0) {
               s += GetBaseDispMemOperandDebugString(this, reg_idx);
             } else /* disp_idx == 1 */ {
@@ -111,7 +137,7 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
                   "[%s + 0x%x]", GetRegOperandDebugString(this, reg_idx).c_str(), disp2());
             }
             arg_idx++, reg_idx++, disp_idx++;
-          } else if constexpr (machine_insn_info::kIsImplicitReg<Operand>) {
+          } else if constexpr (device_arch_info::kIsImplicitReg<Operand>) {
             s += GetImplicitRegOperandDebugString(this, reg_idx);
             arg_idx++, reg_idx++;
           } else {
@@ -129,21 +155,21 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
 
   void Emit(CodeEmitter* as) const override {
     // Code below assumes that we have at most two memory operands.
-    static_assert((machine_insn_info::kIsMemoryOperand<Operands> + ... + 0) <= 2);
+    static_assert((device_arch_info::kIsMemoryOperand<Operands> + ... + 0) <= 2);
     size_t reg_idx{}, disp_idx{};
     std::apply(
-        kMacroInstruction,
+        kEmitInsnFunc,
         std::tuple_cat(
             std::tuple<CodeEmitter&>{*as}, [&reg_idx, &disp_idx, this]<typename Operand> {
               // Suppress spurious warnings.
               // See https://github.com/llvm/llvm-project/issues/34798#issuecomment-980989495
               (void)reg_idx;
               (void)disp_idx;
-              if constexpr (machine_insn_info::kIsImmediate<Operands>) {
+              if constexpr (device_arch_info::kIsImmediate<Operands>) {
                 return std::tuple{
                     static_cast<typename Operands::Class::Type>(MachineInsnX86_64::imm())};
-              } else if constexpr (machine_insn_info::kIsMemoryOperand<Operands> &&
-                                   Operand::kUsage == machine_insn_info::kDefEarlyClobber) {
+              } else if constexpr (device_arch_info::kIsMemoryOperand<Operands> &&
+                                   Operand::kUsage == device_arch_info::kDefEarlyClobber) {
                 disp_idx++;
                 if (disp_idx == 1) {
                   return std::tuple{Assembler::Operand{.base = GetGReg(this->RegAt(reg_idx++)),
@@ -152,7 +178,7 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
                   return std::tuple{Assembler::Operand{.base = GetGReg(this->RegAt(reg_idx++)),
                                                        .disp = static_cast<int32_t>(disp2())}};
                 }
-              } else if constexpr (machine_insn_info::kIsImplicitReg<Operand>) {
+              } else if constexpr (device_arch_info::kIsImplicitReg<Operand>) {
                 return std::tuple{};
               } else if constexpr (Operand::Class::kAsRegister == 'x') {
                 return std::tuple{GetXReg(this->RegAt(reg_idx++))};
@@ -176,7 +202,7 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
             typename Arg,
             typename... Args>
   auto ProcessArgs(Arg arg,
-                   Args... args) -> std::enable_if_t<machine_insn_info::kIsImmediate<Operand>> {
+                   Args... args) -> std::enable_if_t<device_arch_info::kIsImmediate<Operand>> {
     this->set_imm(arg);
     ProcessArgs<reg_idx, disp_idx, OperandsRest...>(args...);
   }
@@ -188,7 +214,7 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
             typename Arg,
             typename... Args>
   auto ProcessArgs(Arg arg,
-                   Args... args) -> std::enable_if_t<machine_insn_info::kIsRegister<Operand>> {
+                   Args... args) -> std::enable_if_t<device_arch_info::kIsRegister<Operand>> {
     static_assert(std::is_same_v<MachineReg, Arg>);
     this->SetRegAt(reg_idx, arg);
     ProcessArgs<reg_idx + 1, disp_idx, OperandsRest...>(args...);
@@ -203,7 +229,7 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
             typename... Args>
   auto ProcessArgs(Arg1 base,
                    Arg2 disp,
-                   Args... args) -> std::enable_if_t<machine_insn_info::kIsMemoryOperand<Operand>> {
+                   Args... args) -> std::enable_if_t<device_arch_info::kIsMemoryOperand<Operand>> {
     // Only tmp memory args are supported.
     this->SetRegAt(reg_idx, base);
     if constexpr (disp_idx == 0) {
@@ -223,38 +249,53 @@ class MachineInsn<machine_insn_info::AsmCallInfo<kMacroInstruction,
       return kMachineInsnDefault;
     }
   }
-
-  template <typename Operand, typename = void>
-  struct RegInfo;
-  template <typename Operand>
-  struct RegInfo<Operand, std::enable_if_t<machine_insn_info::kIsRegister<Operand>>> {
-    static constexpr auto kRegClass = &kRegisterClass<typename Operand::Class>;
-    static constexpr auto kRegKind = static_cast<MachineRegKind::StandardAccess>(Operand::kUsage);
-    static_assert(MachineRegKind::kDef ==
-                  static_cast<MachineRegKind::StandardAccess>(machine_insn_info::kDef));
-    static_assert(MachineRegKind::kDefEarlyClobber ==
-                  static_cast<MachineRegKind::StandardAccess>(machine_insn_info::kDefEarlyClobber));
-    static_assert(MachineRegKind::kUse ==
-                  static_cast<MachineRegKind::StandardAccess>(machine_insn_info::kUse));
-    static_assert(MachineRegKind::kUseDef ==
-                  static_cast<MachineRegKind::StandardAccess>(machine_insn_info::kUseDef));
-  };
-  template <typename Operand>
-  struct RegInfo<Operand, std::enable_if_t<machine_insn_info::kIsMemoryOperand<Operand>>> {
-    static_assert(Operand::kUsage == machine_insn_info::kDefEarlyClobber);
-    static constexpr auto kRegClass = &kGeneralReg32;
-    static constexpr auto kRegKind = MachineRegKind::kUse;
-  };
-
-  template <typename... Operand>
-  struct GenMachineInsnInfoT<std::tuple<Operand...>> {
-    static constexpr MachineInsnInfo value =
-        MachineInsnInfo({GetOpcode.template operator()<MachineOpcode>(),
-                         sizeof...(Operand),
-                         {{RegInfo<Operand>::kRegClass, RegInfo<Operand>::kRegKind}...},
-                         GetInsnKind()});
-  };
 };
+
+template <auto kEmitInsnFunc,
+          auto kMnemo,
+          auto GetOpcode,
+          typename CPUIDRestriction,
+          typename... Operands,
+          typename... RegOperands,
+          typename... ConstructorArgs,
+          bool kSideEffects>
+constexpr MachineInsnInfo MachineInsn<device_arch_info::DeviceInsnInfo<kEmitInsnFunc,
+                                                                       kMnemo,
+                                                                       kSideEffects,
+                                                                       GetOpcode,
+                                                                       CPUIDRestriction,
+                                                                       std::tuple<Operands...>>,
+                                      std::tuple<RegOperands...>,
+                                      std::tuple<ConstructorArgs...>>::GenMachineInsnInfo() {
+  MachineInsnInfo result = {
+    .opcode = GetOpcode.template operator()<MachineOpcode>(),
+    .kind = GetInsnKind()
+  };
+  (
+      [&num_reg_operands = result.num_reg_operands,
+       &reg_kinds = result.reg_kinds]<typename Operand> {
+        if constexpr (device_arch_info::kIsRegister<Operand>) {
+          static_assert(MachineRegKind::kDef ==
+                        static_cast<MachineRegKind::StandardAccess>(device_arch_info::kDef));
+          static_assert(
+              MachineRegKind::kDefEarlyClobber ==
+              static_cast<MachineRegKind::StandardAccess>(device_arch_info::kDefEarlyClobber));
+          static_assert(MachineRegKind::kUse ==
+                        static_cast<MachineRegKind::StandardAccess>(device_arch_info::kUse));
+          static_assert(MachineRegKind::kUseDef ==
+                        static_cast<MachineRegKind::StandardAccess>(device_arch_info::kUseDef));
+          reg_kinds[num_reg_operands++] = {
+              &kRegisterClass<typename Operand::Class>,
+              static_cast<MachineRegKind::StandardAccess>(Operand::kUsage)};
+        } else {
+          static_assert(device_arch_info::kIsMemoryOperand<Operand>);
+          static_assert(Operand::kUsage == device_arch_info::kDefEarlyClobber);
+          reg_kinds[num_reg_operands++] = {&kGeneralReg32, MachineRegKind::kUse};
+        }
+      }.template operator()<RegOperands>(),
+      ...);
+  return result;
+}
 
 }  // namespace berberis::x86_64
 

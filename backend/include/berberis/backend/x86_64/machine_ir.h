@@ -26,8 +26,8 @@
 #include "berberis/backend/code_emitter.h"
 #include "berberis/backend/common/machine_ir.h"  // IWYU pragma: export.
 #include "berberis/base/arena_alloc.h"
+#include "berberis/device_arch_info/x86_64/device_arch_info.h"
 #include "berberis/guest_state/guest_state_arch.h"
-#include "berberis/machine_insn_info/x86_64/machine_insn_info.h"
 
 namespace berberis {
 
@@ -46,6 +46,12 @@ enum MachineOpcode : int {
   kMachineOpPseudoWriteFlags,
 #include "machine_opcode_x86_64-inl.h"  // NOLINT generated file!
 };
+
+// Some instructions form groups. E.g. memory-accesses typically have 4 versions: Absolute, Base,
+// Index Base+Index.
+//
+// To ensure that there enough bits to separate these versions we reserve top 8 bits.
+inline constexpr int kLowMachineOpcodeBits = 24;
 
 namespace x86_64 {
 
@@ -146,13 +152,13 @@ template <typename MachineInsnInfoClass>
 inline constexpr MachineRegClass kRegisterClass =
     MachineRegClassFromMachineInsnInfoClass<MachineInsnInfoClass>();
 
-inline constexpr auto& kRAX = kRegisterClass<machine_insn_info::RAX>;
-inline constexpr auto& kGeneralReg32 = kRegisterClass<machine_insn_info::GeneralReg32>;
-inline constexpr auto& kGeneralReg64 = kRegisterClass<machine_insn_info::GeneralReg64>;
-inline constexpr auto& kReg32 = kRegisterClass<machine_insn_info::Reg32>;
-inline constexpr auto& kReg64 = kRegisterClass<machine_insn_info::Reg64>;
-inline constexpr auto& kXmmReg = kRegisterClass<machine_insn_info::XmmReg>;
-inline constexpr auto& kFLAGS = kRegisterClass<machine_insn_info::FLAGS>;
+inline constexpr auto& kRAX = kRegisterClass<device_arch_info::RAX>;
+inline constexpr auto& kGeneralReg32 = kRegisterClass<device_arch_info::GeneralReg32>;
+inline constexpr auto& kGeneralReg64 = kRegisterClass<device_arch_info::GeneralReg64>;
+inline constexpr auto& kReg32 = kRegisterClass<device_arch_info::Reg32>;
+inline constexpr auto& kReg64 = kRegisterClass<device_arch_info::Reg64>;
+inline constexpr auto& kXmmReg = kRegisterClass<device_arch_info::XmmReg>;
+inline constexpr auto& kFLAGS = kRegisterClass<device_arch_info::FLAGS>;
 
 class MachineInsnX86_64 : public MachineInsn {
  public:
@@ -161,7 +167,9 @@ class MachineInsnX86_64 : public MachineInsn {
       regs_[i] = other.regs_[i];
     }
     scale_ = other.scale_;
+    scale2_ = other.scale2_;
     disp_ = other.disp_;
+    disp2_ = other.disp2_;
     imm_ = other.imm_;
     cond_ = other.cond_;
 
@@ -173,6 +181,8 @@ class MachineInsnX86_64 : public MachineInsn {
   }
 
   Assembler::ScaleFactor scale() const { return scale_; }
+
+  Assembler::ScaleFactor scale2() const { return scale2_; }
 
   uint32_t disp() const { return disp_; }
 
@@ -235,6 +245,8 @@ class MachineInsnX86_64 : public MachineInsn {
 
   void set_scale(Assembler::ScaleFactor scale) { scale_ = scale; }
 
+  void set_scale2(Assembler::ScaleFactor scale2) { scale2_ = scale2; }
+
   void set_disp(uint32_t disp) { disp_ = disp; }
 
   void set_disp2(uint32_t disp2) { disp2_ = disp2; }
@@ -247,6 +259,7 @@ class MachineInsnX86_64 : public MachineInsn {
   MachineReg regs_[kMaxMachineRegOperands];
   uint32_t disp_;
   Assembler::ScaleFactor scale_;
+  Assembler::ScaleFactor scale2_;
   Assembler::Condition cond_;
   uint32_t disp2_;
   uint64_t imm_;

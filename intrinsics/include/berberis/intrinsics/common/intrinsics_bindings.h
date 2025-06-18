@@ -107,9 +107,18 @@ constexpr void Check32BitRegistersAreZeroExtended(AssemblerType* as) {
   IntrinsicBindingInfo::ProcessBindings([&as, &id]<typename Binding, typename Operand> {
     if constexpr (!device_arch_info::kIsImmediate<Operand> &&
                   !device_arch_info::kIsFLAGS<Operand>) {
-      if constexpr (Operand::kUsage != device_arch_info::kUse) {
+      if constexpr (HaveOutput(Binding::kArgInfo)) {
+        static_assert(Operand::kUsage != device_arch_info::kUse);
         if constexpr (device_arch_info::kIsGeneralReg32<Operand>) {
           as->Check32BitRegisterIsZeroExtended(id);
+        } else if constexpr (device_arch_info::kIsEAX<Operand>) {
+          as->Check32BitFixedRegisterIsZeroExtended(0);
+        } else if constexpr (device_arch_info::kIsEBX<Operand>) {
+          as->Check32BitFixedRegisterIsZeroExtended(1);
+        } else if constexpr (device_arch_info::kIsECX<Operand>) {
+          as->Check32BitFixedRegisterIsZeroExtended(2);
+        } else if constexpr (device_arch_info::kIsEDX<Operand>) {
+          as->Check32BitFixedRegisterIsZeroExtended(3);
         }
         id++;
       }

@@ -25,14 +25,14 @@
 
 namespace berberis::x86_64 {
 
-inline MachineReg CheckCopyGetInsnAndObtainMappedReg(MachineInsn* get_insn,
+inline MachineReg CheckCopyGetInsnAndObtainMappedReg(berberis::MachineInsn* get_insn,
                                                      MachineReg expected_dst) {
   EXPECT_EQ(get_insn->opcode(), kMachineOpPseudoCopy);
   EXPECT_EQ(get_insn->RegAt(0), expected_dst);
   return get_insn->RegAt(1);
 }
 
-inline MachineReg CheckCopyPutInsnAndObtainMappedReg(MachineInsn* put_insn,
+inline MachineReg CheckCopyPutInsnAndObtainMappedReg(berberis::MachineInsn* put_insn,
                                                      MachineReg expected_src) {
   EXPECT_EQ(put_insn->opcode(), kMachineOpPseudoCopy);
   EXPECT_EQ(put_insn->RegAt(1), expected_src);
@@ -50,17 +50,23 @@ inline void CheckMemRegMap(MemRegMap mem_reg_map,
   EXPECT_EQ(mem_reg_map[offset].value().is_modified, is_modified);
 }
 
-inline void CheckGetInsn(MachineInsn* insn, MachineOpcode opcode, MachineReg reg, size_t disp) {
+inline void CheckGetInsn(berberis::MachineInsn* insn,
+                         MachineOpcode opcode,
+                         MachineReg reg,
+                         size_t disp) {
   auto get_insn = AsMachineInsnX86_64(insn);
-  EXPECT_TRUE(get_insn->IsCPUStateGet());
+  EXPECT_TRUE(MachineIR::IsCPUStateGet(get_insn));
   EXPECT_EQ(get_insn->opcode(), opcode);
   EXPECT_EQ(get_insn->RegAt(0), reg);
   EXPECT_EQ(get_insn->disp(), disp);
 }
 
-inline void CheckPutInsn(MachineInsn* insn, MachineOpcode opcode, MachineReg reg, size_t disp) {
+inline void CheckPutInsn(berberis::MachineInsn* insn,
+                         MachineOpcode opcode,
+                         MachineReg reg,
+                         size_t disp) {
   auto put_insn = AsMachineInsnX86_64(insn);
-  EXPECT_TRUE(put_insn->IsCPUStatePut());
+  EXPECT_TRUE(MachineIR::IsCPUStatePut(put_insn));
   EXPECT_EQ(put_insn->opcode(), opcode);
   EXPECT_EQ(put_insn->RegAt(1), reg);
   EXPECT_EQ(put_insn->disp(), disp);

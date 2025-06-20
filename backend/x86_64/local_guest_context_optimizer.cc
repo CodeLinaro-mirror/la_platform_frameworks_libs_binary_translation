@@ -50,8 +50,8 @@ class LocalGuestContextOptimizer {
 ArenaVector<int> CountGuestRegAccesses(const MachineIR* ir, MachineBasicBlock* bb) {
   ArenaVector<int> guest_access_count(sizeof(CPUState), 0, ir->arena());
   for (auto* base_insn : bb->insn_list()) {
-    auto insn = AsMachineInsnX86_64(base_insn);
-    if (insn->IsCPUStateGet() || insn->IsCPUStatePut()) {
+    if (ir->IsCPUStateGet(base_insn) || ir->IsCPUStatePut(base_insn)) {
+      auto insn = AsMachineInsnX86_64(base_insn);
       guest_access_count.at(insn->disp())++;
     }
   }
@@ -102,19 +102,18 @@ void LocalGuestContextOptimizer::RemoveLocalGuestContextAccesses(
     }
 
     for (auto insn_it = bb->insn_list().begin(); insn_it != bb->insn_list().end(); insn_it++) {
-      auto* insn = AsMachineInsnX86_64(*insn_it);
-
       // Skip insn if it accesses regs with low priority
-      if (insn->IsCPUStateGet() || insn->IsCPUStatePut()) {
+      if (machine_ir_->IsCPUStateGet(*insn_it) || machine_ir_->IsCPUStatePut(*insn_it)) {
+        auto* insn = AsMachineInsnX86_64(*insn_it);
         if (!optimized_offsets.at(insn->disp())) {
           continue;
         }
-      }
 
-      if (insn->IsCPUStateGet()) {
-        ReplaceGetAndUpdateMap(insn_it);
-      } else if (insn->IsCPUStatePut()) {
-        ReplacePutAndUpdateMap(bb->insn_list(), insn_it);
+        if (machine_ir_->IsCPUStateGet(insn)) {
+          ReplaceGetAndUpdateMap(insn_it);
+        } else if (machine_ir_->IsCPUStatePut(insn)) {
+          ReplacePutAndUpdateMap(bb->insn_list(), insn_it);
+        }
       }
     }
   }

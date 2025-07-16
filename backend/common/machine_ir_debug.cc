@@ -107,7 +107,7 @@ std::string MachineIR::GetDebugString() const {
   return out;
 }
 
-std::string MachineIR::GetDebugStringForDot() const {
+std::string MachineIR::GetDebugStringAsDot() const {
   std::string str;
   str += "digraph MachineIR {\n";
 
@@ -199,9 +199,9 @@ std::string PseudoReadFlags::GetDebugString() const {
 
 std::string PseudoWriteFlags::GetDebugString() const {
   std::string out("PSEUDO_WRITE_FLAGS ");
-  out += GetRegOperandDebugString(this, 0);
-  out += ", ";
   out += GetRegOperandDebugString(this, 1);
+  out += ", ";
+  out += GetRegOperandDebugString(this, 0);
   return out;
 }
 

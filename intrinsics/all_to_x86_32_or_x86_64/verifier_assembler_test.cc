@@ -36,9 +36,10 @@ using x86_64::device_arch_info::FLAGS;
 using x86_64::device_arch_info::GeneralReg32;
 using x86_64::device_arch_info::XmmReg;
 
-using x86_32_or_x86_64::device_arch_info::HasSSE3;
-
 using device_arch_info::NoCPUIDRestriction;
+using x86_32_or_x86_64::device_arch_info::HasAVX;
+using x86_32_or_x86_64::device_arch_info::HasAVX2;
+using x86_32_or_x86_64::device_arch_info::HasSSE3;
 
 template <typename RegisterClassTemplateName, device_arch_info::RegBindingKind kUsageTemplateName>
 using Operand = device_arch_info::OperandInfo<RegisterClassTemplateName, kUsageTemplateName>;
@@ -66,8 +67,15 @@ class MacroAssembler : public Assembler {
 #include "berberis/intrinsics/all_to_x86_32_or_x86_64/macro_assembler-inl.h"
 #undef DEFINE_MACRO_ASSEMBLER_GENERIC_FUNCTIONS
 
+  using Assembler::PseudoDefXMMReg;
+
   // dst: USE_DEF, src1: USE
   constexpr void SSE3Intrinsic(XMMRegister dst, XMMRegister src1) { Haddpd(dst, src1); }
+
+  // dst: DEF, src1: USE, src2: USE
+  constexpr void AVX2Intrinsic(XMMRegister dst, XMMRegister src1, XMMRegister src2) {
+    Vpsllvd(dst, src1, src2);
+  }
 
   // dst: DEF_EARLY_CLOBBER, src1: USE_DEF, src2: USE, flags: DEF
   constexpr void LinearRegisterIntrinsic(Register dst, Register src1, Register src2) {
@@ -224,6 +232,17 @@ class MacroAssembler : public Assembler {
     Bind(out);
   }
 
+  // dst: USE_DEF, src1: USE
+  constexpr void IntrinsicUsesDefXMMRegisterBeforeDefining(XMMRegister dst, XMMRegister src1) {
+    Haddpd(dst, src1);
+  }
+
+  // dst: DEF, src1: USE
+  constexpr void PseudoDefXmmRegSilencesUseBeforeDefError(XMMRegister dst, XMMRegister src1) {
+    PseudoDefXMMReg(dst);
+    Haddpd(dst, src1);
+  }
+
   using AddressType = int64_t;
 };
 
@@ -251,6 +270,7 @@ constexpr void VerifyIntrinsic() {
                            : std::tuple_size_v<typename IntrinsicBindingInfo::Bindings>];
   AssignRegisterNumbers<IntrinsicBindingInfo>(register_numbers);
   MacroAssembler<VerifierAssembler> as;
+  as.kCheckDefOrDefEarlyClobberXMMRegistersAreWrittenBeforeRead = true;
   CallVerifierAssembler<IntrinsicBindingInfo, MacroAssembler<VerifierAssembler>>(&as,
                                                                                  register_numbers);
   // Verify CPU vendor and SSE restrictions.
@@ -274,7 +294,7 @@ static constexpr const char kBindingMnemo[] = "TEST_0";
 
 using Assemblers = MacroAssembler<VerifierAssembler>::Assemblers;
 
-TEST(VerifierAssembler, TestCorrectCPUID) {
+TEST(VerifierAssembler, TestCorrectCPUIDSSE3) {
   using IntrinsicBindingInfo = IntrinsicBindingInfo<
       kBindingName,
       NoNansOperation,
@@ -286,7 +306,7 @@ TEST(VerifierAssembler, TestCorrectCPUID) {
                      false,
                      nullptr,
                      HasSSE3,
-                     std::tuple<Operand<XmmReg, kDef>, Operand<XmmReg, kUse>>>>;
+                     std::tuple<Operand<XmmReg, kUseDef>, Operand<XmmReg, kUse>>>>;
 
   VerifyIntrinsic<IntrinsicBindingInfo>();
 }
@@ -303,9 +323,45 @@ TEST(VerifierAssembler, TestIncorrectCPUID) {
                      false,
                      nullptr,
                      NoCPUIDRestriction,
-                     std::tuple<Operand<XmmReg, kDef>, Operand<XmmReg, kUse>>>>;
+                     std::tuple<Operand<XmmReg, kUseDef>, Operand<XmmReg, kUse>>>>;
 
   ASSERT_DEATH(VerifyIntrinsic<IntrinsicBindingInfo>(), "error: expect_sse3 != need_sse3");
+}
+
+TEST(VerifierAssembler, TestCorrectCPUIDAVX2) {
+  using IntrinsicBindingInfo = IntrinsicBindingInfo<
+      kBindingName,
+      NoNansOperation,
+      std::tuple<SIMD128Register, SIMD128Register>,
+      std::tuple<SIMD128Register>,
+      std::tuple<OutArg<0>, InArg<0>, InArg<1>>,
+      DeviceInsnInfo<
+          &std::tuple_element_t<0, Assemblers>::AVX2Intrinsic,
+          kBindingMnemo,
+          false,
+          nullptr,
+          HasAVX2,
+          std::tuple<Operand<XmmReg, kDef>, Operand<XmmReg, kUse>, Operand<XmmReg, kUse>>>>;
+
+  VerifyIntrinsic<IntrinsicBindingInfo>();
+}
+
+TEST(VerifierAssembler, TestIncorrectCPUIDAVX2) {
+  using IntrinsicBindingInfo = IntrinsicBindingInfo<
+      kBindingName,
+      NoNansOperation,
+      std::tuple<SIMD128Register, SIMD128Register>,
+      std::tuple<SIMD128Register>,
+      std::tuple<OutArg<0>, InArg<0>, InArg<1>>,
+      DeviceInsnInfo<
+          &std::tuple_element_t<0, Assemblers>::AVX2Intrinsic,
+          kBindingMnemo,
+          false,
+          nullptr,
+          HasAVX,
+          std::tuple<Operand<XmmReg, kDef>, Operand<XmmReg, kUse>, Operand<XmmReg, kUse>>>>;
+
+  ASSERT_DEATH(VerifyIntrinsic<IntrinsicBindingInfo>(), "error: expect_avx2 != need_avx2");
 }
 
 TEST(VerifierAssembler, TestFlagsIntrinsicWithNoFlagsBinding) {
@@ -691,6 +747,42 @@ TEST(VerifierAssembler, TestECXOutputWithNoZeroExtensionBindedToOutputNonLinearI
 
   ASSERT_DEATH(VerifyIntrinsic<IntrinsicBindingInfo>(),
                "error: intrinsic didn't zero extend 32 bit ECX output");
+}
+
+TEST(VerifierAssembler, TestDefXMMRegisterUsedBeforeDefinedIntrinsic) {
+  using IntrinsicBindingInfo = IntrinsicBindingInfo<
+      kBindingName,
+      NoNansOperation,
+      std::tuple<SIMD128Register>,
+      std::tuple<SIMD128Register>,
+      std::tuple<OutArg<0>, InArg<0>>,
+      DeviceInsnInfo<
+          &std::tuple_element_t<0, Assemblers>::IntrinsicUsesDefXMMRegisterBeforeDefining,
+          kBindingMnemo,
+          false,
+          nullptr,
+          HasSSE3,
+          std::tuple<Operand<XmmReg, kDef>, Operand<XmmReg, kUse>>>>;
+
+  ASSERT_DEATH(VerifyIntrinsic<IntrinsicBindingInfo>(),
+               "error: intrinsic read a def/def_early_clobber register before writing to it");
+}
+
+TEST(VerifierAssembler, TestPseudoDefXmmRegSilencesUseBeforeDefError) {
+  using IntrinsicBindingInfo = IntrinsicBindingInfo<
+      kBindingName,
+      NoNansOperation,
+      std::tuple<SIMD128Register>,
+      std::tuple<SIMD128Register>,
+      std::tuple<OutArg<0>, InArg<0>>,
+      DeviceInsnInfo<&std::tuple_element_t<0, Assemblers>::PseudoDefXmmRegSilencesUseBeforeDefError,
+                     kBindingMnemo,
+                     false,
+                     nullptr,
+                     HasSSE3,
+                     std::tuple<Operand<XmmReg, kDef>, Operand<XmmReg, kUse>>>>;
+
+  VerifyIntrinsic<IntrinsicBindingInfo>();
 }
 
 }  // namespace

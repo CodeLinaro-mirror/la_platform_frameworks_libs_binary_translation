@@ -52,7 +52,6 @@ auto Init() {
   }
   platform_capabilities.kHasAES = ecx & bit_AES;
   platform_capabilities.kHasAVX = ecx & bit_AVX;
-  platform_capabilities.kHasAVX2 = ebx & bit_AVX2;
   platform_capabilities.kHasCLMUL = ecx & bit_PCLMUL;
   platform_capabilities.kHasF16C = ecx & bit_F16C;
   platform_capabilities.kHasFMA = ecx & bit_FMA;
@@ -66,6 +65,7 @@ auto Init() {
   platform_capabilities.kHasLZCNT = ecx & bit_LZCNT;
   platform_capabilities.kHasSSE4a = ecx & bit_SSE4a;
   __cpuid_count(7, 0, eax, ebx, ecx, edx);
+  platform_capabilities.kHasAVX2 = ebx & bit_AVX2;
   platform_capabilities.kHasBMI = ebx & bit_BMI;
   platform_capabilities.kHasBMI2 = ebx & bit_BMI2;
   platform_capabilities.kHasPDEP = ebx & bit_BMI2 && use_pdep_if_present;

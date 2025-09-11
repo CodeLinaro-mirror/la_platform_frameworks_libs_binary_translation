@@ -39,6 +39,13 @@ inline MachineReg CheckCopyPutInsnAndObtainMappedReg(berberis::MachineInsn* put_
   return put_insn->RegAt(0);
 }
 
+inline MachineReg CheckCopyPutImmInsnAndObtainMappedReg(berberis::MachineInsn* put_insn,
+                                                        uint64_t expected_imm) {
+  EXPECT_EQ(put_insn->opcode(), kMachineOpMovqRegImm);
+  EXPECT_EQ(AsMachineInsnX86_64(put_insn)->imm(), expected_imm);
+  return put_insn->RegAt(0);
+}
+
 inline void CheckMemRegMap(MemRegMap mem_reg_map,
                            size_t offset,
                            MachineReg mapped_reg,

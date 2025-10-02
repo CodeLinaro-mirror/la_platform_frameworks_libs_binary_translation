@@ -177,6 +177,10 @@ berberis::MachineInsn* InsnFolding::NewImmInsnFromRegInsn(const berberis::Machin
     case kMachineOpShrqRegReg:
       folded_insn = machine_ir_->NewInsn<ShrqRegImm>(insn->RegAt(0), imm32, insn->RegAt(2));
       break;
+    case kMachineOpImulqRegReg:
+      folded_insn = machine_ir_->NewInsn<ImulqRegRegImm>(
+          insn->RegAt(0), insn->RegAt(0), imm32, insn->RegAt(2));
+      break;
     case kMachineOpMovlRegReg:
       folded_insn = machine_ir_->NewInsn<MovlRegImm>(insn->RegAt(0), imm32);
       break;
@@ -206,6 +210,10 @@ berberis::MachineInsn* InsnFolding::NewImmInsnFromRegInsn(const berberis::Machin
       break;
     case kMachineOpShrlRegReg:
       folded_insn = machine_ir_->NewInsn<ShrlRegImm>(insn->RegAt(0), imm32, insn->RegAt(2));
+      break;
+    case kMachineOpImullRegReg:
+      folded_insn = machine_ir_->NewInsn<ImullRegRegImm>(
+          insn->RegAt(0), insn->RegAt(0), imm32, insn->RegAt(2));
       break;
     case kMachineOpMovlMemBaseDispReg:
       folded_insn = machine_ir_->NewInsn<MovlOpImm>(
@@ -521,6 +529,16 @@ berberis::MachineInsn* InsnFolding::NewArithmeticInsnWithFoldedContextRead(
       return machine_ir_->NewInsn<AndqRegOp>(insn->RegAt(0), mem_op, insn->RegAt(2));
     case kMachineOpAndlRegReg:
       return machine_ir_->NewInsn<AndlRegOp>(insn->RegAt(0), mem_op, insn->RegAt(2));
+    case kMachineOpPandXRegXReg:
+      return machine_ir_->NewInsn<PandXRegOp>(insn->RegAt(0), mem_op);
+    case kMachineOpPadddXRegXReg:
+      return machine_ir_->NewInsn<PadddXRegOp>(insn->RegAt(0), mem_op);
+    case kMachineOpPsubdXRegXReg:
+      return machine_ir_->NewInsn<PsubdXRegOp>(insn->RegAt(0), mem_op);
+    case kMachineOpPorXRegXReg:
+      return machine_ir_->NewInsn<PorXRegOp>(insn->RegAt(0), mem_op);
+    case kMachineOpPxorXRegXReg:
+      return machine_ir_->NewInsn<PxorXRegOp>(insn->RegAt(0), mem_op);
     case kMachineOpBtqRegReg:
       return machine_ir_->NewInsn<BtqOpReg>(mem_op, insn->RegAt(1), insn->RegAt(2));
     case kMachineOpBtlRegReg:
@@ -535,6 +553,10 @@ berberis::MachineInsn* InsnFolding::NewArithmeticInsnWithFoldedContextRead(
       // and both operands are 'use'. Therefore we can safely swap the operands.
       return machine_ir_->NewInsn<TestlOpReg>(
           mem_op, insn->RegAt(mem_reg_pos == 0 ? 1 : 0), insn->RegAt(2));
+    case kMachineOpImulqRegReg:
+      return machine_ir_->NewInsn<ImulqRegOp>(insn->RegAt(0), mem_op, insn->RegAt(2));
+    case kMachineOpImullRegReg:
+      return machine_ir_->NewInsn<ImullRegOp>(insn->RegAt(0), mem_op, insn->RegAt(2));
     case kMachineOpCmpqRegImm:
       return machine_ir_->NewInsn<CmpqOpImm>(
           mem_op, AsMachineInsnX86_64(insn)->imm(), insn->RegAt(1));
@@ -604,6 +626,113 @@ std::tuple<FoldingType, berberis::MachineInsn*> InsnFolding::TryFoldImmediateAnd
   return TryFoldContextRead(insn_to_context_read_fold, 1);
 }
 
+berberis::MachineInsn* InsnFolding::NewArithmeticInsnWithSwappedOperands(
+    const berberis::MachineInsn* insn,
+    berberis::MachineReg new_reg,
+    int32_t context_read_disp) {
+  const MemoryOperand mem_op = {.base = kCPUStatePointer, .disp = context_read_disp};
+  switch (insn->opcode()) {
+    case kMachineOpAddqRegReg:
+      return machine_ir_->NewInsn<AddqRegOp>(new_reg, mem_op, insn->RegAt(2));
+    case kMachineOpAddlRegReg:
+      return machine_ir_->NewInsn<AddlRegOp>(new_reg, mem_op, insn->RegAt(2));
+    case kMachineOpAndqRegReg:
+      return machine_ir_->NewInsn<AndqRegOp>(new_reg, mem_op, insn->RegAt(2));
+    case kMachineOpAndlRegReg:
+      return machine_ir_->NewInsn<AndlRegOp>(new_reg, mem_op, insn->RegAt(2));
+    case kMachineOpImulqRegReg:
+      return machine_ir_->NewInsn<ImulqRegOp>(new_reg, mem_op, insn->RegAt(2));
+    case kMachineOpImullRegReg:
+      return machine_ir_->NewInsn<ImullRegOp>(new_reg, mem_op, insn->RegAt(2));
+    case kMachineOpOrqRegReg:
+      return machine_ir_->NewInsn<OrqRegOp>(new_reg, mem_op, insn->RegAt(2));
+    case kMachineOpOrlRegReg:
+      return machine_ir_->NewInsn<OrlRegOp>(new_reg, mem_op, insn->RegAt(2));
+    case kMachineOpXorqRegReg:
+      return machine_ir_->NewInsn<XorqRegOp>(new_reg, mem_op, insn->RegAt(2));
+    case kMachineOpXorlRegReg:
+      return machine_ir_->NewInsn<XorlRegOp>(new_reg, mem_op, insn->RegAt(2));
+    default:
+      FATAL("unexpected opcode");
+      return nullptr;
+  }
+}
+
+std::tuple<FoldingType, berberis::MachineInsn*> InsnFolding::TryFoldContextReadAndSwapOperands(
+    const berberis::MachineInsn* insn) {
+  const MachineReg arith_dst_reg = insn->RegAt(0);
+  auto [def_insn_it, def_insn_pos, _] = def_map_.FindNonPseudoCopyDef(arith_dst_reg);
+  if (!def_insn_it.has_value()) {
+    return {FoldingType::kImpossible, nullptr};
+  }
+  const berberis::MachineInsn* def_insn = *def_insn_it.value();
+  if (!machine_ir_->IsCPUStateGet(def_insn)) {
+    return {FoldingType::kImpossible, nullptr};
+  }
+  if (!def_map_.IsContextReadActive(def_insn_pos)) {
+    return {FoldingType::kImpossible, nullptr};
+  }
+  int32_t context_read_disp = AsMachineInsnX86_64(def_insn)->disp();
+  if (context_access_info_.GetContextReadUsageCount(context_read_disp) > 1) {
+    // Do not fold this load if the value has multiple users in the basic block.
+    // The cost of multiple memory accesses outweighs the benefit of reducing the instruction
+    // count. It's better to load once and reuse the register.
+    return {FoldingType::kImpossible, nullptr};
+  }
+  berberis::MachineInsn* new_insn =
+      NewArithmeticInsnWithSwappedOperands(insn, machine_ir_->AllocVReg(), context_read_disp);
+  return {FoldingType::kReplaceInsnAndSwapOperands, new_insn};
+}
+
+template <bool kIsAccess64Bit, bool kIsMemWrite>
+std::tuple<FoldingType, berberis::MachineInsn*> InsnFolding::TryFoldScaleIntoMemAccess(
+    const berberis::MachineInsn* insn) {
+  CHECK_EQ(AsMachineInsnX86_64(insn)->scale(), Assembler::ScaleFactor::kTimesOne);
+  MachineReg index_reg = insn->RegAt(kIsMemWrite ? 1 : 2);
+  auto [shift_insn_it, shift_insn_pos, _] = def_map_.FindNonPseudoCopyDef(index_reg);
+  if (!shift_insn_it.has_value()) {
+    return {FoldingType::kImpossible, nullptr};
+  }
+  berberis::MachineInsn* shift_insn = *shift_insn_it.value();
+  if (shift_insn->opcode() != kMachineOpShlqRegImm) {
+    return {FoldingType::kImpossible, nullptr};
+  }
+  auto pseudo_copy_insn_it = std::prev(shift_insn_it.value());
+  berberis::MachineInsn* pseudo_copy_insn = *pseudo_copy_insn_it;
+  if (pseudo_copy_insn->opcode() != kMachineOpPseudoCopy) {
+    return {FoldingType::kImpossible, nullptr};
+  }
+  auto pseudo_copy_dst_reg = pseudo_copy_insn->RegAt(0);
+  if (pseudo_copy_dst_reg != shift_insn->RegAt(0)) {
+    return {FoldingType::kImpossible, nullptr};
+  }
+  auto pseudo_copy_src_reg = pseudo_copy_insn->RegAt(1);
+  if (pseudo_copy_dst_reg == pseudo_copy_src_reg) {
+    return {FoldingType::kImpossible, nullptr};
+  }
+  auto src_insn_it = std::get<0>(def_map_.Get(pseudo_copy_src_reg, shift_insn_pos));
+  if (!src_insn_it.has_value()) {
+    return {FoldingType::kImpossible, nullptr};
+  }
+
+  uint64_t imm = AsMachineInsnX86_64(shift_insn)->imm();
+  Assembler::ScaleFactor new_scale_factor;
+  if (imm == 1) {
+    new_scale_factor = Assembler::ScaleFactor::kTimesTwo;
+  } else if (imm == 2) {
+    new_scale_factor = Assembler::ScaleFactor::kTimesFour;
+  } else if (imm == 3) {
+    new_scale_factor = Assembler::ScaleFactor::kTimesEight;
+  } else {
+    return {FoldingType::kImpossible, nullptr};
+  }
+  berberis::MachineInsn* new_insn = machine_ir_->CloneInstruction(insn);
+  AsMachineInsnX86_64(new_insn)->set_scale(new_scale_factor);
+  new_insn->SetRegAt(kIsMemWrite ? 1 : 2, pseudo_copy_src_reg);
+
+  return {FoldingType::kReplaceInsn, new_insn};
+}
+
 std::tuple<FoldingType, berberis::MachineInsn*> InsnFolding::TryFoldInsn(
     const MachineInsnList::iterator insn_it,
     const MachineBasicBlock* bb) {
@@ -615,10 +744,21 @@ std::tuple<FoldingType, berberis::MachineInsn*> InsnFolding::TryFoldInsn(
     case kMachineOpShrqRegReg:
       return TryFoldImmediateInput<true>(insn_it);
     case kMachineOpAddqRegReg:
+    case kMachineOpAndqRegReg:
+    case kMachineOpImulqRegReg:
     case kMachineOpXorqRegReg:
-    case kMachineOpOrqRegReg:
-    case kMachineOpSubqRegReg:
-    case kMachineOpAndqRegReg: {
+    case kMachineOpOrqRegReg: {
+      auto [folding_type, folded_insn] = TryFoldImmediateInput<true>(insn_it);
+      if (folding_type != FoldingType::kImpossible) {
+        return {folding_type, folded_insn};
+      }
+      std::tie(folding_type, folded_insn) = TryFoldContextRead(*insn_it, 1);
+      if (folding_type != FoldingType::kImpossible) {
+        return {folding_type, folded_insn};
+      }
+      return TryFoldContextReadAndSwapOperands(insn);
+    }
+    case kMachineOpSubqRegReg: {
       auto [folding_type, folded_insn] = TryFoldImmediateInput<true>(insn_it);
       if (folding_type != FoldingType::kImpossible) {
         return {folding_type, folded_insn};
@@ -649,10 +789,21 @@ std::tuple<FoldingType, berberis::MachineInsn*> InsnFolding::TryFoldInsn(
     case kMachineOpShrlRegReg:
       return TryFoldImmediateInput<false>(insn_it);
     case kMachineOpAddlRegReg:
+    case kMachineOpAndlRegReg:
+    case kMachineOpImullRegReg:
     case kMachineOpXorlRegReg:
-    case kMachineOpOrlRegReg:
-    case kMachineOpSublRegReg:
-    case kMachineOpAndlRegReg: {
+    case kMachineOpOrlRegReg: {
+      auto [folding_type, folded_insn] = TryFoldImmediateInput<false>(insn_it);
+      if (folding_type != FoldingType::kImpossible) {
+        return {folding_type, folded_insn};
+      }
+      std::tie(folding_type, folded_insn) = TryFoldContextRead(*insn_it, 1);
+      if (folding_type != FoldingType::kImpossible) {
+        return {folding_type, folded_insn};
+      }
+      return TryFoldContextReadAndSwapOperands(insn);
+    }
+    case kMachineOpSublRegReg: {
       auto [folding_type, folded_insn] = TryFoldImmediateInput<false>(insn_it);
       if (folding_type != FoldingType::kImpossible) {
         return {folding_type, folded_insn};
@@ -691,27 +842,65 @@ std::tuple<FoldingType, berberis::MachineInsn*> InsnFolding::TryFoldInsn(
       return TryFoldCountLeadingZeros<false, false>(insn_it, bb);
     case kMachineOpCountLeadingZerosU64:
       return TryFoldCountLeadingZeros<false, true>(insn_it, bb);
+    case kMachineOpMovqMemBaseIndexDispReg:
+      return TryFoldScaleIntoMemAccess<true, true>(insn);
+    case kMachineOpMovqRegMemBaseIndexDisp:
+      return TryFoldScaleIntoMemAccess<true, false>(insn);
+    case kMachineOpMovlMemBaseIndexDispReg:
+      return TryFoldScaleIntoMemAccess<false, true>(insn);
+    case kMachineOpMovlRegMemBaseIndexDisp:
+      return TryFoldScaleIntoMemAccess<false, false>(insn);
+    case kMachineOpPandXRegXReg:
+    case kMachineOpPadddXRegXReg:
+    case kMachineOpPsubdXRegXReg:
+    case kMachineOpPorXRegXReg:
+    case kMachineOpPxorXRegXReg:
+      return TryFoldContextRead(*insn_it, 1);
     default:
       return {FoldingType::kImpossible, nullptr};
   }
   return {FoldingType::kImpossible, nullptr};
 }
 
-MachineInsnList::iterator ExecuteInsnFold(MachineInsnList& insn_list,
-                                          MachineInsnList::iterator folded_insn_it,
-                                          berberis::MachineInsn* new_insn,
-                                          FoldingType folding_type) {
-  if (folding_type == FoldingType::kRemoveInsn) {
+MachineInsnList::iterator InsnFolding::ExecuteInsnFold(MachineInsnList& insn_list,
+                                                       MachineInsnList::iterator folded_insn_it,
+                                                       berberis::MachineInsn* new_insn,
+                                                       FoldingType folding_type) {
+  if (folding_type == FoldingType::kImpossible) {
+    def_map_.ProcessInsn(folded_insn_it);
+    return std::next(folded_insn_it);
+  } else if (folding_type == FoldingType::kRemoveInsn) {
     folded_insn_it = insn_list.erase(folded_insn_it);
     return folded_insn_it;
   } else if (folding_type == FoldingType::kReplaceInsn) {
     CHECK(new_insn);
     *folded_insn_it = new_insn;
-    return folded_insn_it;
+    def_map_.ProcessInsn(folded_insn_it);
+    return std::next(folded_insn_it);
   } else if (folding_type == FoldingType::kInsertInsn) {
     CHECK(new_insn);
     insn_list.insert(std::next(folded_insn_it), new_insn);
-    return folded_insn_it;
+    def_map_.ProcessInsn(folded_insn_it);
+    return std::next(folded_insn_it);
+  } else if (folding_type == FoldingType::kReplaceInsnAndSwapOperands) {
+    CHECK(new_insn);
+    berberis::MachineInsn* curr_op_insn = *folded_insn_it;
+    CHECK_LE(curr_op_insn->RegKindAt(0).RegClass()->RegSize(), 8);
+    MachineReg op_reg_0 = curr_op_insn->RegAt(0);
+    MachineReg op_reg_1 = curr_op_insn->RegAt(1);
+    MachineReg new_reg = new_insn->RegAt(0);
+    berberis::MachineInsn* new_pseudo_copy_1 =
+        machine_ir_->NewInsn<PseudoCopy>(new_reg, op_reg_1, 8);
+    berberis::MachineInsn* new_pseudo_copy_2 =
+        machine_ir_->NewInsn<PseudoCopy>(op_reg_0, new_reg, 8);
+    insn_list.insert(folded_insn_it, new_pseudo_copy_1);
+    *folded_insn_it = new_insn;
+    insn_list.insert(std::next(folded_insn_it), new_pseudo_copy_2);
+
+    def_map_.ProcessInsn(std::prev(folded_insn_it));
+    def_map_.ProcessInsn(folded_insn_it);
+    def_map_.ProcessInsn(std::next(folded_insn_it));
+    return std::next(folded_insn_it, 2);
   }
   FATAL("Unsupported folding type %d", folding_type);
 }
@@ -719,20 +908,14 @@ MachineInsnList::iterator ExecuteInsnFold(MachineInsnList& insn_list,
 void FoldInsns(MachineIR* machine_ir) {
   ContextAccessInfo context_access_info(machine_ir);
   DefMap def_map(machine_ir);
+  InsnFolding insn_folding(def_map, context_access_info, machine_ir);
   for (auto* bb : machine_ir->bb_list()) {
     MachineInsnList& insn_list = bb->insn_list();
     context_access_info.Initialize(insn_list);
     def_map.Initialize();
-    InsnFolding insn_folding(def_map, context_access_info, machine_ir);
     for (auto insn_it = insn_list.begin(); insn_it != insn_list.end();) {
       auto [folding_type, new_insn] = insn_folding.TryFoldInsn(insn_it, bb);
-      if (folding_type != FoldingType::kImpossible) {
-        insn_it = ExecuteInsnFold(insn_list, insn_it, new_insn, folding_type);
-      }
-      if (folding_type != FoldingType::kRemoveInsn) {
-        def_map.ProcessInsn(insn_it);
-        ++insn_it;
-      }
+      insn_it = insn_folding.ExecuteInsnFold(insn_list, insn_it, new_insn, folding_type);
     }
   }
   machine_ir->SetInsnFoldingExecuted();

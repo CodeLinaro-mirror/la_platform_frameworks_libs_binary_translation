@@ -35,10 +35,10 @@ struct MacroAssemblerConstants {
   alignas(16) const uint64_t kNanBoxFloat32[2] = {0xffff'ffff'0000'0000, 0xffff'ffff'0000'0000};
   alignas(16) const uint64_t kNanBoxedNansFloat32[2] = {0xffff'ffff'7fc0'0000,
                                                         0xffff'ffff'7fc0'0000};
-  alignas(16) const uint32_t kCanonicalNansFloat32[4] = {0x7fc'00000,
-                                                         0x7fc'00000,
-                                                         0x7fc'00000,
-                                                         0x7fc'00000};
+  alignas(16) const uint32_t kCanonicalNansFloat32[4] = {0x7fc0'0000,
+                                                         0x7fc0'0000,
+                                                         0x7fc0'0000,
+                                                         0x7fc0'0000};
   alignas(16) const uint64_t kCanonicalNansFloat64[2] = {0x7ff8'0000'0000'0000,
                                                          0x7ff8'0000'0000'0000};
   alignas(16) const uint32_t kFloat32One[4] = {0x3f80'0000, 0x3f80'0000, 0x3f80'0000, 0x3f80'0000};
@@ -363,13 +363,14 @@ const MacroAssemblerConstants kBerberisMacroAssemblerConstants;
 namespace {
 
 int32_t GetConstants() {
+  static void* addr = MmapImplOrDie({
+      .size = AlignUpPageSize(sizeof(MacroAssemblerConstants)),
+      .prot = PROT_READ | PROT_WRITE,
+      .flags = MAP_PRIVATE | MAP_ANONYMOUS,
+      .berberis_flags = kMmapBerberis32Bit,
+  });
   static const MacroAssemblerConstants* Constants =
-      new (mmap(nullptr,
-                AlignUpPageSize(sizeof(MacroAssemblerConstants)),
-                PROT_READ | PROT_WRITE,
-                MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT,
-                -1,
-                0)) MacroAssemblerConstants(kBerberisMacroAssemblerConstants);
+      new (addr) MacroAssemblerConstants(kBerberisMacroAssemblerConstants);
   // Note that we are returning only 32-bit address here, but it's guaranteed to
   // be enough since struct is in low memory because of MAP_32BIT flag.
   return bit_cast<intptr_t>(Constants);

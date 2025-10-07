@@ -60,11 +60,12 @@ auto Init() {
   platform_capabilities.kHasSSSE3 = ecx & bit_SSSE3;
   platform_capabilities.kHasSSE4_1 = ecx & bit_SSE4_1;
   platform_capabilities.kHasSSE4_2 = ecx & bit_SSE4_2;
-  __cpuid(0x80000001, eax, ebx, ecx, edx);
+  __cpuid(0x8000'0001, eax, ebx, ecx, edx);
   platform_capabilities.kHasFMA4 = ecx & bit_FMA4;
   platform_capabilities.kHasLZCNT = ecx & bit_LZCNT;
   platform_capabilities.kHasSSE4a = ecx & bit_SSE4a;
   __cpuid_count(7, 0, eax, ebx, ecx, edx);
+  platform_capabilities.kHasAVX2 = ebx & bit_AVX2;
   platform_capabilities.kHasBMI = ebx & bit_BMI;
   platform_capabilities.kHasBMI2 = ebx & bit_BMI2;
   platform_capabilities.kHasPDEP = ebx & bit_BMI2 && use_pdep_if_present;

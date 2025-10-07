@@ -34,7 +34,7 @@ TEST(TrampolineFuncGenerator, IntRes) {
 
   ProcessState state{};
 
-  func(reinterpret_cast<void*>(Callee::foo), &state);
+  func(bit_cast<void*>(&Callee::foo), &state);
 
   EXPECT_EQ(1u, state.cpu.r[0]);
 }
@@ -56,7 +56,7 @@ TEST(TrampolineFuncGenerator, FloatArgs) {
   state.cpu.r[1] = bit_cast<uint32_t>(0.5f);
   state.cpu.r[2] = bit_cast<uint32_t>(0.75f);
 
-  EXPECT_NO_FATAL_FAILURE(func(reinterpret_cast<void*>(Callee::foo), &state));
+  EXPECT_NO_FATAL_FAILURE(func(bit_cast<void*>(&Callee::foo), &state));
 }
 
 }  // namespace

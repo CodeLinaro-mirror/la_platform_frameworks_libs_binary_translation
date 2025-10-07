@@ -58,7 +58,9 @@ enum ConfigFlag {
   kDisableIntrinsicInlining,
   kMergeProfilesForSameModeRegions,
   kPrintTranslatedAddrs,
+  kDeterministicTracing,
   kPrintIRs,
+  kPrintIRsAsDot,
   kPrintCodePoolSize,
   // A convenience flag with no specific implied feature. Use it to conduct local experiments
   // without recompilation and without the need to add a new flag.

@@ -63,7 +63,7 @@ void MapsSnapshot::Update() {
   fclose(maps_file);
 }
 
-std::optional<const ArenaString> MapsSnapshot::FindMappedObjectName(uintptr_t addr) {
+std::optional<const MapsSnapshot::Record> MapsSnapshot::GetMappedObjectRecord(uintptr_t addr) {
   std::scoped_lock lock(mutex_);
   auto next_it = maps_.upper_bound(addr);
   if (next_it == maps_.begin()) {
@@ -71,11 +71,22 @@ std::optional<const ArenaString> MapsSnapshot::FindMappedObjectName(uintptr_t ad
   }
   auto& rec = std::prev(next_it)->second;
   if (addr >= rec.start && addr < rec.end) {
-    // Make sure we return a copy since the storage may be
-    // invalidated as soon as we release the lock.
-    return rec.pathname;
+    // Make sure we return a copy since the storage for ArenaString may be invalidated as soon as we
+    // release the lock (e.g. if another thread calls Update()).
+    return rec;
   }
   return std::nullopt;
+}
+
+std::optional<const MapsSnapshot::Record> MapsSnapshot::GetMappedObjectRecordOrUpdateAndRetry(
+    uintptr_t addr) {
+  auto rec = GetMappedObjectRecord(addr);
+  if (rec.has_value()) {
+    return rec;
+  }
+
+  Update();
+  return GetMappedObjectRecord(addr);
 }
 
 }  // namespace berberis

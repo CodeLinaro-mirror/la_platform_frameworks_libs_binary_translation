@@ -386,6 +386,7 @@
         "Pcmpgtw": { "dependency_breaking": "true", "opcodes": [ "66", "0F", "65" ] },
         "Phaddd": { "feature": "SSSE3", "opcodes": [ "66", "0F", "38", "02" ] },
         "Phaddw": { "feature": "SSSE3", "opcodes": [ "66", "0F", "38", "01" ] },
+        "Pmaddwd": { "opcodes": [ "66", "0F", "F5" ] },
         "Pmaxsb": { "feature": "SSE4_1", "opcodes": [ "66", "0F", "38", "3C" ] },
         "Pmaxsd": { "feature": "SSE4_1", "opcodes": [ "66", "0F", "38", "3D" ] },
         "Pmaxsw": { "opcodes": [ "66", "0F", "EE" ] },
@@ -398,6 +399,7 @@
         "Pminub": { "opcodes": [ "66", "0F", "DA" ] },
         "Pminud": { "feature": "SSE4_1", "opcodes": [ "66", "0F", "38", "3B" ] },
         "Pminuw": { "feature": "SSE4_1", "opcodes": [ "66", "0F", "38", "3A" ] },
+        "Pmuldq": { "feature": "SSE4_1", "opcodes": [ "66", "0F", "38", "28" ] },
         "Pmulhrsw": { "feature": "SSSE3", "opcodes": [ "66", "0F", "38", "0B" ] },
         "Pmulhw": { "opcodes": [ "66", "0F", "E5" ] },
         "Pmulld": { "feature": "SSE4_1", "opcodes": [ "66", "0F", "38", "40" ] },
@@ -575,6 +577,7 @@
     },
     {
       "encodings": {
+        "Movddup": { "feature": "SSE3", "opcodes": [ "F2", "0F", "12" ] },
         "Movq": { "opcodes": [ "F3", "0F", "7E" ] },
         "Pmovsxbw": { "feature": "SSE4_1", "opcodes": [ "66", "0F", "38", "20" ] },
         "Pmovsxdq": { "feature": "SSE4_1", "opcodes": [ "66", "0F", "38", "25" ] },
@@ -2664,10 +2667,16 @@
         "Vpor": { "feature": "AVX", "opcodes": [ "C4", "01", "01", "EB" ], "type": "optimizable_using_commutation" },
         "Vpsadbw": { "feature": "AVX", "opcodes": [ "C4", "01", "01", "F6" ], "type": "optimizable_using_commutation" },
         "Vpshufb": { "feature": "AVX", "opcodes": [ "C4", "02", "01", "00" ], "type": "vex_rm_to_reg" },
+        "Vpsignb": { "feature": "AVX", "opcodes": [ "C4", "02", "01", "08" ], "type": "vex_rm_to_reg" },
         "Vpslld": { "feature": "AVX", "opcodes": [ "C4", "01", "01", "F2" ], "type": "vex_rm_to_reg" },
         "Vpsllq": { "feature": "AVX", "opcodes": [ "C4", "01", "01", "F3" ], "type": "vex_rm_to_reg" },
+	"Vpsllvd": { "feature": "AVX2", "opcodes": [ "C4", "02", "01", "47" ], "type": "vex_rm_to_reg" },
+	"Vpsllvq": { "feature": "AVX2", "opcodes": [ "C4", "02", "81", "47" ], "type": "vex_rm_to_reg" },
         "Vpsllw": { "feature": "AVX", "opcodes": [ "C4", "01", "01", "F1" ], "type": "vex_rm_to_reg" },
         "Vpsrad": { "feature": "AVX", "opcodes": [ "C4", "01", "01", "E2" ], "type": "vex_rm_to_reg" },
+        "Vpsravd": { "feature": "AVX", "opcodes": [ "C4", "02", "01", "46" ], "type": "vex_rm_to_reg" },
+        "Vpsrlvd": { "feature": "AVX", "opcodes": [ "C4", "02", "01", "45" ], "type": "vex_rm_to_reg" },
+        "Vpsrlvq": { "feature": "AVX", "opcodes": [ "C4", "02", "81", "45" ], "type": "vex_rm_to_reg" },
         "Vpsraw": { "feature": "AVX", "opcodes": [ "C4", "01", "01", "E1" ], "type": "vex_rm_to_reg" },
         "Vpsrld": { "feature": "AVX", "opcodes": [ "C4", "01", "01", "D2" ], "type": "vex_rm_to_reg" },
         "Vpsrlq": { "feature": "AVX", "opcodes": [ "C4", "01", "01", "D3" ], "type": "vex_rm_to_reg" },
@@ -2906,6 +2915,28 @@
         { "class": "YmmReg", "usage": "use" },
         { "class": "YmmReg/VecMem256", "usage": "use" },
         { "class": "YmmReg", "usage": "use" }
+      ]
+    },
+    {
+      "encodings": {
+        "Vpblendw": { "feature": "AVX", "opcodes": [ "C4", "03", "01", "0E" ], "type": "vex_rm_imm_to_reg" }
+      },
+      "args": [
+        { "class": "XmmReg", "usage": "def" },
+        { "class": "XmmReg", "usage": "use" },
+        { "class": "XmmReg/VecMem128", "usage": "use" },
+        { "class": "Imm8" }
+      ]
+    },
+    {
+      "encodings": {
+        "Vpblendw": { "feature": "AVX", "opcodes": [ "C4", "03", "05", "0E" ] , "type": "vex_rm_imm_to_reg" }
+      },
+      "args": [
+        { "class": "YmmReg", "usage": "def" },
+        { "class": "YmmReg", "usage": "use" },
+        { "class": "YmmReg/VecMem256", "usage": "use" },
+        { "class": "Imm8" }
       ]
     },
     {

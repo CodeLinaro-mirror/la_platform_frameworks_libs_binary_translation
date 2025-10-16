@@ -259,6 +259,8 @@ void PseudoCondBranch::Emit(CodeEmitter* as) const {
   }
 }
 
+// Note that we don't emit ABI arguments. They only help to connect IR's data flow with the next
+// region.
 void PseudoJump::Emit(CodeEmitter* as) const {
   EmitFreeStackFrame(as, as->frame_size());
 
@@ -321,6 +323,10 @@ void PseudoReadFlags::Emit(CodeEmitter* as) const {
 void PseudoWriteFlags::Emit(CodeEmitter* as) const {
   as->Addb(as->rax, int8_t{0x7f});
   as->Sahf();
+}
+
+void SSAPseudoWriteFlags::Emit(CodeEmitter* /*as*/) const {
+  FATAL("SSAPseudoWriteFlags couldn't be emitted");
 }
 
 void MachineIR::Emit(CodeEmitter* as) const {

@@ -452,7 +452,7 @@ class MachineIR {
     return NewInArena<T>(arena(), args...);
   }
 
-  MachineInsn* CloneInstruction(const MachineInsn* insn) { return insn->Clone(arena()); }
+  MachineInsn* CloneInsn(const MachineInsn* insn) { return insn->Clone(arena()); }
   std::array<MachineInsn*, MachineInsn::kMaxLoweredInsns> LowerInsn(const MachineInsn* insn) {
     return insn->Lower(arena());
   }
@@ -563,7 +563,10 @@ class PseudoJump final : public MachineInsn {
 
 class PseudoIndirectJump final : public MachineInsn {
  public:
+  struct WithOptimizedABI {};
+
   explicit PseudoIndirectJump(MachineReg src);
+  PseudoIndirectJump(MachineReg src, WithOptimizedABI tag);
 
   [[nodiscard]] std::string GetDebugString() const override;
   void Emit(CodeEmitter* as) const override;
@@ -575,7 +578,8 @@ class PseudoIndirectJump final : public MachineInsn {
   PseudoIndirectJump(const PseudoIndirectJump&);
   MachineInsn* Clone(Arena* arena) const override;
   std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
-  MachineReg src_;
+  // Target and ABI outputs.
+  MachineReg regs_[1 + 6];
 };
 
 // Copy the value of given size between registers/memory.

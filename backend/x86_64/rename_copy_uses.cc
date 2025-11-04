@@ -20,7 +20,7 @@
 
 namespace berberis::x86_64 {
 
-MachineReg RenameCopyUsesMap::Get(MachineReg reg) {
+MachineReg RenameCopyUsesMap::Get(MachineReg reg) const {
   MachineReg renamed = RenameDataForReg(reg).renamed;
   if (renamed == kInvalidMachineReg) {
     return kInvalidMachineReg;
@@ -66,10 +66,12 @@ void RenameCopyUsesMap::ProcessCopy(berberis::MachineInsn* copy) {
     return;
   }
 
-  if (Contains(bb_->live_out(), dst)) {
+  if (Contains(bb_->live_out(), dst) && !Contains(bb_->live_out(), src)) {
     // If dst is a live-out then renaming it to src won't help eliminate the copy. So instead we
-    // rename src to dst. In an unlikely event when src is also a live-out it doesn't matter
-    // which one we rename.
+    // rename src to dst.
+    // When dst and src are both live-out, we choose to rename dst to src. This means that when
+    // either dst or src is copied to another live-out register, say dst2, both dst and dst2 will
+    // be renamed to src by the global renamer.
     RenameDataForReg(src).renamed = dst;
     RenameDataForReg(src).renaming_time = time_;
   } else {
@@ -84,32 +86,135 @@ void RenameCopyUsesMap::StartBasicBlock(MachineBasicBlock* bb) {
   }
 }
 
-void RenameCopyUsesInBasicBlock(MachineBasicBlock* bb, RenameCopyUsesMap* map) {
-  map->StartBasicBlock(bb);
-  for (berberis::MachineInsn* insn : bb->insn_list()) {
+void DuplicateLiveOutsMap::SaveDuplicates(int bb_id, MachineReg reg1, MachineReg reg2) {
+  CHECK(reg1.IsVReg() && reg2.IsVReg());
+  CHECK_NE(reg1.GetVRegIndex(), reg2.GetVRegIndex());
+  duplicate_live_outs_map_.at(bb_id).at(reg1.GetVRegIndex()) = reg2;
+  bb_contains_duplicates_map_.at(bb_id) = true;
+}
+
+void DuplicateLiveOutsMap::ProcessDef(const berberis::MachineBasicBlock* bb,
+                                      const berberis::MachineInsn* insn,
+                                      int i) {
+  MachineReg reg = insn->RegAt(i);
+  if (!reg.IsVReg()) {
+    return;
+  }
+  registers_defined_map_.at(bb->id()).at(reg.GetVRegIndex()) = true;
+}
+
+void DuplicateLiveOutsMap::RenameAndRemoveDuplicateLiveIns(
+    berberis::MachineIR* machine_ir,
+    berberis::MachineBasicBlock* bb,
+    const berberis::MachineBasicBlock* prev_bb) {
+  ArenaVector<bool> bb_renamed_live_in_registers_map(
+      machine_ir->NumVReg(), false, machine_ir->arena());
+  ArenaVector<bool> live_ins_map(machine_ir->NumVReg(), false, machine_ir->arena());
+  for (auto live_in : bb->live_in()) {
+    live_ins_map.at(live_in.GetVRegIndex()) = true;
+  }
+  bool live_in_register_renaming_occurred = false;
+  for (auto* insn : bb->insn_list()) {
+    for (int i = 0; i < insn->NumRegOperands(); ++i) {
+      auto reg = insn->RegAt(i);
+      auto mapped_reg = GetDuplicate(prev_bb, reg);
+      if (mapped_reg.IsInvalidReg()) {
+        continue;
+      }
+      if (BasicBlockDefinesRegister(bb, reg) || BasicBlockDefinesRegister(bb, mapped_reg)) {
+        continue;
+      }
+      CHECK(live_ins_map.at(reg.GetVRegIndex()));
+      // 'mapped_reg' may not live-in into this block and only be used in another successor of
+      // 'prev_bb'
+      if (!live_ins_map.at(mapped_reg.GetVRegIndex())) {
+        continue;
+      }
+      live_in_register_renaming_occurred = true;
+      bb_renamed_live_in_registers_map.at(reg.GetVRegIndex()) = true;
+      insn->SetRegAt(i, mapped_reg);
+    }
+  }
+  if (!live_in_register_renaming_occurred) {
+    return;
+  }
+  auto& live_in = bb->live_in();
+  std::erase_if(live_in, [&](MachineReg live_in_reg) {
+    return bb_renamed_live_in_registers_map.at(live_in_reg.GetVRegIndex());
+  });
+}
+
+void ComputeDuplicateLiveOuts(MachineIR* machine_ir,
+                              MachineBasicBlock* bb,
+                              const RenameCopyUsesMap* rename_copy_uses_map,
+                              DuplicateLiveOutsMap* duplicate_live_outs_map) {
+  ArenaVector<bool> bb_live_outs_set(machine_ir->NumVReg(), false, machine_ir->arena());
+  for (auto reg : bb->live_out()) {
+    CHECK(reg.IsVReg());
+    bb_live_outs_set.at(reg.GetVRegIndex()) = true;
+  }
+  for (auto reg : bb->live_out()) {
+    MachineReg mapped = rename_copy_uses_map->Get(reg);
+    if (mapped.IsInvalidReg()) {
+      continue;
+    }
+    if (bb_live_outs_set.at(mapped.GetVRegIndex())) {
+      // We should never see a reg mapped to a mapped reg
+      CHECK(rename_copy_uses_map->Get(mapped).IsInvalidReg());
+      // Note that bb->live_out() can contain multiple instances of the same vreg, and so
+      // SaveDuplicates may be called multiple times for the same pair, but SaveDuplicates is
+      // implemented such that this is harmless.
+      duplicate_live_outs_map->SaveDuplicates(bb->id(), reg, mapped);
+    }
+  }
+}
+
+void RenameCopyUsesInBasicBlock(MachineBasicBlock* bb,
+                                RenameCopyUsesMap* rename_copy_uses_map,
+                                DuplicateLiveOutsMap* duplicate_live_outs_map) {
+  rename_copy_uses_map->StartBasicBlock(bb);
+  for (auto* insn : bb->insn_list()) {
     for (int i = 0; i < insn->NumRegOperands(); ++i) {
       // Note that Def-Use operands cannot be renamed, so we handle them as Defs.
       if (insn->RegKindAt(i).IsDef()) {
-        map->ProcessDef(insn, i);
+        rename_copy_uses_map->ProcessDef(insn, i);
+        duplicate_live_outs_map->ProcessDef(bb, insn, i);
       } else {
-        map->RenameUseIfMapped(insn, i);
+        rename_copy_uses_map->RenameUseIfMapped(insn, i);
       }
     }  // for operand in insn
 
     // Note that we intentionally rename copy's use before attempting to create a mapping, so that
     // the existing mappings are applied and propagated further.
     if (insn->is_copy()) {
-      map->ProcessCopy(insn);
+      rename_copy_uses_map->ProcessCopy(insn);
     }
-    map->Tick();
+    rename_copy_uses_map->Tick();
   }  // For insn in bb
 }
 
 void RenameCopyUses(MachineIR* machine_ir) {
-  RenameCopyUsesMap map(machine_ir);
+  RenameCopyUsesMap rename_copy_uses_map(machine_ir);
+  DuplicateLiveOutsMap duplicate_live_outs_map(machine_ir);
 
   for (auto* bb : machine_ir->bb_list()) {
-    RenameCopyUsesInBasicBlock(bb, &map);
+    RenameCopyUsesInBasicBlock(bb, &rename_copy_uses_map, &duplicate_live_outs_map);
+    ComputeDuplicateLiveOuts(machine_ir, bb, &rename_copy_uses_map, &duplicate_live_outs_map);
+  }
+
+  for (auto* bb : machine_ir->bb_list()) {
+    // TODO(b/448293427): This is the initial, limited implementation of global RenameCopyUse.
+    // It only applies the optimization to basic blocks that are exit blocks
+    // (no successors) and have exactly one predecessor.
+    if (bb->out_edges().size() > 0 || bb->in_edges().size() != 1 || bb->live_in().size() < 2) {
+      continue;
+    }
+    auto prev_bb = bb->in_edges().at(0)->src();
+    if (!duplicate_live_outs_map.BasicBlockContainsDuplicateLiveOuts(prev_bb)) {
+      continue;
+    }
+    // TODO(b/448293427): Remove duplicate live-outs from prev_bb where possible.
+    duplicate_live_outs_map.RenameAndRemoveDuplicateLiveIns(machine_ir, bb, prev_bb);
   }
 }
 

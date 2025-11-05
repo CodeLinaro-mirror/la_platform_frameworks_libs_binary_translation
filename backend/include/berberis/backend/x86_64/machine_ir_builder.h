@@ -33,12 +33,6 @@ class MachineIRBuilder : public MachineIRBuilderBase<MachineIR> {
  public:
   explicit MachineIRBuilder(MachineIR* ir) : MachineIRBuilderBase(ir) {}
 
-  void StartBasicBlock(MachineBasicBlock* bb) {
-    CHECK(bb->insn_list().empty());
-    ir()->bb_list().push_back(bb);
-    bb_ = bb;
-  }
-
   template <typename InsnType, typename... Args>
   /*may_discard*/ InsnType* Gen(Args... args) {
     return MachineIRBuilderBase::Gen<InsnType, Args...>(args...);
@@ -46,12 +40,12 @@ class MachineIRBuilder : public MachineIRBuilderBase<MachineIR> {
 
   BERBERIS_DECLARE_MACHINE_INSN_ADAPTER(
       /*may_discard*/ auto Gen,
-      (),
       MachineInsnOperandsHelper,
       ConstructorArgsTuple,
       MachineInsn<typename InsnType<typename CodeEmitter::Assemblers>::DeviceInsnInfo, kSSAMode>*,
       MachineIRBuilderBase::Gen,
-      ())
+      kSSAMode,
+      auto kSSAMode = false)
 
   void GenGet(MachineReg dst_reg, int32_t offset) {
     Gen<x86_64::MovqRegOp>(dst_reg, {.base = x86_64::kMachineRegRBP, .disp = offset});

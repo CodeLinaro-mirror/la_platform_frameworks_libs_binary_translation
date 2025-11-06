@@ -424,6 +424,7 @@ TEST(MachineIRRenameCopyUsesTest, DuplicateLiveInsGetRenamed) {
   EXPECT_EQ(add_insn2->RegAt(1), vreg2);
 
   EXPECT_FALSE(Contains(bb2->live_in(), vreg1));
+  EXPECT_FALSE(Contains(bb1->live_out(), vreg1));
 }
 
 TEST(MachineIRRenameCopyUsesTest, ChainedDuplicateLiveInsGetRenamed) {
@@ -467,9 +468,11 @@ TEST(MachineIRRenameCopyUsesTest, ChainedDuplicateLiveInsGetRenamed) {
 
   EXPECT_FALSE(Contains(bb2->live_in(), vreg2));
   EXPECT_FALSE(Contains(bb2->live_in(), vreg3));
+  EXPECT_FALSE(Contains(bb1->live_out(), vreg2));
+  EXPECT_FALSE(Contains(bb1->live_out(), vreg3));
 }
 
-TEST(MachineIRRenameCopyUsesTest, DuplicateLiveInsDontGetRenamedWhenBBHasOutEdge) {
+TEST(MachineIRRenameCopyUsesTest, DuplicateLiveInsToBBWithOutEdgesGetRenamed) {
   Arena arena;
   x86_64::MachineIR machine_ir(&arena);
 
@@ -507,10 +510,12 @@ TEST(MachineIRRenameCopyUsesTest, DuplicateLiveInsDontGetRenamedWhenBBHasOutEdge
   ASSERT_EQ(CheckMachineIR(machine_ir), kMachineIRCheckSuccess);
 
   EXPECT_EQ(add_insn1->RegAt(1), vreg2);
-  EXPECT_EQ(add_insn2->RegAt(1), vreg1);
+  EXPECT_EQ(add_insn2->RegAt(1), vreg2);
 
-  EXPECT_TRUE(Contains(bb2->live_in(), vreg1));
+  EXPECT_FALSE(Contains(bb2->live_in(), vreg1));
   EXPECT_TRUE(Contains(bb2->live_in(), vreg2));
+  EXPECT_FALSE(Contains(bb1->live_out(), vreg1));
+  EXPECT_TRUE(Contains(bb1->live_out(), vreg2));
 }
 
 TEST(MachineIRRenameCopyUsesTest, DuplicateLiveInsDontGetRenamedWhenBBHasMultipleInEdges) {
@@ -557,6 +562,10 @@ TEST(MachineIRRenameCopyUsesTest, DuplicateLiveInsDontGetRenamedWhenBBHasMultipl
 
   EXPECT_TRUE(Contains(bb3->live_in(), vreg1));
   EXPECT_TRUE(Contains(bb3->live_in(), vreg2));
+  EXPECT_TRUE(Contains(bb1->live_out(), vreg1));
+  EXPECT_TRUE(Contains(bb1->live_out(), vreg2));
+  EXPECT_TRUE(Contains(bb2->live_out(), vreg1));
+  EXPECT_TRUE(Contains(bb2->live_out(), vreg2));
 }
 
 TEST(MachineIRRenameCopyUsesTest, DuplicateLiveInsWhichAreOverwrittenDoNotGetRenamed) {
@@ -595,9 +604,10 @@ TEST(MachineIRRenameCopyUsesTest, DuplicateLiveInsWhichAreOverwrittenDoNotGetRen
   EXPECT_EQ(bb2_add_insn->RegAt(1), vreg1);
 
   EXPECT_TRUE(Contains(bb2->live_in(), vreg1));
+  EXPECT_TRUE(Contains(bb1->live_out(), vreg1));
 }
 
-TEST(MachineIRRenameCopyUsesTest, DoNotRenameDuplicateRegisterWhichIsMappedToNonLiveIn) {
+TEST(MachineIRRenameCopyUsesTest, RenameDuplicateRegisterWhichIsMappedToNonLiveInDuplicateLiveOut) {
   Arena arena;
   x86_64::MachineIR machine_ir(&arena);
 
@@ -635,10 +645,11 @@ TEST(MachineIRRenameCopyUsesTest, DoNotRenameDuplicateRegisterWhichIsMappedToNon
   ASSERT_EQ(CheckMachineIR(machine_ir), kMachineIRCheckSuccess);
 
   EXPECT_EQ(bb2_insn_1->RegAt(1), vreg2);
-  EXPECT_EQ(bb3_insn_1->RegAt(1), vreg1);
+  EXPECT_EQ(bb3_insn_1->RegAt(1), vreg2);
 
   EXPECT_FALSE(Contains(bb2->live_in(), vreg1));
-  EXPECT_TRUE(Contains(bb3->live_in(), vreg1));
+  EXPECT_FALSE(Contains(bb3->live_in(), vreg1));
+  EXPECT_FALSE(Contains(bb1->live_out(), vreg1));
 }
 
 }  // namespace

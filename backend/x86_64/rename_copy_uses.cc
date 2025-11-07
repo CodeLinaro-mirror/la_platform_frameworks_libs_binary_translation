@@ -16,7 +16,11 @@
 
 #include "berberis/backend/x86_64/rename_copy_uses.h"
 
+#include <list>
+
 #include "berberis/backend/x86_64/machine_ir.h"
+#include "berberis/base/algorithm.h"
+#include "berberis/base/checks.h"
 
 namespace berberis::x86_64 {
 
@@ -126,9 +130,10 @@ void DuplicateLiveOutsMap::RenameAndRemoveDuplicateLiveIns(
       }
       CHECK(live_ins_map.at(reg.GetVRegIndex()));
       // 'mapped_reg' may not live-in into this block and only be used in another successor of
-      // 'prev_bb'
+      // 'prev_bb'. In this case, we can introduce it as a new live_in register to replace reg.
       if (!live_ins_map.at(mapped_reg.GetVRegIndex())) {
-        continue;
+        bb->live_in().push_back(mapped_reg);
+        live_ins_map.at(mapped_reg.GetVRegIndex()) = true;
       }
       live_in_register_renaming_occurred = true;
       bb_renamed_live_in_registers_map.at(reg.GetVRegIndex()) = true;
@@ -169,6 +174,18 @@ void ComputeDuplicateLiveOuts(MachineIR* machine_ir,
   }
 }
 
+void RemoveRedundantLiveOuts(MachineBasicBlock* bb) {
+  auto& live_out = bb->live_out();
+  std::erase_if(live_out, [&](MachineReg live_out_reg) {
+    for (auto* edge : bb->out_edges()) {
+      if (Contains(edge->dst()->live_in(), live_out_reg)) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
 void RenameCopyUsesInBasicBlock(MachineBasicBlock* bb,
                                 RenameCopyUsesMap* rename_copy_uses_map,
                                 DuplicateLiveOutsMap* duplicate_live_outs_map) {
@@ -203,18 +220,23 @@ void RenameCopyUses(MachineIR* machine_ir) {
   }
 
   for (auto* bb : machine_ir->bb_list()) {
-    // TODO(b/448293427): This is the initial, limited implementation of global RenameCopyUse.
-    // It only applies the optimization to basic blocks that are exit blocks
-    // (no successors) and have exactly one predecessor.
-    if (bb->out_edges().size() > 0 || bb->in_edges().size() != 1 || bb->live_in().size() < 2) {
+    // TODO(b/448293427): This implementation only applies the optimization to basic blocks which
+    // have exactly one predecessor. It should be expanded to optimize all basic blocks.
+    if (bb->in_edges().size() != 1 || bb->live_in().size() < 1) {
       continue;
     }
     auto prev_bb = bb->in_edges().at(0)->src();
     if (!duplicate_live_outs_map.BasicBlockContainsDuplicateLiveOuts(prev_bb)) {
       continue;
     }
-    // TODO(b/448293427): Remove duplicate live-outs from prev_bb where possible.
     duplicate_live_outs_map.RenameAndRemoveDuplicateLiveIns(machine_ir, bb, prev_bb);
+  }
+
+  for (auto* bb : machine_ir->bb_list()) {
+    if (!duplicate_live_outs_map.BasicBlockContainsDuplicateLiveOuts(bb)) {
+      continue;
+    }
+    RemoveRedundantLiveOuts(bb);
   }
 }
 

@@ -67,6 +67,15 @@ DEFINE_VALUE_OPERATOR(^)
 
 #pragma pop_macro("DEFINE_VALUE_OPERATOR")
 
+template <typename... Types_>
+class Types {
+ public:
+  using Tuple = std::tuple<Types_...>;
+};
+
+template <typename... Types_>
+inline constexpr auto kTypes = Types<Types_...>{};
+
 // TypesToTypes provides type-level metaprogramming utilities for std::tuple (with support for
 // std::array if <array> include is present). It uses template specializations to perform operations
 // on the types within a tuple.
@@ -78,9 +87,9 @@ class TypesToTypes {
     constexpr auto operator()() const {
       constexpr bool kAccepted = kLambda.template operator()<Type>();
       if constexpr (kAccepted) {
-        return static_cast<std::tuple<Type>*>(nullptr);
+        return kTypes<Type>;
       } else {
-        return static_cast<std::tuple<>*>(nullptr);
+        return kTypes<>;
       }
     }
   };
@@ -107,6 +116,15 @@ class TypesToTypes {
 
   template <typename TupleType, auto kLambda>
   using Filter = FlatMapHelper<TupleType, Filterer<kLambda>{}>::Result;
+
+  template <typename TupleType, auto kLambda>
+  using All =
+      MetaValue<std::equal_to<std::size_t>{}(std::tuple_size_v<TupleType>,
+                                             std::tuple_size_v<Filter<TupleType, kLambda>>)>;
+
+  template <typename TupleType, auto kLambda>
+  using Any = MetaValue<std::less<std::size_t>{}(std::size_t{0},
+                                                 std::tuple_size_v<Filter<TupleType, kLambda>>)>;
 
   // Applies a type-level lambda to each type in the input |Type| tuple.
   // The lambda is expected to return a tuple-like type for each input type.
@@ -144,7 +162,8 @@ class TypesToTypes {
   template <typename... Types, auto kLambda>
   class FlatMapHelper<std::tuple<Types...>, kLambda> {
    public:
-    using Result = decltype(std::tuple_cat(*kLambda.template operator()<Types>()...));
+    using Result = decltype(std::tuple_cat(
+        std::declval<typename decltype(kLambda.template operator()<Types>())::Tuple>()...));
   };
   template <typename Type, auto kLambda>
   class FlatMapHelper {
@@ -188,6 +207,72 @@ class TypesToTypes {
 // each element of the tuple.
 class TypesToValues {
  public:
+  template <typename TupleType, typename... ExtraLambdaArgTypes, typename Lambda>
+  static constexpr bool All(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
+    return AllHelper<TupleType, ExtraLambdaArgTypes...>(
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+  }
+  template <typename TupleType,
+            typename TemporaryType,
+            typename... ExtraLambdaArgTypes,
+            typename Lambda>
+  static constexpr bool AllWithTemporary(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
+    TemporaryType tmp{};
+    return AllHelper<TupleType, TemporaryType&, ExtraLambdaArgTypes...>(
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        tmp,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+  }
+  template <typename TupleType,
+            typename TemporaryType,
+            typename... ExtraLambdaArgTypes,
+            typename Lambda>
+  static constexpr bool AllWithTemporary(TemporaryType tmp,
+                                         Lambda&& lambda,
+                                         ExtraLambdaArgTypes&&... extra_types) {
+    return AllHelper<TupleType, TemporaryType&, ExtraLambdaArgTypes...>(
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        tmp,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+  }
+
+  template <typename TupleType, typename... ExtraLambdaArgTypes, typename Lambda>
+  static constexpr bool Any(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
+    return AnyHelper<TupleType, ExtraLambdaArgTypes...>(
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+  }
+  template <typename TupleType,
+            typename TemporaryType,
+            typename... ExtraLambdaArgTypes,
+            typename Lambda>
+  static constexpr bool AnyWithTemporary(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
+    TemporaryType tmp{};
+    return AnyHelper<TupleType, TemporaryType&, ExtraLambdaArgTypes...>(
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        tmp,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+  }
+  template <typename TupleType,
+            typename TemporaryType,
+            typename... ExtraLambdaArgTypes,
+            typename Lambda>
+  static constexpr bool AnyWithTemporary(TemporaryType tmp,
+                                         Lambda&& lambda,
+                                         ExtraLambdaArgTypes&&... extra_types) {
+    return AnyHelper<TupleType, TemporaryType&, ExtraLambdaArgTypes...>(
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        tmp,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+  }
+
   template <typename TupleType, typename... ExtraLambdaArgTypes, typename Lambda>
   static constexpr decltype(auto) FlatMap(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
     return FlatMapHelper<TupleType, ExtraLambdaArgTypes...>(
@@ -353,6 +438,36 @@ class TypesToValues {
   }
 
  private:
+  template <typename TupleType, typename... ExtraLambdaArgTypes, std::size_t... Is, typename Lambda>
+  static constexpr bool AllHelper(Lambda&& lambda,
+                                  std::index_sequence<Is...>,
+                                  ExtraLambdaArgTypes&&... extra_types) {
+    return ([lambda = std::forward<Lambda>(lambda)]<typename ElementType>(
+                ExtraLambdaArgTypes&&... extra_types)
+                -> bool {
+      auto lambda_result = lambda.template operator()<ElementType>(
+          std::forward<ExtraLambdaArgTypes>(extra_types)...);
+      constexpr bool kCheckResult = decltype(lambda_result){};
+      return kCheckResult;
+    }.template operator()<std::tuple_element_t<Is, TupleType>>(
+        std::forward<ExtraLambdaArgTypes>(extra_types)...)  && ... && true);
+  }
+
+  template <typename TupleType, typename... ExtraLambdaArgTypes, std::size_t... Is, typename Lambda>
+  static constexpr bool AnyHelper(Lambda&& lambda,
+                                  std::index_sequence<Is...>,
+                                  ExtraLambdaArgTypes&&... extra_types) {
+    return ([lambda = std::forward<Lambda>(lambda)]<typename ElementType>(
+                ExtraLambdaArgTypes&&... extra_types)
+                -> bool {
+      auto lambda_result = lambda.template operator()<ElementType>(
+          std::forward<ExtraLambdaArgTypes>(extra_types)...);
+      constexpr bool kCheckResult = decltype(lambda_result){};
+      return kCheckResult;
+    }.template operator()<std::tuple_element_t<Is, TupleType>>(
+        std::forward<ExtraLambdaArgTypes>(extra_types)...) || ... || false);
+  }
+
   template <typename TupleType, typename... ExtraLambdaArgTypes, typename Lambda, std::size_t... Is>
   static constexpr decltype(auto) FlatMapHelper(Lambda&& lambda,
                                                 std::index_sequence<Is...>,
@@ -685,10 +800,9 @@ class ValuesToValues {
           } else {
             return std::tuple<>{};
           }
-        }
-            .template operator()<std::tuple_element_t<Is, TupleType>>(
-                std::forward<std::tuple_element_t<Is, TupleType>>(std::get<Is>(tuple)),
-                std::forward<ExtraLambdaArgTypes>(extra_types)...)...);
+        }.template operator()<std::tuple_element_t<Is, TupleType>>(
+            std::forward<std::tuple_element_t<Is, TupleType>>(std::get<Is>(tuple)),
+            std::forward<ExtraLambdaArgTypes>(extra_types)...)...);
   }
 
   template <typename... ExtraLambdaArgTypes, typename TupleType, std::size_t... Is, typename Lambda>

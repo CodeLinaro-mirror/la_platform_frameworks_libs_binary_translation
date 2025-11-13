@@ -22,6 +22,7 @@
 #include "berberis/backend/common/machine_ir.h"
 #include "berberis/backend/x86_64/machine_ir.h"
 #include "berberis/base/arena_map.h"
+#include "berberis/base/arena_vector.h"
 
 namespace berberis::x86_64 {
 
@@ -57,7 +58,7 @@ struct RegLifetimeCount {
 };
 
 using RegLifetimeMap = ArenaMap<MachineReg, RegLifetime>;
-using RegLifetimeCounts = ArenaMap<berberis::MachineInsn*, RegLifetimeCount>;
+using RegLifetimeCounts = ArenaVector<RegLifetimeCount>;
 
 class RegLifetimeCounter {
  public:
@@ -67,6 +68,8 @@ class RegLifetimeCounter {
         lifetime_counts_(machine_ir->arena()) {}
 
   void Count(MachineBasicBlock* bb);
+  // Sets last use of reg to end and end_pos, updating both the map and counts.
+  void UpdateLastUse(MachineReg reg, berberis::MachineInsn* end, int end_pos);
 
   RegLifetimeMap& GetMap() { return lifetime_map_; }
   RegLifetimeCounts& GetCounts() { return lifetime_counts_; }

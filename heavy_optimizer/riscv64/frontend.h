@@ -55,7 +55,36 @@ class HeavyOptimizerFrontend {
   template <auto kEnumValue>
   using TypeFromId = intrinsics::TypeFromId<kEnumValue>;
   template <auto ValueParam>
-  using Value = intrinsics::Value<ValueParam>;
+  using Value = Value<ValueParam>;
+
+  template <typename ValueType>
+  static constexpr auto ToFloat(ValueType value) {
+    return intrinsics::TemplateTypeIdToFloat(value);
+  }
+  template <typename ValueType>
+  static constexpr auto ToInt(ValueType value) {
+    return intrinsics::TemplateTypeIdToInt(value);
+  }
+  template <typename ValueType>
+  static constexpr auto ToNarrow(ValueType value) {
+    return intrinsics::TemplateTypeIdToNarrow(value);
+  }
+  template <typename ValueType>
+  static constexpr auto ToSigned(ValueType value) {
+    return intrinsics::TemplateTypeIdToSigned(value);
+  }
+  template <typename ValueType>
+  static constexpr auto SizeOf(ValueType value) {
+    return intrinsics::TemplateTypeIdSizeOf(value);
+  }
+  template <typename ValueType>
+  static constexpr auto ToUnsigned(ValueType value) {
+    return intrinsics::TemplateTypeIdToUnsigned(value);
+  }
+  template <typename ValueType>
+  static constexpr auto ToWide(ValueType value) {
+    return intrinsics::TemplateTypeIdToWide(value);
+  }
   static constexpr TemplateTypeId IntSizeToTemplateTypeId(uint8_t size, bool is_signed = false) {
     return intrinsics::IntSizeToTemplateTypeId(size, is_signed);
   }
@@ -261,8 +290,8 @@ class HeavyOptimizerFrontend {
                                                        device_arch_info::kDef>,
                          device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
                                                        device_arch_info::kUseDef>>>,
-          x86_64::kSSA>>(
-          unboxed_result.machine_reg(), AllocTempSimdReg().machine_reg(), result.machine_reg());
+          x86_64::kSSA>>(std::tuple{
+          unboxed_result.machine_reg(), AllocTempSimdReg().machine_reg(), result.machine_reg()});
     } else {
       // This code is defined as intrinsic but if we would call it as intrinsic it would be called
       // recursively.
@@ -277,8 +306,8 @@ class HeavyOptimizerFrontend {
                                                        device_arch_info::kDef>,
                          device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
                                                        device_arch_info::kUseDef>>>,
-          x86_64::kSSA>>(
-          unboxed_result.machine_reg(), AllocTempSimdReg().machine_reg(), result.machine_reg());
+          x86_64::kSSA>>(std::tuple{
+          unboxed_result.machine_reg(), AllocTempSimdReg().machine_reg(), result.machine_reg()});
     }
     return unboxed_result;
   }
@@ -300,7 +329,7 @@ class HeavyOptimizerFrontend {
                          device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg32,
                                                        device_arch_info::kUseDef>>>,
           x86_64::kSSA>>(
-          value.machine_reg(), AllocTempSimdReg().machine_reg(), value.machine_reg());
+          std::tuple{value.machine_reg(), AllocTempSimdReg().machine_reg(), value.machine_reg()});
     } else {
       // This code is defined as intrinsic but if we would call it as intrinsic it would be called
       // recursively.
@@ -313,7 +342,7 @@ class HeavyOptimizerFrontend {
               device_arch_info::NoCPUIDRestriction,
               std::tuple<device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
                                                        device_arch_info::kUseDef>>>,
-          x86_64::kSSA>>(AllocTempSimdReg().machine_reg(), value.machine_reg());
+          x86_64::kSSA>>(std::tuple{AllocTempSimdReg().machine_reg(), value.machine_reg()});
     }
   }
 
@@ -503,10 +532,9 @@ class HeavyOptimizerFrontend {
                                                   MachineBasicBlock* failure_bb);
 
   // Syntax sugar.
-  template <typename InsnType, typename... Args>
-  auto Gen(Args... args)
-      -> std::enable_if_t<(std::is_same_v<std::remove_cvref_t<Args>, MachineReg> + ... + 0) ==
-                              InsnType::kInfo.InputRegistersCount(),
+  template <typename InsnType, typename ArgsTuple>
+  auto Gen(ArgsTuple args_tuple)
+      -> std::enable_if_t<std::is_same_v<typename InsnType::InputArgsTuple, ArgsTuple>,
                           std::array<MachineReg, InsnType::kInfo.OutputRegistersCount()>> {
     enum ProcessWay {
       kFlagRegister,
@@ -546,14 +574,13 @@ class HeavyOptimizerFrontend {
       return result;
     }(static_cast<typename InsnType::OperandsTuple*>(nullptr));
 
-    std::tuple<Args...> args_tuple{args...};
     std::array<MachineReg, InsnType::kInfo.OutputRegistersCount()> output;
     std::size_t output_idx = 0;
     [&args_tuple, &output_idx, &output, this]<std::size_t... kIndexes>(
         std::integer_sequence<std::size_t, kIndexes...>) {
       builder_.Gen<InsnType>(
-          [&args_tuple, &output_idx, &output, this]<std::size_t kIndex>()
-              -> std::tuple_element_t<kIndex, typename InsnType::ConstructorArgsTuple> {
+          std::tuple{[&args_tuple, &output_idx, &output, this]<std::size_t kIndex>()
+                         -> std::tuple_element_t<kIndex, typename InsnType::ConstructorArgsTuple> {
             if constexpr (std::get<0>(kOperands[kIndex]) == kFlagRegister) {
               return output[output_idx++] = GetFlagsRegister();
             } else if constexpr (std::get<0>(kOperands[kIndex]) == kOutputRegister) {
@@ -573,14 +600,13 @@ class HeavyOptimizerFrontend {
               static_assert(std::get<0>(kOperands[kIndexes]) == kPassthroughOperand);
               return std::get<std::get<1>(kOperands[kIndex])>(args_tuple);
             }
-          }.template operator()<kIndexes>()...);
+          }.template operator()<kIndexes>()...});
     }(std::make_index_sequence<std::size(kOperands)>{});
     return output;
   }
 
   BERBERIS_DECLARE_MACHINE_INSN_ADAPTER(
       /*may_discard*/ auto Gen,
-      MachineInsn,
       InputArgsTuple,
       typename x86_64::MachineInsn<
           typename InsnType<typename CodeEmitter::Assemblers>::DeviceInsnInfo,

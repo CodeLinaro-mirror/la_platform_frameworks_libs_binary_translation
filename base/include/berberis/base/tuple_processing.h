@@ -17,6 +17,7 @@
 #ifndef BERBERIS_BASE_TUPLE_PROCESSING_H_
 #define BERBERIS_BASE_TUPLE_PROCESSING_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <tuple>
 #include <type_traits>
@@ -65,9 +66,6 @@ DEFINE_VALUE_OPERATOR(|)
 DEFINE_VALUE_OPERATOR(^)
 
 #pragma pop_macro("DEFINE_VALUE_OPERATOR")
-
-template <auto kValueParam>
-using Value = MetaValue<kValueParam>;
 
 // TypesToTypes provides type-level metaprogramming utilities for std::tuple (with support for
 // std::array if <array> include is present). It uses template specializations to perform operations
@@ -175,8 +173,8 @@ class TypesToTypes {
 class TypesToValues {
  public:
   template <typename TupleType, typename... ExtraLambdaArgTypes, typename Lambda>
-  static constexpr void Apply(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
-    ApplyHelper<TupleType, ExtraLambdaArgTypes...>(
+  static constexpr decltype(auto) FlatMap(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
+    return FlatMapHelper<TupleType, ExtraLambdaArgTypes...>(
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<TupleType>>{},
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
@@ -185,9 +183,10 @@ class TypesToValues {
             typename TemporaryType,
             typename... ExtraLambdaArgTypes,
             typename Lambda>
-  static constexpr void ApplyWithTemporary(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
+  static constexpr decltype(auto) FlatMapWithTemporary(Lambda&& lambda,
+                                                       ExtraLambdaArgTypes&&... extra_types) {
     TemporaryType tmp{};
-    ApplyHelper<TupleType, TemporaryType&, ExtraLambdaArgTypes...>(
+    return FlatMapHelper<TupleType, TemporaryType&, ExtraLambdaArgTypes...>(
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<TupleType>>{},
         tmp,
@@ -197,76 +196,48 @@ class TypesToValues {
             typename TemporaryType,
             typename... ExtraLambdaArgTypes,
             typename Lambda>
-  static constexpr void ApplyWithTemporary(TemporaryType tmp,
-                                           Lambda&& lambda,
-                                           ExtraLambdaArgTypes&&... extra_types) {
-    ApplyHelper<TupleType, TemporaryType&, ExtraLambdaArgTypes...>(
+  static constexpr decltype(auto) FlatMapWithTemporary(TemporaryType tmp,
+                                                       Lambda&& lambda,
+                                                       ExtraLambdaArgTypes&&... extra_types) {
+    return FlatMapHelper<TupleType, TemporaryType&, ExtraLambdaArgTypes...>(
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<TupleType>>{},
         tmp,
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
   }
 
-  template <typename TupleType,
-            typename OutputType,
-            typename... ExtraLambdaArgTypes,
-            typename Lambda>
-  static constexpr OutputType Generate(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
-    OutputType result;
-    ApplyHelper<TupleType, OutputType&, ExtraLambdaArgTypes...>(
+  template <typename TupleType, typename... ExtraLambdaArgTypes, typename Lambda>
+  static constexpr void ForEach(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
+    ForEachHelper<TupleType, ExtraLambdaArgTypes...>(
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-        result,
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
-    return result;
   }
   template <typename TupleType,
-            typename OutputType,
-            typename... ExtraLambdaArgTypes,
-            typename Lambda>
-  static constexpr OutputType Generate(OutputType result,
-                                       Lambda&& lambda,
-                                       ExtraLambdaArgTypes&&... extra_types) {
-    ApplyHelper<TupleType, OutputType&, ExtraLambdaArgTypes...>(
-        std::forward<Lambda>(lambda),
-        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-        result,
-        std::forward<ExtraLambdaArgTypes>(extra_types)...);
-    return result;
-  }
-  template <typename TupleType,
-            typename OutputType,
             typename TemporaryType,
             typename... ExtraLambdaArgTypes,
             typename Lambda>
-  static constexpr OutputType GenerateWithTemporary(Lambda&& lambda,
-                                                    ExtraLambdaArgTypes&&... extra_types) {
-    OutputType result;
+  static constexpr void ForEachWithTemporary(Lambda&& lambda,
+                                             ExtraLambdaArgTypes&&... extra_types) {
     TemporaryType tmp{};
-    ApplyHelper<TupleType, OutputType&, TemporaryType&, ExtraLambdaArgTypes...>(
+    ForEachHelper<TupleType, TemporaryType&, ExtraLambdaArgTypes...>(
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-        result,
         tmp,
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
-    return result;
   }
   template <typename TupleType,
-            typename OutputType,
             typename TemporaryType,
             typename... ExtraLambdaArgTypes,
             typename Lambda>
-  static constexpr OutputType GenerateWithTemporary(OutputType result,
-                                                    TemporaryType tmp,
-                                                    Lambda&& lambda,
-                                                    ExtraLambdaArgTypes&&... extra_types) {
-    ApplyHelper<TupleType, OutputType&, TemporaryType&, ExtraLambdaArgTypes...>(
+  static constexpr void ForEachWithTemporary(TemporaryType tmp,
+                                             Lambda&& lambda,
+                                             ExtraLambdaArgTypes&&... extra_types) {
+    ForEachHelper<TupleType, TemporaryType&, ExtraLambdaArgTypes...>(
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-        result,
         tmp,
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
-    return result;
   }
 
   template <typename TupleType, typename... ExtraLambdaArgTypes, typename Lambda>
@@ -303,11 +274,81 @@ class TypesToValues {
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
   }
 
+  template <typename TupleType,
+            typename OutputType,
+            typename... ExtraLambdaArgTypes,
+            typename Lambda>
+  static constexpr OutputType Produce(Lambda&& lambda, ExtraLambdaArgTypes&&... extra_types) {
+    OutputType result;
+    ForEachHelper<TupleType, OutputType&, ExtraLambdaArgTypes...>(
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        result,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+    return result;
+  }
+  template <typename TupleType,
+            typename OutputType,
+            typename... ExtraLambdaArgTypes,
+            typename Lambda>
+  static constexpr OutputType Produce(OutputType result,
+                                      Lambda&& lambda,
+                                      ExtraLambdaArgTypes&&... extra_types) {
+    ForEachHelper<TupleType, OutputType&, ExtraLambdaArgTypes...>(
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        result,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+    return result;
+  }
+  template <typename TupleType,
+            typename OutputType,
+            typename TemporaryType,
+            typename... ExtraLambdaArgTypes,
+            typename Lambda>
+  static constexpr OutputType ProduceWithTemporary(Lambda&& lambda,
+                                                   ExtraLambdaArgTypes&&... extra_types) {
+    OutputType result;
+    TemporaryType tmp{};
+    ForEachHelper<TupleType, OutputType&, TemporaryType&, ExtraLambdaArgTypes...>(
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        result,
+        tmp,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+    return result;
+  }
+  template <typename TupleType,
+            typename OutputType,
+            typename TemporaryType,
+            typename... ExtraLambdaArgTypes,
+            typename Lambda>
+  static constexpr OutputType ProduceWithTemporary(OutputType result,
+                                                   TemporaryType tmp,
+                                                   Lambda&& lambda,
+                                                   ExtraLambdaArgTypes&&... extra_types) {
+    ForEachHelper<TupleType, OutputType&, TemporaryType&, ExtraLambdaArgTypes...>(
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        result,
+        tmp,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+    return result;
+  }
+
  private:
   template <typename TupleType, typename... ExtraLambdaArgTypes, typename Lambda, std::size_t... Is>
-  static constexpr void ApplyHelper(Lambda&& lambda,
-                                    std::index_sequence<Is...>,
-                                    ExtraLambdaArgTypes&&... extra_types) {
+  static constexpr decltype(auto) FlatMapHelper(Lambda&& lambda,
+                                                std::index_sequence<Is...>,
+                                                ExtraLambdaArgTypes&&... extra_types) {
+    return std::tuple_cat(lambda.template operator()<std::tuple_element_t<Is, TupleType>>(
+        std::forward<ExtraLambdaArgTypes>(extra_types)...)...);
+  }
+
+  template <typename TupleType, typename... ExtraLambdaArgTypes, typename Lambda, std::size_t... Is>
+  static constexpr void ForEachHelper(Lambda&& lambda,
+                                      std::index_sequence<Is...>,
+                                      ExtraLambdaArgTypes&&... extra_types) {
     (lambda.template operator()<std::tuple_element_t<Is, TupleType>>(
          std::forward<ExtraLambdaArgTypes>(extra_types)...),
      ...);
@@ -356,126 +397,90 @@ class ValuesToTypes {
 // each element of the tuple.
 class ValuesToValues {
  public:
-  template <typename... ExtraLambdaArgTypes, typename TupleType, typename Lambda>
-  static constexpr void Apply(TupleType tuple,
-                              Lambda&& lambda,
-                              ExtraLambdaArgTypes&&... extra_types) {
-    ApplyHelper<ExtraLambdaArgTypes...>(tuple,
-                                        std::forward<Lambda>(lambda),
-                                        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-                                        std::forward<ExtraLambdaArgTypes>(extra_types)...);
-  }
-  template <typename TemporaryType,
-            typename... ExtraLambdaArgTypes,
-            typename TupleType,
-            typename Lambda>
-  static constexpr void ApplyWithTemporary(TupleType tuple,
-                                           Lambda&& lambda,
-                                           ExtraLambdaArgTypes&&... extra_types) {
-    TemporaryType tmp{};
-    ApplyHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
-        std::forward<Lambda>(lambda),
-        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-        tmp,
-        std::forward<ExtraLambdaArgTypes>(extra_types)...);
-  }
-  template <typename TemporaryType,
-            typename... ExtraLambdaArgTypes,
-            typename TupleType,
-            typename Lambda>
-  static constexpr void ApplyWithTemporary(TupleType tuple,
-                                           TemporaryType tmp,
-                                           Lambda&& lambda,
-                                           ExtraLambdaArgTypes&&... extra_types) {
-    ApplyHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
-        std::forward<Lambda>(lambda),
-        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-        tmp,
-        std::forward<ExtraLambdaArgTypes>(extra_types)...);
-  }
-
   template <typename TupleType>
   static constexpr TypesToTypes::Enumerate<TupleType> Enumerate(TupleType tuple) {
     return Zip(TypesToTypes::Indexes<TupleType>{}, tuple);
   }
 
-  template <typename OutputType,
-            typename... ExtraLambdaArgTypes,
-            typename TupleType,
-            typename Lambda>
-  static constexpr OutputType Generate(TupleType tuple,
-                                       Lambda&& lambda,
-                                       ExtraLambdaArgTypes&&... extra_types) {
-    // Note: result is explicitly default initialized, not value initialized.
-    // This helps to catch mistakes in costexpr context, because an attempt to assign uninitialized
-    // result to constexpr variable would fail. Use the next form if you need initialization.
-    OutputType result;
-    ApplyHelper<OutputType&, ExtraLambdaArgTypes...>(
+  template <typename... ExtraLambdaArgTypes, typename TupleType, typename Lambda>
+  static constexpr decltype(auto) FlatMap(TupleType tuple,
+                                          Lambda&& lambda,
+                                          ExtraLambdaArgTypes&&... extra_types) {
+    return FlatMapHelper<ExtraLambdaArgTypes...>(
         tuple,
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-        result,
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
-    return result;
   }
-  template <typename OutputType,
+  template <typename TemporaryType,
             typename... ExtraLambdaArgTypes,
             typename TupleType,
             typename Lambda>
-  static constexpr OutputType Generate(TupleType tuple,
-                                       OutputType result,
-                                       Lambda&& lambda,
-                                       ExtraLambdaArgTypes&&... extra_types) {
-    ApplyHelper<OutputType&, ExtraLambdaArgTypes...>(
-        tuple,
-        std::forward<Lambda>(lambda),
-        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-        result,
-        std::forward<ExtraLambdaArgTypes>(extra_types)...);
-    return result;
-  }
-  template <typename OutputType,
-            typename TemporaryType,
-            typename... ExtraLambdaArgTypes,
-            typename TupleType,
-            typename Lambda>
-  static constexpr OutputType GenerateWithTemporary(TupleType tuple,
-                                                    Lambda&& lambda,
-                                                    ExtraLambdaArgTypes&&... extra_types) {
-    // Note: result is explicitly default initialized, not value initialized.
-    // This helps to catch mistakes in costexpr context, because an attempt to assign uninitialized
-    // result to constexpr variable would fail. Use the next form if you need initialization.
-    OutputType result;
+  static constexpr decltype(auto) FlatMapWithTemporary(TupleType tuple,
+                                                       Lambda&& lambda,
+                                                       ExtraLambdaArgTypes&&... extra_types) {
     TemporaryType tmp{};
-    ApplyHelper<OutputType&, TemporaryType&, ExtraLambdaArgTypes...>(
+    return FlatMapHelper<TemporaryType&, ExtraLambdaArgTypes...>(
         tuple,
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-        result,
         tmp,
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
-    return result;
   }
-  template <typename OutputType,
-            typename TemporaryType,
+  template <typename TemporaryType,
             typename... ExtraLambdaArgTypes,
             typename TupleType,
             typename Lambda>
-  static constexpr OutputType GenerateWithTemporary(TupleType tuple,
-                                                    OutputType result,
-                                                    TemporaryType tmp,
-                                                    Lambda&& lambda,
-                                                    ExtraLambdaArgTypes&&... extra_types) {
-    ApplyHelper<OutputType&, TemporaryType&, ExtraLambdaArgTypes...>(
+  static constexpr decltype(auto) FlatMapWithTemporary(TupleType tuple,
+                                                       TemporaryType tmp,
+                                                       Lambda&& lambda,
+                                                       ExtraLambdaArgTypes&&... extra_types) {
+    return FlatMapHelper<TemporaryType&, ExtraLambdaArgTypes...>(
         tuple,
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<TupleType>>{},
-        result,
         tmp,
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
-    return result;
+  }
+
+  template <typename... ExtraLambdaArgTypes, typename TupleType, typename Lambda>
+  static constexpr void ForEach(TupleType tuple,
+                                Lambda&& lambda,
+                                ExtraLambdaArgTypes&&... extra_types) {
+    ForEachHelper<ExtraLambdaArgTypes...>(tuple,
+                                          std::forward<Lambda>(lambda),
+                                          std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+                                          std::forward<ExtraLambdaArgTypes>(extra_types)...);
+  }
+  template <typename TemporaryType,
+            typename... ExtraLambdaArgTypes,
+            typename TupleType,
+            typename Lambda>
+  static constexpr void ForEachWithTemporary(TupleType tuple,
+                                             Lambda&& lambda,
+                                             ExtraLambdaArgTypes&&... extra_types) {
+    TemporaryType tmp{};
+    ForEachHelper<TemporaryType&, ExtraLambdaArgTypes...>(
+        tuple,
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        tmp,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+  }
+  template <typename TemporaryType,
+            typename... ExtraLambdaArgTypes,
+            typename TupleType,
+            typename Lambda>
+  static constexpr void ForEachWithTemporary(TupleType tuple,
+                                             TemporaryType tmp,
+                                             Lambda&& lambda,
+                                             ExtraLambdaArgTypes&&... extra_types) {
+    ForEachHelper<TemporaryType&, ExtraLambdaArgTypes...>(
+        tuple,
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        tmp,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
   }
 
   template <typename... ExtraLambdaArgTypes, typename TupleType, typename Lambda>
@@ -529,12 +534,98 @@ class ValuesToValues {
                                                        std::tuple_size_v<TupleTypeRight>)>{});
   }
 
+  template <typename OutputType,
+            typename... ExtraLambdaArgTypes,
+            typename TupleType,
+            typename Lambda>
+  static constexpr OutputType Produce(TupleType tuple,
+                                      Lambda&& lambda,
+                                      ExtraLambdaArgTypes&&... extra_types) {
+    // Note: result is explicitly default initialized, not value initialized.
+    // This helps to catch mistakes in costexpr context, because an attempt to assign uninitialized
+    // result to constexpr variable would fail. Use the next form if you need initialization.
+    OutputType result;
+    ForEachHelper<OutputType&, ExtraLambdaArgTypes...>(
+        tuple,
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        result,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+    return result;
+  }
+  template <typename OutputType,
+            typename... ExtraLambdaArgTypes,
+            typename TupleType,
+            typename Lambda>
+  static constexpr OutputType Produce(TupleType tuple,
+                                      OutputType result,
+                                      Lambda&& lambda,
+                                      ExtraLambdaArgTypes&&... extra_types) {
+    ForEachHelper<OutputType&, ExtraLambdaArgTypes...>(
+        tuple,
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        result,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+    return result;
+  }
+  template <typename OutputType,
+            typename TemporaryType,
+            typename... ExtraLambdaArgTypes,
+            typename TupleType,
+            typename Lambda>
+  static constexpr OutputType ProduceWithTemporary(TupleType tuple,
+                                                   Lambda&& lambda,
+                                                   ExtraLambdaArgTypes&&... extra_types) {
+    // Note: result is explicitly default initialized, not value initialized.
+    // This helps to catch mistakes in costexpr context, because an attempt to assign uninitialized
+    // result to constexpr variable would fail. Use the next form if you need initialization.
+    OutputType result;
+    TemporaryType tmp{};
+    ForEachHelper<OutputType&, TemporaryType&, ExtraLambdaArgTypes...>(
+        tuple,
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        result,
+        tmp,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+    return result;
+  }
+  template <typename OutputType,
+            typename TemporaryType,
+            typename... ExtraLambdaArgTypes,
+            typename TupleType,
+            typename Lambda>
+  static constexpr OutputType ProduceWithTemporary(TupleType tuple,
+                                                   OutputType result,
+                                                   TemporaryType tmp,
+                                                   Lambda&& lambda,
+                                                   ExtraLambdaArgTypes&&... extra_types) {
+    ForEachHelper<OutputType&, TemporaryType&, ExtraLambdaArgTypes...>(
+        tuple,
+        std::forward<Lambda>(lambda),
+        std::make_index_sequence<std::tuple_size_v<TupleType>>{},
+        result,
+        tmp,
+        std::forward<ExtraLambdaArgTypes>(extra_types)...);
+    return result;
+  }
+
  private:
   template <typename... ExtraLambdaArgTypes, typename TupleType, std::size_t... Is, typename Lambda>
-  static constexpr void ApplyHelper(TupleType tuple,
-                                    Lambda&& lambda,
-                                    std::index_sequence<Is...>,
-                                    ExtraLambdaArgTypes&&... extra_types) {
+  static constexpr decltype(auto) FlatMapHelper(TupleType tuple,
+                                                Lambda&& lambda,
+                                                std::index_sequence<Is...>,
+                                                ExtraLambdaArgTypes&&... extra_types) {
+    return std::tuple_cat(lambda.template operator()<std::tuple_element_t<Is, TupleType>>(
+        std::get<Is>(tuple), std::forward<ExtraLambdaArgTypes>(extra_types)...)...);
+  }
+
+  template <typename... ExtraLambdaArgTypes, typename TupleType, std::size_t... Is, typename Lambda>
+  static constexpr void ForEachHelper(TupleType tuple,
+                                      Lambda&& lambda,
+                                      std::index_sequence<Is...>,
+                                      ExtraLambdaArgTypes&&... extra_types) {
     (lambda.template operator()<std::tuple_element_t<Is, TupleType>>(
          std::get<Is>(tuple), std::forward<ExtraLambdaArgTypes>(extra_types)...),
      ...);

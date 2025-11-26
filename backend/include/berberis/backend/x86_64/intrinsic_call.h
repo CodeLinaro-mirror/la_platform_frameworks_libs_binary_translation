@@ -98,6 +98,8 @@ inline constexpr auto kClobberRegisters = kTokRegisterClass<ClobberRegisters>;
 template <auto kRegisterClass>
 class kRegisterClassChecker {
  public:
+  // Use empty class and explicit operator() here because some compiler don't work correctly
+  // with lambda in the unevaluted contexts. See: b/461358523
   template <typename RegisterClass>
   constexpr auto operator()() const {
     return kRegisterClass == &x86_64::kRegisterClass<RegisterClass>;

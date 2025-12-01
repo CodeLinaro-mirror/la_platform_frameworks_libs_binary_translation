@@ -179,6 +179,20 @@ class TypesToTypes {
     static constexpr std::tuple<MetaValue<Is>...> Indexes(std::index_sequence<Is...>);
   };
 
+  template <auto kLambda>
+  class FilterHelper {
+   public:
+    template <typename Type>
+    constexpr auto operator()() const {
+      constexpr bool kAccepted = kLambda.template operator()<Type>();
+      if constexpr (kAccepted) {
+        return kTypes<Type>;
+      } else {
+        return kTypes<>;
+      }
+    }
+  };
+
   template <typename... Types, auto kLambda>
   class FlatMapHelper<std::tuple<Types...>, kLambda> {
    public:
@@ -251,19 +265,6 @@ class TypesToTypes {
     using Result = typename ZipHelper<Concat<TypeLeft>, Concat<TypeRight>>::Result;
   };
 
-  template <auto kLambda>
-  class FilterHelper {
-   public:
-    template <typename Type>
-    constexpr auto operator()() const {
-      constexpr bool kAccepted = kLambda.template operator()<Type>();
-      if constexpr (kAccepted) {
-        return kTypes<Type>;
-      } else {
-        return kTypes<>;
-      }
-    }
-  };
 };
 
 // TypesToValues provides value-level functional-style operations on std::tuple types. It also
@@ -558,17 +559,17 @@ class TypesToTypes::TakeSkipHelper {
     std::size_t size = 0;
     // Note: we don't really need the return value of TypesToValues::All here, instead we rely on
     // the fact that TypesToValues::All stops calculations when it finds first false.
-    TypesToValues::All<TupleType>(
-        []<typename Type>(std::size_t& size) {
-          if (kLambda.template operator()<Type>(extra_lambda_values...)) {
-            size++;
-            return true;
-          } else {
-            return false;
-          }
-        },
-        size);
+    TypesToValues::All<TupleType>(TakeSkipHelper{}, size);
     return size;
+  }
+  template <typename Type>
+  constexpr auto operator()(std::size_t& size) const {
+    if (kLambda.template operator()<Type>(extra_lambda_values...)) {
+      size++;
+      return true;
+    } else {
+      return false;
+    }
   }
 };
 

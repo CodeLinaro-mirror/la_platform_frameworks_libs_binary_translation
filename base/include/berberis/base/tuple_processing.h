@@ -108,6 +108,8 @@ class TypesToTypes {
   class TakeHelper;
   template <typename TupleType, auto kLambda, auto... extra_lambda_values>
   class TakeSkipHelper;
+  template <typename ArrayType, typename TupleType>
+  class ToArrayHelper;
   template <typename... Types>
   class ZipHelper;
   template <typename... Types>
@@ -198,6 +200,9 @@ class TypesToTypes {
 
   template <typename TupleType, auto kLambda>
   using TakeWhile = Take<TupleType, TakeSkipHelper<TupleType, kLambda>::Produce()>;
+
+  template <typename ArrayType, typename TupleType = void>
+  using ToArray = typename ToArrayHelper<ArrayType, TupleType>::Result;
 
   template <typename... Types>
   using ZipShortest = typename ZipShortestHelper<Types...>::Result;
@@ -383,6 +388,15 @@ class TypesToTypes {
         return kTypes<>;
       }
     }
+  };
+
+  template <typename ArrayType>
+  class ToConstArrayHelper;
+
+  template <typename Type, std::size_t kSize>
+  class ToConstArrayHelper<std::array<Type, kSize>> {
+   public:
+    using Result = std::array<const Type, kSize>;
   };
 
   template <typename... Types>
@@ -866,7 +880,7 @@ class ValuesToValues {
                             Lambda&& lambda,
                             ExtraLambdaArgTypes&&... extra_types) {
     return AllHelper<ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
@@ -880,7 +894,7 @@ class ValuesToValues {
                                          ExtraLambdaArgTypes&&... extra_types) {
     TemporaryType tmp{};
     return AllHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -895,7 +909,7 @@ class ValuesToValues {
                                          Lambda&& lambda,
                                          ExtraLambdaArgTypes&&... extra_types) {
     return AllHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -907,7 +921,7 @@ class ValuesToValues {
                             Lambda&& lambda,
                             ExtraLambdaArgTypes&&... extra_types) {
     return AnyHelper<ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
@@ -921,7 +935,7 @@ class ValuesToValues {
                                          ExtraLambdaArgTypes&&... extra_types) {
     TemporaryType tmp{};
     return AnyHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -936,7 +950,7 @@ class ValuesToValues {
                                          Lambda&& lambda,
                                          ExtraLambdaArgTypes&&... extra_types) {
     return AnyHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -953,7 +967,7 @@ class ValuesToValues {
                                 Lambda&& lambda,
                                 ExtraLambdaArgTypes&&... extra_types) {
     return CountIfHelper<ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
@@ -967,7 +981,7 @@ class ValuesToValues {
                                              ExtraLambdaArgTypes&&... extra_types) {
     TemporaryType tmp{};
     return CountIfHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -982,7 +996,7 @@ class ValuesToValues {
                                              Lambda&& lambda,
                                              ExtraLambdaArgTypes&&... extra_types) {
     return CountIfHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -990,9 +1004,8 @@ class ValuesToValues {
   }
 
   template <typename TupleType>
-  static constexpr TypesToTypes::Enumerate<std::remove_cvref_t<TupleType>> Enumerate(
-      TupleType&& tuple) {
-    return Zip(TypesToTypes::Indexes<std::remove_cvref_t<TupleType>>{}, tuple);
+  static constexpr TypesToTypes::Enumerate<TupleType> Enumerate(TupleType&& tuple) {
+    return Zip(TypesToTypes::Indexes<TupleType>{}, std::forward<TupleType>(tuple));
   }
 
   template <typename... ExtraLambdaArgTypes, typename TupleType, typename Lambda>
@@ -1000,7 +1013,7 @@ class ValuesToValues {
                                          Lambda&& lambda,
                                          ExtraLambdaArgTypes&&... extra_types) {
     return FilterHelper<ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
@@ -1014,7 +1027,7 @@ class ValuesToValues {
                                                       ExtraLambdaArgTypes&&... extra_types) {
     TemporaryType tmp{};
     return FilterHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -1029,7 +1042,7 @@ class ValuesToValues {
                                                       Lambda&& lambda,
                                                       ExtraLambdaArgTypes&&... extra_types) {
     return FilterHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -1041,7 +1054,7 @@ class ValuesToValues {
                                           Lambda&& lambda,
                                           ExtraLambdaArgTypes&&... extra_types) {
     return FlatMapHelper<ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
@@ -1055,7 +1068,7 @@ class ValuesToValues {
                                                        ExtraLambdaArgTypes&&... extra_types) {
     TemporaryType tmp{};
     return FlatMapHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -1070,7 +1083,7 @@ class ValuesToValues {
                                                        Lambda&& lambda,
                                                        ExtraLambdaArgTypes&&... extra_types) {
     return FlatMapHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -1082,7 +1095,7 @@ class ValuesToValues {
                                 Lambda&& lambda,
                                 ExtraLambdaArgTypes&&... extra_types) {
     ForEachHelper<ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
@@ -1096,7 +1109,7 @@ class ValuesToValues {
                                              ExtraLambdaArgTypes&&... extra_types) {
     TemporaryType tmp{};
     ForEachHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -1111,7 +1124,7 @@ class ValuesToValues {
                                              Lambda&& lambda,
                                              ExtraLambdaArgTypes&&... extra_types) {
     ForEachHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -1123,7 +1136,7 @@ class ValuesToValues {
                                       Lambda&& lambda,
                                       ExtraLambdaArgTypes&&... extra_types) {
     return MapHelper<ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         std::forward<ExtraLambdaArgTypes>(extra_types)...);
@@ -1137,7 +1150,7 @@ class ValuesToValues {
                                                    ExtraLambdaArgTypes&&... extra_types) {
     TemporaryType tmp{};
     return MapHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -1152,7 +1165,7 @@ class ValuesToValues {
                                                    Lambda&& lambda,
                                                    ExtraLambdaArgTypes&&... extra_types) {
     return MapHelper<TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         tmp,
@@ -1171,7 +1184,7 @@ class ValuesToValues {
     // result to constexpr variable would fail. Use the next form if you need initialization.
     OutputType result;
     ForEachHelper<OutputType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         result,
@@ -1187,7 +1200,7 @@ class ValuesToValues {
                                       Lambda&& lambda,
                                       ExtraLambdaArgTypes&&... extra_types) {
     ForEachHelper<OutputType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         result,
@@ -1208,7 +1221,7 @@ class ValuesToValues {
     OutputType result;
     TemporaryType tmp{};
     ForEachHelper<OutputType&, TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         result,
@@ -1227,7 +1240,7 @@ class ValuesToValues {
                                                    Lambda&& lambda,
                                                    ExtraLambdaArgTypes&&... extra_types) {
     ForEachHelper<OutputType&, TemporaryType&, ExtraLambdaArgTypes...>(
-        tuple,
+        std::forward<TupleType>(tuple),
         std::forward<Lambda>(lambda),
         std::make_index_sequence<std::tuple_size_v<std::remove_reference_t<TupleType>>>{},
         result,
@@ -1239,8 +1252,8 @@ class ValuesToValues {
   template <typename Type, typename TupleType>
   static constexpr decltype(auto) Retain(TupleType&& tuple) {
     return FlatMapHelper(
-        tuple,
-        []<typename TypeToCheck>(auto&& elem) -> decltype(auto) {
+        std::forward<TupleType>(tuple),
+        []<typename TypeToCheck>(TypeToCheck&& elem) -> decltype(auto) {
           if constexpr (std::is_same_v<Type, TypeToCheck>) {
             return std::tuple<TypeToCheck>{std::forward<decltype(elem)>(elem)};
           } else {
@@ -1252,8 +1265,8 @@ class ValuesToValues {
   template <typename Type, typename TupleType>
   static constexpr decltype(auto) RetainIfNot(TupleType&& tuple) {
     return FlatMapHelper(
-        tuple,
-        []<typename TypeToCheck>(auto&& elem) -> decltype(auto) {
+        std::forward<TupleType>(tuple),
+        []<typename TypeToCheck>(TypeToCheck&& elem) -> decltype(auto) {
           if constexpr (std::is_same_v<Type, TypeToCheck>) {
             return std::tuple<>{};
           } else {
@@ -1267,7 +1280,7 @@ class ValuesToValues {
   static constexpr decltype(auto) Skip(TupleType&& tuple) {
     return FlatMapHelper(
         Enumerate(std::forward<TupleType>(tuple)),
-        []<typename Type>(auto&& elem) -> decltype(auto) {
+        []<typename Type>(Type&& elem) -> decltype(auto) {
           constexpr std::size_t kIdx = std::tuple_element_t<0, Type>{};
           if constexpr (kIdx >= kCount) {
             return std::tuple<std::tuple_element_t<1, Type>>(
@@ -1281,23 +1294,27 @@ class ValuesToValues {
 
   template <typename TupleType, auto kCount>
   static constexpr decltype(auto) Skip(TupleType&& tuple, MetaValue<kCount>) {
-    return Skip<kCount, TupleType>(tuple);
+    return Skip<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <auto kLambda, auto... extra_lambda_values, typename TupleType>
   static constexpr decltype(auto) SkipWhile(TupleType&& tuple) {
-    constexpr std::size_t kCount = TypesToTypes::
-        TakeSkipHelper<std::remove_cvref_t<TupleType>, kLambda, extra_lambda_values...>::Produce();
-    return Skip<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TypesToTypes::TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                                     kLambda,
+                                     extra_lambda_values...>::Produce();
+    return Skip<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <typename TupleType, auto kLambda, auto... extra_lambda_values>
   static constexpr decltype(auto) SkipWhile(TupleType&& tuple,
                                             MetaValue<kLambda>,
                                             MetaValue<extra_lambda_values>...) {
-    constexpr std::size_t kCount = TypesToTypes::
-        TakeSkipHelper<std::remove_cvref_t<TupleType>, kLambda, extra_lambda_values...>::Produce();
-    return Skip<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TypesToTypes::TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                                     kLambda,
+                                     extra_lambda_values...>::Produce();
+    return Skip<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <typename InitialValueType,
@@ -1305,11 +1322,12 @@ class ValuesToValues {
             auto... extra_lambda_values,
             typename TupleType>
   static constexpr decltype(auto) SkipWhileWithTemporary(TupleType&& tuple) {
-    constexpr std::size_t kCount = TakeSkipHelper<std::remove_cvref_t<TupleType>,
-                                                  InitialValueType{},
-                                                  kLambda,
-                                                  extra_lambda_values...>();
-    return Skip<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                       InitialValueType{},
+                       kLambda,
+                       extra_lambda_values...>();
+    return Skip<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <typename InitialValueType,
@@ -1319,20 +1337,22 @@ class ValuesToValues {
   static constexpr decltype(auto) SkipWhileWithTemporary(TupleType&& tuple,
                                                          MetaValue<kLambda>,
                                                          MetaValue<extra_lambda_values>...) {
-    constexpr std::size_t kCount = TakeSkipHelper<std::remove_cvref_t<TupleType>,
-                                                  InitialValueType{},
-                                                  kLambda,
-                                                  extra_lambda_values...>();
-    return Skip<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                       InitialValueType{},
+                       kLambda,
+                       extra_lambda_values...>();
+    return Skip<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <auto initial_value, auto kLambda, auto... extra_lambda_values, typename TupleType>
   static constexpr decltype(auto) SkipWhileWithTemporary(TupleType&& tuple) {
-    constexpr std::size_t kCount = TakeSkipHelper<std::remove_cvref_t<TupleType>,
-                                                  initial_value,
-                                                  kLambda,
-                                                  extra_lambda_values...>();
-    return Skip<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                       initial_value,
+                       kLambda,
+                       extra_lambda_values...>();
+    return Skip<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <auto initial_value, typename TupleType, auto kLambda, auto... extra_lambda_values>
@@ -1340,18 +1360,19 @@ class ValuesToValues {
                                                          MetaValue<initial_value>,
                                                          MetaValue<kLambda>,
                                                          MetaValue<extra_lambda_values>...) {
-    constexpr std::size_t kCount = TakeSkipHelper<std::remove_cvref_t<TupleType>,
-                                                  initial_value,
-                                                  kLambda,
-                                                  extra_lambda_values...>();
-    return Skip<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                       initial_value,
+                       kLambda,
+                       extra_lambda_values...>();
+    return Skip<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <auto kCount, typename TupleType>
   static constexpr decltype(auto) Take(TupleType&& tuple) {
     return FlatMapHelper(
         Enumerate(std::forward<TupleType>(tuple)),
-        []<typename Type>(auto&& elem) -> decltype(auto) {
+        []<typename Type>(Type&& elem) -> decltype(auto) {
           constexpr std::size_t kIdx = std::tuple_element_t<0, Type>{};
           if constexpr (kIdx < kCount) {
             return std::tuple<std::tuple_element_t<1, Type>>(
@@ -1365,23 +1386,27 @@ class ValuesToValues {
 
   template <auto kCount, typename TupleType>
   static constexpr decltype(auto) Take(TupleType&& tuple, MetaValue<kCount>) {
-    return Take<kCount, TupleType>(tuple);
+    return Take<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <auto kLambda, auto... extra_lambda_values, typename TupleType>
   static constexpr decltype(auto) TakeWhile(TupleType&& tuple) {
-    constexpr std::size_t kCount = TypesToTypes::
-        TakeSkipHelper<std::remove_cvref_t<TupleType>, kLambda, extra_lambda_values...>::Produce();
-    return Take<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TypesToTypes::TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                                     kLambda,
+                                     extra_lambda_values...>::Produce();
+    return Take<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <typename TupleType, auto kLambda, auto... extra_lambda_values>
   static constexpr decltype(auto) TakeWhile(TupleType&& tuple,
                                             MetaValue<kLambda>,
                                             MetaValue<extra_lambda_values>...) {
-    constexpr std::size_t kCount = TypesToTypes::
-        TakeSkipHelper<std::remove_cvref_t<TupleType>, kLambda, extra_lambda_values...>::Produce();
-    return Take<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TypesToTypes::TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                                     kLambda,
+                                     extra_lambda_values...>::Produce();
+    return Take<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <typename InitialValueType,
@@ -1389,11 +1414,12 @@ class ValuesToValues {
             auto... extra_lambda_values,
             typename TupleType>
   static constexpr decltype(auto) TakeWhileWithTemporary(TupleType&& tuple) {
-    constexpr std::size_t kCount = TakeSkipHelper<std::remove_cvref_t<TupleType>,
-                                                  InitialValueType{},
-                                                  kLambda,
-                                                  extra_lambda_values...>();
-    return Take<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                       InitialValueType{},
+                       kLambda,
+                       extra_lambda_values...>();
+    return Take<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <typename InitialValueType,
@@ -1403,20 +1429,22 @@ class ValuesToValues {
   static constexpr decltype(auto) TakeWhileWithTemporary(TupleType&& tuple,
                                                          MetaValue<kLambda>,
                                                          MetaValue<extra_lambda_values>...) {
-    constexpr std::size_t kCount = TakeSkipHelper<std::remove_cvref_t<TupleType>,
-                                                  InitialValueType{},
-                                                  kLambda,
-                                                  extra_lambda_values...>();
-    return Take<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                       InitialValueType{},
+                       kLambda,
+                       extra_lambda_values...>();
+    return Take<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <auto initial_value, auto kLambda, auto... extra_lambda_values, typename TupleType>
   static constexpr decltype(auto) TakeWhileWithTemporary(TupleType&& tuple) {
-    constexpr std::size_t kCount = TakeSkipHelper<std::remove_cvref_t<TupleType>,
-                                                  initial_value,
-                                                  kLambda,
-                                                  extra_lambda_values...>();
-    return Take<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                       initial_value,
+                       kLambda,
+                       extra_lambda_values...>();
+    return Take<kCount, TupleType>(std::forward<TupleType>(tuple));
   }
 
   template <auto initial_value, typename TupleType, auto kLambda, auto... extra_lambda_values>
@@ -1424,27 +1452,42 @@ class ValuesToValues {
                                                          MetaValue<initial_value>,
                                                          MetaValue<kLambda>,
                                                          MetaValue<extra_lambda_values>...) {
-    constexpr std::size_t kCount = TakeSkipHelper<std::remove_cvref_t<TupleType>,
-                                                  initial_value,
-                                                  kLambda,
-                                                  extra_lambda_values...>();
-    return Take<kCount, TupleType>(tuple);
+    constexpr std::size_t kCount =
+        TakeSkipHelper<typename TypesToTypes::ConcatHelper<TupleType>::Result,
+                       initial_value,
+                       kLambda,
+                       extra_lambda_values...>();
+    return Take<kCount, TupleType>(std::forward<TupleType>(tuple));
+  }
+
+  template <typename TupleType>
+  static constexpr auto ToArray(TupleType&& tuple) {
+    return std::apply(
+        []<typename... Arg>(Arg&&... arg) { return std::array{std::forward<Arg>(arg)...}; },
+        std::forward<TupleType>(tuple));
+  }
+
+  template <typename ArrayElement, typename TupleType>
+  static constexpr auto ToArray(TupleType&& tuple) {
+    return std::apply(
+        []<typename... Arg>(Arg&&... arg) {
+          return std::array<ArrayElement, sizeof...(Arg)>{std::forward<Arg>(arg)...};
+        },
+        std::forward<TupleType>(tuple));
   }
 
   template <typename... TupleTypes>
-  static constexpr TypesToTypes::Zip<std::remove_cvref_t<TupleTypes>...> Zip(
-      TupleTypes&&... tuples) {
-    return ZipHelper<TypesToTypes::Zip<std::remove_cvref_t<TupleTypes>...>>(
-        std::tuple<std::remove_cvref_t<TupleTypes>...>{tuples...},
+  static constexpr TypesToTypes::Zip<TupleTypes...> Zip(TupleTypes&&... tuples) {
+    return ZipHelper<TypesToTypes::Zip<TupleTypes...>>(
+        std::tuple<TupleTypes...>{std::forward<TupleTypes>(tuples)...},
         std::make_index_sequence<std::min(
             {std::tuple_size_v<std::remove_reference_t<TupleTypes>>...})>{},
         std::make_index_sequence<sizeof...(TupleTypes)>{});
   }
   template <typename... TupleTypes>
-  static constexpr TypesToTypes::ZipShortest<std::remove_cvref_t<TupleTypes>...> ZipShortest(
-      TupleTypes&&... tuples) {
-    return ZipHelper<TypesToTypes::ZipShortest<std::remove_cvref_t<TupleTypes>...>>(
-        std::tuple<std::remove_cvref_t<TupleTypes>...>{tuples...},
+  static constexpr TypesToTypes::ZipShortest<TupleTypes...> ZipShortest(TupleTypes&&... tuples) {
+    return ZipHelper<TypesToTypes::ZipShortest<TupleTypes...>>(
+        std::tuple<TupleTypes...>{std::forward<TupleTypes>(tuples)...},
         std::make_index_sequence<std::min(
             {std::tuple_size_v<std::remove_reference_t<TupleTypes>>...})>{},
         std::make_index_sequence<sizeof...(TupleTypes)>{});
@@ -1458,7 +1501,8 @@ class ValuesToValues {
                                   ExtraLambdaArgTypes&&... extra_types) {
     return (
         static_cast<bool>(
-            lambda.template operator()<std::tuple_element_t<Is, std::remove_cvref_t<TupleType>>>(
+            lambda.template operator()<
+                std::tuple_element_t<Is, typename TypesToTypes::ConcatHelper<TupleType>::Result>>(
                 std::get<Is>(std::forward<TupleType>(tuple)),
                 std::forward<ExtraLambdaArgTypes>(extra_types)...)) &&
         ... && true);
@@ -1471,7 +1515,8 @@ class ValuesToValues {
                                   ExtraLambdaArgTypes&&... extra_types) {
     return (
         static_cast<bool>(
-            lambda.template operator()<std::tuple_element_t<Is, std::remove_cvref_t<TupleType>>>(
+            lambda.template operator()<
+                std::tuple_element_t<Is, typename TypesToTypes::ConcatHelper<TupleType>::Result>>(
                 std::get<Is>(std::forward<TupleType>(tuple)),
                 std::forward<ExtraLambdaArgTypes>(extra_types)...)) ||
         ... || false);
@@ -1484,7 +1529,8 @@ class ValuesToValues {
                                       ExtraLambdaArgTypes&&... extra_types) {
     return (
         static_cast<bool>(
-            lambda.template operator()<std::tuple_element_t<Is, std::remove_cvref_t<TupleType>>>(
+            lambda.template operator()<
+                std::tuple_element_t<Is, typename TypesToTypes::ConcatHelper<TupleType>::Result>>(
                 std::get<Is>(std::forward<TupleType>(tuple)),
                 std::forward<ExtraLambdaArgTypes>(extra_types)...)) +
         ... + std::size_t{0});
@@ -1497,7 +1543,7 @@ class ValuesToValues {
                                                ExtraLambdaArgTypes&&... extra_types) {
     return std::tuple_cat(
         [lambda = std::forward<Lambda>(lambda)]<typename ElementType>(
-            auto&& element, ExtraLambdaArgTypes&&... extra_types) {
+            ElementType&& element, ExtraLambdaArgTypes&&... extra_types) {
           auto lambda_result = lambda.template operator()<ElementType>(
               std::forward<ExtraLambdaArgTypes>(extra_types)...);
           constexpr bool kCheckResult = decltype(lambda_result){};
@@ -1507,7 +1553,8 @@ class ValuesToValues {
             return std::tuple<>{};
           }
         }
-            .template operator()<std::tuple_element_t<Is, std::remove_cvref_t<TupleType>>>(
+            .template operator()<
+                std::tuple_element_t<Is, typename TypesToTypes::ConcatHelper<TupleType>::Result>>(
                 std::get<Is>(std::forward<TupleType>(tuple)),
                 std::forward<ExtraLambdaArgTypes>(extra_types)...)...);
   }
@@ -1518,7 +1565,8 @@ class ValuesToValues {
                                                 std::index_sequence<Is...>,
                                                 ExtraLambdaArgTypes&&... extra_types) {
     return std::tuple_cat(
-        lambda.template operator()<std::tuple_element_t<Is, std::remove_cvref_t<TupleType>>>(
+        lambda.template operator()<
+            std::tuple_element_t<Is, typename TypesToTypes::ConcatHelper<TupleType>::Result>>(
             std::get<Is>(std::forward<TupleType>(tuple)),
             std::forward<ExtraLambdaArgTypes>(extra_types)...)...);
   }
@@ -1528,7 +1576,8 @@ class ValuesToValues {
                                       Lambda&& lambda,
                                       std::index_sequence<Is...>,
                                       ExtraLambdaArgTypes&&... extra_types) {
-    (lambda.template operator()<std::tuple_element_t<Is, std::remove_cvref_t<TupleType>>>(
+    (lambda.template
+     operator()<std::tuple_element_t<Is, typename TypesToTypes::ConcatHelper<TupleType>::Result>>(
          std::get<Is>(std::forward<TupleType>(tuple)),
          std::forward<ExtraLambdaArgTypes>(extra_types)...),
      ...);
@@ -1541,11 +1590,13 @@ class ValuesToValues {
                                             ExtraLambdaArgTypes&&... extra_types) {
     // Note: we need to specify the type of tuple here explicitly, because otherwise type deduction
     // would produce `int` where we want `const int&`.
-    return std::tuple<decltype(lambda.template
-                               operator()<std::tuple_element_t<Is, std::remove_cvref_t<TupleType>>>(
-                                   std::get<Is>(std::forward<TupleType>(tuple)),
-                                   std::forward<ExtraLambdaArgTypes>(extra_types)...))...> {
-      lambda.template operator()<std::tuple_element_t<Is, std::remove_cvref_t<TupleType>>>(
+    return std::tuple<
+        decltype(lambda.template operator()<
+                 std::tuple_element_t<Is, typename TypesToTypes::ConcatHelper<TupleType>::Result>>(
+            std::get<Is>(std::forward<TupleType>(tuple)),
+            std::forward<ExtraLambdaArgTypes>(extra_types)...))...> {
+      lambda.template
+      operator()<std::tuple_element_t<Is, typename TypesToTypes::ConcatHelper<TupleType>::Result>>(
           std::get<Is>(std::forward<TupleType>(tuple)),
           std::forward<ExtraLambdaArgTypes>(extra_types)...)...
     };
@@ -1575,10 +1626,10 @@ class ValuesToValues {
   static constexpr ZipType ZipHelper(std::tuple<TupleTypeLeft, TupleTypeRight>&& tuples,
                                      std::index_sequence<Is...>,
                                      std::index_sequence<std::size_t{0}, std::size_t{1}>) {
-    return ZipType{std::pair<std::tuple_element_t<Is, std::remove_cvref_t<TupleTypeLeft>>,
-                             std::tuple_element_t<Is, std::remove_cvref_t<TupleTypeRight>>>{
-        std::get<Is>(std::forward<TupleTypeLeft>(std::get<0>(tuples))),
-        std::get<Is>(std::forward<TupleTypeRight>(std::get<1>(tuples)))}...};
+    return ZipType{std::pair<
+        std::tuple_element_t<Is, typename TypesToTypes::ConcatHelper<TupleTypeLeft>::Result>,
+        std::tuple_element_t<Is, typename TypesToTypes::ConcatHelper<TupleTypeRight>::Result>>{
+        std::get<Is>(std::get<0>(tuples)), std::get<Is>(std::get<1>(tuples))}...};
   }
   template <typename ZipType, typename TupleTypes, std::size_t... Is, std::size_t... Ts>
   static constexpr ZipType ZipHelper(TupleTypes&& tuples,
@@ -1592,6 +1643,35 @@ class ValuesToValues {
     return ZipType{
         std::get<I>(std::forward<std::tuple_element_t<Ts, TupleTypes>>(std::get<Ts>(tuples)))...};
   }
+};
+
+template <typename TupleType>
+class TypesToTypes::ToArrayHelper<const TupleType, void> {
+ public:
+  using Result = typename ToConstArrayHelper<decltype(ValuesToValues::ToArray(
+      std::declval<TupleType>()))>::Result;
+};
+template <typename TupleType>
+class TypesToTypes::ToArrayHelper<const TupleType&, void> {
+ public:
+  using Result = typename ToConstArrayHelper<decltype(ValuesToValues::ToArray(
+      std::declval<TupleType>()))>::Result;
+};
+template <typename TupleType>
+class TypesToTypes::ToArrayHelper<const TupleType&&, void> {
+ public:
+  using Result = typename ToConstArrayHelper<decltype(ValuesToValues::ToArray(
+      std::declval<TupleType>()))>::Result;
+};
+template <typename TupleType>
+class TypesToTypes::ToArrayHelper<TupleType, void> {
+ public:
+  using Result = decltype(ValuesToValues::ToArray(std::declval<TupleType>()));
+};
+template <typename ArrayType, typename TupleType>
+class TypesToTypes::ToArrayHelper {
+ public:
+  using Result = decltype(ValuesToValues::ToArray<ArrayType>(std::declval<TupleType>()));
 };
 
 }  // namespace berberis

@@ -210,6 +210,10 @@ Assembler::YMMRegister GetYReg(MachineReg r) {
   return GetXReg(r).To256Bit();
 }
 
+void Enter::Emit(CodeEmitter*) const {
+  // Enter is a pseudo instruction to connect ABI to IR. We don't emit it.
+}
+
 void CallImm::Emit(CodeEmitter* as) const {
   // Note that a call to AVX-compiled code may touch YMM bits above 128, which
   // would require `vzeroupper` before we come back to generated code. This is
@@ -255,6 +259,8 @@ void PseudoCondBranch::Emit(CodeEmitter* as) const {
   }
 }
 
+// Note that we don't emit ABI arguments. They only help to connect IR's data flow with the next
+// region.
 void PseudoJump::Emit(CodeEmitter* as) const {
   EmitFreeStackFrame(as, as->frame_size());
 
@@ -281,6 +287,8 @@ void PseudoJump::Emit(CodeEmitter* as) const {
   }
 }
 
+// Note that we don't emit ABI arguments. They only help to connect IR's data flow with the next
+// region.
 void PseudoIndirectJump::Emit(CodeEmitter* as) const {
   EmitFreeStackFrame(as, as->frame_size());
   if (as->exit_label_for_testing()) {
@@ -317,6 +325,10 @@ void PseudoReadFlags::Emit(CodeEmitter* as) const {
 void PseudoWriteFlags::Emit(CodeEmitter* as) const {
   as->Addb(as->rax, int8_t{0x7f});
   as->Sahf();
+}
+
+void SSAPseudoWriteFlags::Emit(CodeEmitter* /*as*/) const {
+  FATAL("SSAPseudoWriteFlags couldn't be emitted");
 }
 
 void MachineIR::Emit(CodeEmitter* as) const {

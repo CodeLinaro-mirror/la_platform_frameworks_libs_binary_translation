@@ -26,6 +26,7 @@ cc_defaults {
         "-Wmost",
         "-Wover-aligned",
         "-Wunused",
+        "-Werror=deprecated-volatile",
         "-Werror=unused-variable",
         "-Wimplicit-fallthrough",
         "-Werror=reorder-init-list",
@@ -522,6 +523,13 @@ berberis_phony_rule {
             },
         },
     },
+    phony_deps: select(soong_config_variable("berberis", "target_native_bridge_abi"), {
+        "riscv64": [
+            "berberis_host_tests_result",
+        ],
+        default: [
+        ],
+    }),
 }
 
 python_binary_host {

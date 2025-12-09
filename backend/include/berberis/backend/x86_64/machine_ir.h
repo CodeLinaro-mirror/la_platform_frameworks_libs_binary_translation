@@ -333,12 +333,8 @@ class MachineInsn final : public MachineInsnX86_64 {
                     (std::is_same_v<decltype(kSSAMode), enum SSAMode> && kSSAMode == kSSA),
                 "Only kSSA and kNoSSA should be used as kSSAMode");
   static_assert(
-      std::is_same_v<decltype(kSSAMode), enum SSAMode> ||
-          !TypesToValues::Any<typename DeviceInsnInfo_::Operands>([]<typename Operand> {
-            return device_arch_info::kIsRegister<Operand> &&
-                   Operand::kUsage == device_arch_info::kUseDef;
-          }),
-      "Only instructions without kUseDef operands can be used without kSSAMode specification");
+      std::is_same_v<decltype(kSSAMode), enum SSAMode> != kNonSSA<DeviceInsnInfo_>,
+      "Only instructions without kUseDef operands should be used without kSSAMode specification");
 
   using MachineInsnInfo = x86_64::MachineInsnInfo<std::tuple_size_v<
       TypesToTypes::FlatMap<typename DeviceInsnInfo_::Operands, []<typename Operand> {
@@ -508,11 +504,7 @@ class MachineInsn final : public MachineInsnX86_64 {
   }
 
   void Emit(CodeEmitter* as) const override {
-    if constexpr (kSSAMode == kSSA &&
-                  TypesToValues::Any<typename DeviceInsnInfo::Operands>([]<typename Operand> {
-                    return device_arch_info::kIsRegister<Operand> &&
-                           Operand::kUsage == device_arch_info::kUseDef;
-                  })) {
+    if constexpr (kSSAMode == kSSA) {
       FATAL("Attempt to emit SSA pseudo-instruction");
     } else {
       // Code below assumes that we have at most two memory operands.
@@ -734,12 +726,8 @@ template <auto kBaseIndexRegistersUsed>
 constexpr auto MachineInsn<DeviceInsnInfo, kSSAMode>::GenMachineInsnInfo()
     -> MachineInsn::MachineInsnInfo {
   MachineInsnInfo result = {
-      .opcode = static_cast<MachineOpcode>(
-          DeviceInsnInfo::template kOpcode<MachineOpcode> |
-          (kSSAMode && TypesToValues::Any<typename DeviceInsnInfo::Operands>([]<typename Operand> {
-             return device_arch_info::kIsRegister<Operand> &&
-                    Operand::kUsage == device_arch_info::kUseDef;
-           })) << kSSAOpcodeBit),
+      .opcode = static_cast<MachineOpcode>(DeviceInsnInfo::template kOpcode<MachineOpcode> |
+                                           (kSSAMode == kSSA ? 1 : 0) << kSSAOpcodeBit),
       .kind = GetInsnKind()};
   TypesToValues::ForEachWithTemporary<typename DeviceInsnInfo::Operands,
                                       /* mem_operand_bit_pos = */ size_t>(
@@ -861,7 +849,8 @@ class MachineIR : public berberis::MachineIR {
       : berberis::MachineIR(arena, num_vreg, 0),
         abi_{abi},
         bb_order_(BasicBlockOrder::kUnordered),
-        insn_folding_executed_(false) {}
+        insn_folding_executed_(false),
+        contains_irreducible_loops_(false) {}
 
   void AddEdge(MachineBasicBlock* src, MachineBasicBlock* dst) {
     MachineEdge* edge = NewInArena<MachineEdge>(arena(), arena(), src, dst);
@@ -961,6 +950,8 @@ class MachineIR : public berberis::MachineIR {
            insn->opcode() == kMachineOpIndirectJump || insn->opcode() == kMachineOpJump;
   }
 
+  [[nodiscard]] bool ContainsIrreducibleLoops() const { return contains_irreducible_loops_; }
+
   [[nodiscard]] BasicBlockOrder bb_order() const { return bb_order_; }
 
   void set_bb_order(BasicBlockOrder order) { bb_order_ = order; }
@@ -968,6 +959,7 @@ class MachineIR : public berberis::MachineIR {
   [[nodiscard]] ABI abi() const { return abi_; }
 
   void SetInsnFoldingExecuted() { insn_folding_executed_ = true; }
+  void SetContainsIrreducibleLoops() { contains_irreducible_loops_ = true; }
 
   using berberis::MachineIR::NewInsn;
 
@@ -988,6 +980,7 @@ class MachineIR : public berberis::MachineIR {
   ABI abi_;
   BasicBlockOrder bb_order_;
   bool insn_folding_executed_;
+  bool contains_irreducible_loops_;
 };
 
 }  // namespace x86_64

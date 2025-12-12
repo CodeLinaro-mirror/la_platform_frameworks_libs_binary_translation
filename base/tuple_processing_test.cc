@@ -144,6 +144,52 @@ constexpr bool TestFunc() {
   static_assert(!TypesToTypes::Any<TupleType<float, int&>&&,
                                    []<typename T>() { return std::is_same_v<T, char&&>; }>{});
 
+  static_assert(!TypesToTypes::Contains<const TupleType<char&, char&>, const char>{});
+  static_assert(TypesToTypes::Contains<const TupleType<char&, char>, const char>{});
+  static_assert(TypesToTypes::Contains<const TupleType<char, char&>, const char>{});
+  static_assert(TypesToTypes::Contains<const TupleType<char, char>, const char>{});
+
+  static_assert(!TypesToTypes::Contains<const TupleType<char&, char&>&, const char&>{});
+  static_assert(TypesToTypes::Contains<const TupleType<char&, char>&, const char&>{});
+  static_assert(TypesToTypes::Contains<const TupleType<char, char&>&, const char&>{});
+  static_assert(TypesToTypes::Contains<const TupleType<char, char>&, const char&>{});
+
+  static_assert(!TypesToTypes::Contains<const TupleType<char&, char&>&&, const char&&>{});
+  static_assert(TypesToTypes::Contains<const TupleType<char&, char>&&, const char&&>{});
+  static_assert(TypesToTypes::Contains<const TupleType<char, char&>&&, const char&&>{});
+  static_assert(TypesToTypes::Contains<const TupleType<char, char>&&, const char&&>{});
+
+  static_assert(!TypesToValues::Contains<TupleType<const char, const char>, char>());
+  static_assert(TypesToValues::Contains<TupleType<const char, char>, char>());
+  static_assert(TypesToValues::Contains<TupleType<char, const char>, char>());
+  static_assert(TypesToValues::Contains<TupleType<char, char>, char>());
+
+  static_assert(!TypesToTypes::Contains<TupleType<char&, char&>, char>{});
+  static_assert(TypesToTypes::Contains<TupleType<char&, char>, char>{});
+  static_assert(TypesToTypes::Contains<TupleType<char, char&>, char>{});
+  static_assert(TypesToTypes::Contains<TupleType<char, char>, char>{});
+
+  static_assert(TypesToTypes::Contains<TupleType<char&&, char&&>, char&&>{});
+  static_assert(TypesToTypes::Contains<TupleType<char&&, char>, char&&>{});
+  static_assert(TypesToTypes::Contains<TupleType<char, char&&>, char&&>{});
+  static_assert(!TypesToTypes::Contains<TupleType<char, char>, char&&>{});
+
+  static_assert(!TypesToTypes::Contains<TupleType<const char, const char>&, char&>{});
+  static_assert(TypesToTypes::Contains<TupleType<const char, char>&, char&>{});
+  static_assert(TypesToTypes::Contains<TupleType<char, const char>&, char&>{});
+  static_assert(TypesToTypes::Contains<TupleType<char, char>&, char&>{});
+
+  static_assert(!TypesToValues::Contains<TupleType<const char, const char>&&, char&&>());
+  static_assert(TypesToValues::Contains<TupleType<const char, char>&&, char&&>());
+  static_assert(TypesToValues::Contains<TupleType<char, const char>&&, char&&>());
+  static_assert(TypesToValues::Contains<TupleType<char, char>&&, char&&>());
+
+  // Combination of rvalue references and lvalue references lead to lvalue references.
+  static_assert(!TypesToTypes::Contains<TupleType<char&&, char&&>&, char&&>{});
+  static_assert(TypesToTypes::Contains<TupleType<char&&, char&&>&, char&>{});
+  static_assert(TypesToTypes::Contains<TupleType<char&&, char>&, char&>{});
+  static_assert(TypesToTypes::Contains<TupleType<char&, char&>&&, char&>{});
+
   static_assert(TypesToTypes::Count<const TupleType<char&, char&>, const char>{} == 0);
   static_assert(TypesToTypes::Count<const TupleType<char&, char>, const char>{} == 1);
   static_assert(TypesToTypes::Count<const TupleType<char, char&>, const char>{} == 1);
@@ -291,9 +337,9 @@ constexpr bool TestFunc() {
       std::is_same_v<TypesToTypes::FlatMap<const TupleType<char, int&>,
                                            []<typename T>() -> decltype(auto) {
                                              if constexpr (std::is_same_v<T, const char>) {
-                                               return kTypes<float, float>;
+                                               return kMetaTypes<float, float>;
                                              } else {
-                                               return kTypes<T>;
+                                               return kMetaTypes<T>;
                                              }
                                            }>,
                      std::tuple<float, float, int&>>);
@@ -302,9 +348,9 @@ constexpr bool TestFunc() {
       std::is_same_v<TypesToTypes::FlatMap<const TupleType<char, int&>&,
                                            []<typename T>() -> decltype(auto) {
                                              if constexpr (std::is_same_v<T, const char&>) {
-                                               return kTypes<float, float>;
+                                               return kMetaTypes<float, float>;
                                              } else {
-                                               return kTypes<T>;
+                                               return kMetaTypes<T>;
                                              }
                                            }>,
                      std::tuple<float, float, int&>>);
@@ -313,9 +359,9 @@ constexpr bool TestFunc() {
       std::is_same_v<TypesToTypes::FlatMap<const TupleType<char, int&>&&,
                                            []<typename T>() -> decltype(auto) {
                                              if constexpr (std::is_same_v<T, const char&&>) {
-                                               return kTypes<float, float>;
+                                               return kMetaTypes<float, float>;
                                              } else {
-                                               return kTypes<T>;
+                                               return kMetaTypes<T>;
                                              }
                                            }>,
                      std::tuple<float, float, int&>>);
@@ -324,9 +370,9 @@ constexpr bool TestFunc() {
       std::is_same_v<TypesToTypes::FlatMap<TupleType<char, int&>,
                                            []<typename T>() -> decltype(auto) {
                                              if constexpr (std::is_same_v<T, char>) {
-                                               return kTypes<float, float>;
+                                               return kMetaTypes<float, float>;
                                              } else {
-                                               return kTypes<T>;
+                                               return kMetaTypes<T>;
                                              }
                                            }>,
                      std::tuple<float, float, int&>>);
@@ -334,9 +380,9 @@ constexpr bool TestFunc() {
   static_assert(std::is_same_v<TypesToTypes::FlatMap<TupleType<char, int&>&,
                                                      []<typename T>() -> decltype(auto) {
                                                        if constexpr (std::is_same_v<T, char&>) {
-                                                         return kTypes<float, float>;
+                                                         return kMetaTypes<float, float>;
                                                        } else {
-                                                         return kTypes<T>;
+                                                         return kMetaTypes<T>;
                                                        }
                                                      }>,
                                std::tuple<float, float, int&>>);
@@ -344,9 +390,9 @@ constexpr bool TestFunc() {
   static_assert(std::is_same_v<TypesToTypes::FlatMap<TupleType<char, int&>&&,
                                                      []<typename T>() -> decltype(auto) {
                                                        if constexpr (std::is_same_v<T, char&&>) {
-                                                         return kTypes<float, float>;
+                                                         return kMetaTypes<float, float>;
                                                        } else {
-                                                         return kTypes<T>;
+                                                         return kMetaTypes<T>;
                                                        }
                                                      }>,
                                std::tuple<float, float, int&>>);
@@ -1108,8 +1154,29 @@ constexpr bool TestFunc() {
     return result;
   }() == 1);
 
+  static_assert(ValuesToValues::Contains<const int&>(kForEachTupleTypeIn));
+  static_assert(ValuesToValues::Contains<const int&>(MoveToNonConst(kForEachTupleTypeIn)));
+
+  static_assert(!ValuesToValues::Contains<const float&>(kForEachTupleTypeIn));
+  static_assert(!ValuesToValues::Contains<const float&>(MoveToNonConst(kForEachTupleTypeIn)));
+
+  static_assert(ValuesToValues::Contains(kForEachTupleTypeIn, 'A'));
+  static_assert(ValuesToValues::Contains(MoveToNonConst(kForEachTupleTypeIn), 'A'));
+
+  static_assert(!ValuesToValues::Contains(TupleType{"A", 'B'}, 'A'));
+  static_assert(ValuesToValues::Contains(TupleType{"B", 'A'}, 'A'));
+
   static_assert(ValuesToValues::Count<const int&>(kForEachTupleTypeIn) == 1);
   static_assert(ValuesToValues::Count<const int&>(MoveToNonConst(kForEachTupleTypeIn)) == 1);
+
+  static_assert(ValuesToValues::Count<const float&>(kForEachTupleTypeIn) == 0);
+  static_assert(ValuesToValues::Count<const float&>(MoveToNonConst(kForEachTupleTypeIn)) == 0);
+
+  static_assert(ValuesToValues::Count(kForEachTupleTypeIn, 'A') == 1);
+  static_assert(ValuesToValues::Count(MoveToNonConst(kForEachTupleTypeIn), 'A') == 1);
+
+  static_assert(ValuesToValues::Count(TupleType{"A", 'B'}, 'A') == 0);
+  static_assert(ValuesToValues::Count(TupleType{"B", 'A'}, 'A') == 1);
 
   // Enumerate for values.
 #if (!defined(__clang__) && !defined(__GNUC__)) || (defined(__clang__) && __clang_major__ > 19) || \
@@ -2191,6 +2258,27 @@ constexpr bool TestFunc() {
   static_assert(
       ValuesToValues::Zip(std::array{2, 42}, TupleType{'a', 3.00}, TupleType{true, 1ULL}) ==
       std::tuple{std::tuple{2, 'a', true}, std::tuple{42, 3.00, 1ULL}});
+
+  // Ensure that we cna Zip kMetaTypes and values.
+  constexpr auto kMetaTypesProcessingResult = ValuesToValues::Map(
+      ValuesToValues::Zip(kMetaTypes<char, int>, std::tuple{72, 'A'}),
+      []<typename TypeAndValue>(TypeAndValue&& type_and_value) {
+        return static_cast<std::remove_reference_t<std::tuple_element_t<0, TypeAndValue>>::Type>(
+            std::get<1>(type_and_value));
+      });
+  static_assert(kMetaTypesProcessingResult == std::tuple{'H', 65});
+  static_assert(std::is_same_v<decltype(kMetaTypesProcessingResult), const std::tuple<char, int>>);
+
+  // Ensure that we can Zip kTupleMetaTypes and values.
+  constexpr auto kTupleMetaTypesProcessingResult = ValuesToValues::Map(
+      ValuesToValues::Zip(kTupleMetaTypes<TupleType<char, int>>, std::tuple{72, 'A'}),
+      []<typename TypeAndValue>(TypeAndValue&& type_and_value) {
+        return static_cast<std::remove_reference_t<std::tuple_element_t<0, TypeAndValue>>::Type>(
+            std::get<1>(type_and_value));
+      });
+  static_assert(kTupleMetaTypesProcessingResult == std::tuple{'H', 65});
+  static_assert(
+      std::is_same_v<decltype(kTupleMetaTypesProcessingResult), const std::tuple<char, int>>);
 
   // Note: attempt to call Zip and put result into constexpr result variable works on clang and
   // msvc, but not on gcc.

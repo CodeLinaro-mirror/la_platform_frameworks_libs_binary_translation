@@ -18,15 +18,365 @@
 
 #include <array>
 #include <cstddef>
+#include <iostream>
+#include <string>
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
+#include "berberis/base/bit_util.h"
 #include "berberis/base/checks.h"
 
 namespace berberis {
 
 namespace {
+
+using Float16 = intrinsics::WrappedFloatType<_Float16>;
+using Float32 = intrinsics::WrappedFloatType<float>;
+using Float64 = intrinsics::WrappedFloatType<double>;
+
+// Type checks.
+
+static_assert(kMetaType<int>.IsIntegral());
+static_assert(!kMetaType<float>.IsIntegral());
+static_assert(!kMetaType<int>.IsFloatingPoint());
+static_assert(kMetaType<float>.IsFloatingPoint());
+
+// Type conversions.
+
+static_assert(std::is_same_v<Type<kMetaType<int>.AddConst().AddLvalueReference()>, const int&>);
+static_assert(std::is_same_v<Type<kMetaType<float>.AddConst().AddPointer().AddVolatile()>,
+                             const float* volatile>);
+
+// Non-trivial checks (more than one type involed).
+// All types from the std are permitted to be nothrow-swappable (even if for some it's not
+// required). Instead of trying to see which standard class in swappable but not nothrow-swappable
+// it's better to create class that does what we want 100% guaranteed.
+struct SwappableButNotNothrowSwappable {
+  SwappableButNotNothrowSwappable& operator=(const SwappableButNotNothrowSwappable&) {
+    return *this;
+  }  // Copyable
+  SwappableButNotNothrowSwappable(SwappableButNotNothrowSwappable&&) noexcept(false) {
+  }  // Throwing move
+  SwappableButNotNothrowSwappable& operator=(SwappableButNotNothrowSwappable&&) noexcept(false) {
+    return *this;
+  }
+};
+
+static_assert(
+    std::same_as<
+        Type<kMetaType<std::add_lvalue_reference_t<int>>.CommonReference<
+            std::add_lvalue_reference_t<int>,
+            std::add_lvalue_reference_t<int>&,
+            std::add_lvalue_reference_t<int>&&
+            /*,std::add_lvalue_reference_t<int>const*/
+            /*,std::add_lvalue_reference_t<int>const&*/
+        >()>,
+        int&
+    >
+);
+static_assert(std::same_as<Type<kMetaType<std::add_lvalue_reference_t<int>>.CommonReference(
+                               kMetaType<std::add_lvalue_reference_t<int>>,
+                               kMetaType<std::add_lvalue_reference_t<int>&>,
+                               kMetaType<std::add_lvalue_reference_t<int>&&>
+                               /*,kMetaType<std::add_lvalue_reference_t<int>const>*/
+                               /*,kMetaType<std::add_lvalue_reference_t<int>const&>*/
+                               )>,
+                           int&>);
+static_assert(
+    std::same_as<Type<kMetaType<std::add_lvalue_reference_t<int>>.CommonReference(
+                     kTupleMetaTypes<std::tuple<std::add_lvalue_reference_t<int>,
+                                                std::add_lvalue_reference_t<int>&,
+                                                std::add_lvalue_reference_t<int>&&
+                                                /*,std::add_lvalue_reference_t<int>const*/
+                                                /*,std::add_lvalue_reference_t<int>const&*/
+                                                >>)>,
+                 int&>);
+static_assert(std::same_as<Type<kMetaType<char>.CommonType<short, int, float>()>, float>);
+static_assert(std::same_as<
+              Type<kMetaType<char>.CommonType(kMetaType<short>, kMetaType<int>, kMetaType<float>)>,
+              float>);
+static_assert(
+    std::same_as<Type<kMetaType<char>.CommonType(kTupleMetaTypes<std::tuple<short, int, float>>)>,
+                 float>);
+static_assert(!kMetaType<std::true_type>.Conjunction<std::true_type, std::false_type>());
+static_assert(!kMetaType<std::true_type>.Conjunction(kMetaType<std::true_type>,
+                                                     kMetaType<std::false_type>));
+static_assert(!kMetaType<std::true_type>.Conjunction(
+    kTupleMetaTypes<std::tuple<std::true_type, std::false_type>>));
+static_assert(kMetaType<std::true_type>.Disjunction<std::true_type, std::false_type>());
+static_assert(kMetaType<std::true_type>.Disjunction(kMetaType<std::true_type>,
+                                                    kMetaType<std::false_type>));
+static_assert(kMetaType<std::true_type>.Disjunction(
+    kTupleMetaTypes<std::tuple<std::true_type, std::false_type>>));
+static_assert(
+    std::same_as<Type<kMetaType<double (*)(double, double)>.InvokeResult<int, int>()>, double>);
+static_assert(
+    std::same_as<
+        Type<kMetaType<double (*)(double, double)>.InvokeResult(kMetaType<int>, kMetaType<int>)>,
+        double>);
+static_assert(std::same_as<Type<kMetaType<double (*)(double, double)>.InvokeResult(
+                               kTupleMetaTypes<std::tuple<int, int>>)>,
+                           double>);
+static_assert(kMetaType<std::string&>.IsAssignable<const char*>());
+static_assert(kMetaType<std::string&>.IsAssignable(kMetaType<const char*>));
+static_assert(kMetaType<std::ostream>.IsBaseOf<std::iostream>());
+static_assert(kMetaType<std::ostream>.IsBaseOf(kMetaType<std::iostream>));
+static_assert(kMetaType<const char*>.IsConvertible<std::string>());
+static_assert(kMetaType<const char*>.IsConvertible(kMetaType<std::string>));
+static_assert(kMetaType<double (*)(double, double)>.IsInvocable<int, int>());
+static_assert(kMetaType<double (*)(double, double)>.IsInvocable(kMetaType<int>, kMetaType<int>));
+static_assert(
+    kMetaType<double (*)(double, double)>.IsInvocable(kTupleMetaTypes<std::tuple<int, int>>));
+static_assert(kMetaType<void>.IsInvocableR<double (*)(double, double), int, int>());
+static_assert(kMetaType<void>.IsInvocableR(kMetaType<double (*)(double, double)>,
+                                           kMetaType<int>,
+                                           kMetaType<int>));
+static_assert(kMetaType<void>.IsInvocableR(kMetaType<double (*)(double, double)>,
+                                           kTupleMetaTypes<std::tuple<int, int>>));
+static_assert(kMetaType<void>.IsInvocableR(
+    kTupleMetaTypes<std::tuple<double (*)(double, double), int, int>>));
+static_assert(!kMetaType<std::string&>.IsNothrowAssignable<const char*>());
+static_assert(!kMetaType<std::string&>.IsNothrowAssignable(kMetaType<const char*>));
+static_assert(kMetaType<std::vector<int>&>.IsNothrowAssignable<std::vector<int>&&>());
+static_assert(kMetaType<std::vector<int>&>.IsNothrowAssignable(kMetaType<std::vector<int>&&>));
+static_assert(!kMetaType<const char*>.IsNothrowConvertible<std::string>());
+static_assert(!kMetaType<const char*>.IsNothrowConvertible(kMetaType<std::string>));
+static_assert(kMetaType<std::ostream*>.IsNothrowConvertible<std::ios*>());
+static_assert(kMetaType<std::ostream*>.IsNothrowConvertible(kMetaType<std::ios*>));
+static_assert(!kMetaType<double (*)(double, double)>.IsNothrowInvocable<int, int>());
+static_assert(!kMetaType<double (*)(double, double)>.IsNothrowInvocable(kMetaType<int>,
+                                                                        kMetaType<int>));
+static_assert(!kMetaType<double (*)(double, double)>.IsNothrowInvocable(
+    kTupleMetaTypes<std::tuple<int, int>>));
+static_assert(kMetaType<double (*)(double, double) noexcept>.IsNothrowInvocable<int, int>());
+static_assert(kMetaType<double (*)(double, double) noexcept>.IsNothrowInvocable(kMetaType<int>,
+                                                                                kMetaType<int>));
+static_assert(kMetaType<double (*)(double, double) noexcept>.IsNothrowInvocable(
+    kTupleMetaTypes<std::tuple<int, int>>));
+static_assert(!kMetaType<void>.IsNothrowInvocableR<double (*)(double, double), int, int>());
+static_assert(!kMetaType<void>.IsNothrowInvocableR(kMetaType<double (*)(double, double)>,
+                                                   kMetaType<int>,
+                                                   kMetaType<int>));
+static_assert(!kMetaType<void>.IsNothrowInvocableR(kMetaType<double (*)(double, double)>,
+                                                   kTupleMetaTypes<std::tuple<int, int>>));
+static_assert(!kMetaType<void>.IsNothrowInvocableR(
+    kTupleMetaTypes<std::tuple<double (*)(double, double), int, int>>));
+static_assert(kMetaType<void>.IsNothrowInvocableR<double (*)(double, double) noexcept, int, int>());
+static_assert(kMetaType<void>.IsNothrowInvocableR(kMetaType<double (*)(double, double) noexcept>,
+                                                  kMetaType<int>,
+                                                  kMetaType<int>));
+static_assert(kMetaType<void>.IsNothrowInvocableR(kMetaType<double (*)(double, double) noexcept>,
+                                                  kTupleMetaTypes<std::tuple<int, int>>));
+static_assert(kMetaType<void>.IsNothrowInvocableR(
+    kTupleMetaTypes<std::tuple<double (*)(double, double) noexcept, int, int>>));
+static_assert(kMetaType<bool&>.IsNothrowSwappableWith<std::vector<bool>::reference>());
+static_assert(kMetaType<bool&>.IsNothrowSwappableWith(kMetaType<std::vector<bool>::reference>));
+static_assert(!kMetaType<SwappableButNotNothrowSwappable&>
+                  .IsNothrowSwappableWith<SwappableButNotNothrowSwappable&>());
+static_assert(!kMetaType<SwappableButNotNothrowSwappable&>.IsNothrowSwappableWith(
+    kMetaType<SwappableButNotNothrowSwappable&>));
+static_assert(kMetaType<int>.IsSame<int>());
+static_assert(kMetaType<int>.IsSame(kMetaType<int>));
+static_assert(kMetaType<SwappableButNotNothrowSwappable&>
+                  .IsSwappableWith<SwappableButNotNothrowSwappable&>());
+static_assert(kMetaType<SwappableButNotNothrowSwappable&>.IsSwappableWith(
+    kMetaType<SwappableButNotNothrowSwappable&>));
+static_assert(!kMetaType<std::vector<int>&>.IsTriviallyAssignable<std::vector<int>&&>());
+static_assert(!kMetaType<std::vector<int>&>.IsTriviallyAssignable(kMetaType<std::vector<int>&&>));
+static_assert(kMetaType<int&>.IsTriviallyAssignable<double>());
+static_assert(kMetaType<int&>.IsTriviallyAssignable(kMetaType<double>));
+static_assert(std::is_same_v<Type<kMetaType<int>.Void<void, void, void>()>, void>);
+static_assert(
+    std::is_same_v<Type<kMetaType<int>.Void(kMetaType<void>, kMetaType<void>, kMetaType<void>)>,
+                   void>);
+static_assert(
+    std::is_same_v<Type<kMetaType<int>.Void(kTupleMetaTypes<std::tuple<char, short, int>>)>, void>);
+
+// Altered operations.
+
+static_assert(kMetaType<_Float16>.IsFloatingPoint());
+static_assert(kMetaType<float>.IsFloatingPoint());
+static_assert(kMetaType<double>.IsFloatingPoint());
+static_assert(!kMetaType<int32_t>.IsFloatingPoint());
+static_assert(!kMetaType<uint32_t>.IsFloatingPoint());
+static_assert(!kMetaType<void>.IsFloatingPoint());
+static_assert(!kMetaType<void*>.IsFloatingPoint());
+static_assert(kMetaType<Float16>.IsFloatingPoint());
+static_assert(kMetaType<Float32>.IsFloatingPoint());
+static_assert(kMetaType<Float64>.IsFloatingPoint());
+static_assert(!kMetaType<Int32>.IsFloatingPoint());
+static_assert(!kMetaType<RawInt32>.IsFloatingPoint());
+static_assert(!kMetaType<SatInt32>.IsFloatingPoint());
+static_assert(!kMetaType<SatUInt32>.IsFloatingPoint());
+static_assert(!kMetaType<UInt32>.IsFloatingPoint());
+
+static_assert(!kMetaType<_Float16>.IsIntegral());
+static_assert(!kMetaType<float>.IsIntegral());
+static_assert(!kMetaType<double>.IsIntegral());
+static_assert(kMetaType<int32_t>.IsIntegral());
+static_assert(kMetaType<uint32_t>.IsIntegral());
+static_assert(!kMetaType<void>.IsIntegral());
+static_assert(!kMetaType<void*>.IsIntegral());
+static_assert(!kMetaType<Float16>.IsIntegral());
+static_assert(!kMetaType<Float32>.IsIntegral());
+static_assert(!kMetaType<Float64>.IsIntegral());
+static_assert(kMetaType<Int32>.IsIntegral());
+static_assert(kMetaType<RawInt32>.IsIntegral());
+static_assert(kMetaType<SatInt32>.IsIntegral());
+static_assert(kMetaType<SatUInt32>.IsIntegral());
+static_assert(kMetaType<UInt32>.IsIntegral());
+
+static_assert(!kMetaType<_Float16>.IsRawInt());
+static_assert(!kMetaType<float>.IsRawInt());
+static_assert(!kMetaType<double>.IsRawInt());
+static_assert(!kMetaType<int32_t>.IsRawInt());
+static_assert(!kMetaType<uint32_t>.IsRawInt());
+static_assert(!kMetaType<void>.IsRawInt());
+static_assert(!kMetaType<void*>.IsRawInt());
+static_assert(!kMetaType<Float16>.IsRawInt());
+static_assert(!kMetaType<Float32>.IsRawInt());
+static_assert(!kMetaType<Float64>.IsRawInt());
+static_assert(!kMetaType<Int32>.IsRawInt());
+static_assert(kMetaType<RawInt32>.IsRawInt());
+static_assert(!kMetaType<SatInt32>.IsRawInt());
+static_assert(!kMetaType<SatUInt32>.IsRawInt());
+static_assert(!kMetaType<UInt32>.IsRawInt());
+
+static_assert(!kMetaType<_Float16>.IsSaturatingInt());
+static_assert(!kMetaType<float>.IsSaturatingInt());
+static_assert(!kMetaType<double>.IsSaturatingInt());
+static_assert(!kMetaType<int32_t>.IsSaturatingInt());
+static_assert(!kMetaType<uint32_t>.IsSaturatingInt());
+static_assert(!kMetaType<void>.IsSaturatingInt());
+static_assert(!kMetaType<void*>.IsSaturatingInt());
+static_assert(!kMetaType<Float16>.IsSaturatingInt());
+static_assert(!kMetaType<Float32>.IsSaturatingInt());
+static_assert(!kMetaType<Float64>.IsSaturatingInt());
+static_assert(!kMetaType<Int32>.IsSaturatingInt());
+static_assert(!kMetaType<RawInt32>.IsSaturatingInt());
+static_assert(kMetaType<SatInt32>.IsSaturatingInt());
+static_assert(kMetaType<SatUInt32>.IsSaturatingInt());
+static_assert(!kMetaType<UInt32>.IsSaturatingInt());
+
+static_assert(kMetaType<_Float16>.IsSigned());
+static_assert(kMetaType<float>.IsSigned());
+static_assert(kMetaType<double>.IsSigned());
+static_assert(kMetaType<int32_t>.IsSigned());
+static_assert(!kMetaType<uint32_t>.IsSigned());
+static_assert(kMetaType<Float16>.IsSigned());
+static_assert(kMetaType<Float32>.IsSigned());
+static_assert(kMetaType<Float64>.IsSigned());
+static_assert(kMetaType<Int32>.IsSigned());
+static_assert(!kMetaType<RawInt32>.IsSigned());
+static_assert(kMetaType<SatInt32>.IsSigned());
+static_assert(!kMetaType<SatUInt32>.IsSigned());
+static_assert(!kMetaType<UInt32>.IsSigned());
+
+static_assert(!kMetaType<_Float16>.IsUnsigned());
+static_assert(!kMetaType<float>.IsUnsigned());
+static_assert(!kMetaType<double>.IsUnsigned());
+static_assert(!kMetaType<int32_t>.IsUnsigned());
+static_assert(kMetaType<uint32_t>.IsUnsigned());
+static_assert(!kMetaType<Float16>.IsUnsigned());
+static_assert(!kMetaType<Float32>.IsUnsigned());
+static_assert(!kMetaType<Float64>.IsUnsigned());
+static_assert(!kMetaType<Int32>.IsUnsigned());
+static_assert(kMetaType<RawInt32>.IsUnsigned());
+static_assert(!kMetaType<SatInt32>.IsUnsigned());
+static_assert(kMetaType<SatUInt32>.IsUnsigned());
+static_assert(kMetaType<UInt32>.IsUnsigned());
+
+static_assert(!kMetaType<_Float16>.IsWrappedFloat());
+static_assert(!kMetaType<float>.IsWrappedFloat());
+static_assert(!kMetaType<double>.IsWrappedFloat());
+static_assert(!kMetaType<int32_t>.IsWrappedFloat());
+static_assert(!kMetaType<uint32_t>.IsWrappedFloat());
+static_assert(!kMetaType<void>.IsWrappedFloat());
+static_assert(!kMetaType<void*>.IsWrappedFloat());
+static_assert(kMetaType<Float16>.IsWrappedFloat());
+static_assert(kMetaType<Float32>.IsWrappedFloat());
+static_assert(kMetaType<Float64>.IsWrappedFloat());
+static_assert(!kMetaType<Int32>.IsWrappedFloat());
+static_assert(!kMetaType<RawInt32>.IsWrappedFloat());
+static_assert(!kMetaType<SatInt32>.IsWrappedFloat());
+static_assert(!kMetaType<SatUInt32>.IsWrappedFloat());
+static_assert(!kMetaType<UInt32>.IsWrappedFloat());
+
+static_assert(!kMetaType<_Float16>.IsWrappingInt());
+static_assert(!kMetaType<float>.IsWrappingInt());
+static_assert(!kMetaType<double>.IsWrappingInt());
+static_assert(!kMetaType<int32_t>.IsWrappingInt());
+static_assert(!kMetaType<uint32_t>.IsWrappingInt());
+static_assert(!kMetaType<void>.IsWrappingInt());
+static_assert(!kMetaType<void*>.IsWrappingInt());
+static_assert(!kMetaType<Float16>.IsWrappingInt());
+static_assert(!kMetaType<Float32>.IsWrappingInt());
+static_assert(!kMetaType<Float64>.IsWrappingInt());
+static_assert(kMetaType<Int32>.IsWrappingInt());
+static_assert(!kMetaType<RawInt32>.IsWrappingInt());
+static_assert(!kMetaType<SatInt32>.IsWrappingInt());
+static_assert(!kMetaType<SatUInt32>.IsWrappingInt());
+static_assert(kMetaType<UInt32>.IsWrappingInt());
+
+static_assert(std::is_same_v<Type<kMetaType<int32_t>.MakeSigned()>, int32_t>);
+static_assert(std::is_same_v<Type<kMetaType<uint32_t>.MakeSigned()>, int32_t>);
+static_assert(std::is_same_v<Type<kMetaType<Int32>.MakeSigned()>, Int32>);
+static_assert(std::is_same_v<Type<kMetaType<SatInt32>.MakeSigned()>, SatInt32>);
+static_assert(std::is_same_v<Type<kMetaType<SatUInt32>.MakeSigned()>, SatInt32>);
+static_assert(std::is_same_v<Type<kMetaType<UInt32>.MakeSigned()>, Int32>);
+
+static_assert(std::is_same_v<Type<kMetaType<int32_t>.MakeUnsigned()>, uint32_t>);
+static_assert(std::is_same_v<Type<kMetaType<uint32_t>.MakeUnsigned()>, uint32_t>);
+static_assert(std::is_same_v<Type<kMetaType<Int32>.MakeUnsigned()>, UInt32>);
+static_assert(std::is_same_v<Type<kMetaType<RawInt32>.MakeUnsigned()>, RawInt32>);
+static_assert(std::is_same_v<Type<kMetaType<SatInt32>.MakeUnsigned()>, SatUInt32>);
+static_assert(std::is_same_v<Type<kMetaType<SatUInt32>.MakeUnsigned()>, SatUInt32>);
+static_assert(std::is_same_v<Type<kMetaType<UInt32>.MakeUnsigned()>, UInt32>);
+
+static_assert(std::is_same_v<Type<kMetaType<int32_t>.Raw()>, RawInt32>);
+static_assert(std::is_same_v<Type<kMetaType<uint32_t>.Raw()>, RawInt32>);
+static_assert(std::is_same_v<Type<kMetaType<Int32>.Raw()>, RawInt32>);
+static_assert(std::is_same_v<Type<kMetaType<RawInt32>.Raw()>, RawInt32>);
+static_assert(std::is_same_v<Type<kMetaType<SatInt32>.Raw()>, RawInt32>);
+static_assert(std::is_same_v<Type<kMetaType<SatUInt32>.Raw()>, RawInt32>);
+static_assert(std::is_same_v<Type<kMetaType<UInt32>.Raw()>, RawInt32>);
+
+static_assert(std::is_same_v<Type<kMetaType<int32_t>.Saturating()>, SatInt32>);
+static_assert(std::is_same_v<Type<kMetaType<uint32_t>.Saturating()>, SatUInt32>);
+static_assert(std::is_same_v<Type<kMetaType<Int32>.Saturating()>, SatInt32>);
+static_assert(std::is_same_v<Type<kMetaType<RawInt32>.Saturating()>, SatUInt32>);
+static_assert(std::is_same_v<Type<kMetaType<SatInt32>.Saturating()>, SatInt32>);
+static_assert(std::is_same_v<Type<kMetaType<SatUInt32>.Saturating()>, SatUInt32>);
+static_assert(std::is_same_v<Type<kMetaType<UInt32>.Saturating()>, SatUInt32>);
+
+enum Foo : int;
+
+static_assert(std::is_same_v<Type<kMetaType<Foo>.UnderlyingType()>, int>);
+static_assert(std::is_same_v<Type<kMetaType<Float16>.UnderlyingType()>, _Float16>);
+static_assert(std::is_same_v<Type<kMetaType<Float32>.UnderlyingType()>, float>);
+static_assert(std::is_same_v<Type<kMetaType<Float64>.UnderlyingType()>, double>);
+static_assert(std::is_same_v<Type<kMetaType<Int32>.UnderlyingType()>, int32_t>);
+static_assert(std::is_same_v<Type<kMetaType<RawInt32>.UnderlyingType()>, uint32_t>);
+static_assert(std::is_same_v<Type<kMetaType<SatInt32>.UnderlyingType()>, int32_t>);
+static_assert(std::is_same_v<Type<kMetaType<SatUInt32>.UnderlyingType()>, uint32_t>);
+static_assert(std::is_same_v<Type<kMetaType<UInt32>.UnderlyingType()>, uint32_t>);
+
+static_assert(std::is_same_v<Type<kMetaType<_Float16>.Wrapped()>, Float16>);
+static_assert(std::is_same_v<Type<kMetaType<float>.Wrapped()>, Float32>);
+static_assert(std::is_same_v<Type<kMetaType<double>.Wrapped()>, Float64>);
+static_assert(std::is_same_v<Type<kMetaType<Float16>.Wrapped()>, Float16>);
+static_assert(std::is_same_v<Type<kMetaType<Float32>.Wrapped()>, Float32>);
+static_assert(std::is_same_v<Type<kMetaType<Float64>.Wrapped()>, Float64>);
+
+static_assert(std::is_same_v<Type<kMetaType<int32_t>.Wrapping()>, Int32>);
+static_assert(std::is_same_v<Type<kMetaType<uint32_t>.Wrapping()>, UInt32>);
+static_assert(std::is_same_v<Type<kMetaType<Int32>.Wrapping()>, Int32>);
+static_assert(std::is_same_v<Type<kMetaType<RawInt32>.Wrapping()>, UInt32>);
+static_assert(std::is_same_v<Type<kMetaType<SatInt32>.Wrapping()>, Int32>);
+static_assert(std::is_same_v<Type<kMetaType<SatUInt32>.Wrapping()>, UInt32>);
+static_assert(std::is_same_v<Type<kMetaType<UInt32>.Wrapping()>, UInt32>);
 
 // Note: we want to have references in out tests to produce results with references and also
 // verify that types of the results include references, not straight `int`s, this is somewhat
@@ -1002,7 +1352,7 @@ constexpr bool TestFunc() {
     int extra_arg1 = 0, extra_arg2 = 0;
     bool result = ValuesToValues::All(
         MoveToNonConst(kForEachTupleTypeIn),
-        []<typename T>(T, int& extra_arg1, int& extra_arg2) {
+        []<typename T>(T&&, int& extra_arg1, int& extra_arg2) {
           extra_arg1 += 1;
           extra_arg2 -= 1;
           return std::is_same_v<T, char>;
@@ -1018,7 +1368,7 @@ constexpr bool TestFunc() {
     int extra_arg1 = 0, extra_arg2 = 0;
     bool result = ValuesToValues::Any(
         MoveToNonConst(kForEachTupleTypeIn),
-        []<typename T>(T, int& extra_arg1, int& extra_arg2) {
+        []<typename T>(T&&, int& extra_arg1, int& extra_arg2) {
           extra_arg1 += 1;
           extra_arg2 -= 1;
           return std::is_same_v<T, const int&>;
@@ -1034,7 +1384,7 @@ constexpr bool TestFunc() {
     int extra_arg1 = 0, extra_arg2 = 0;
     bool result = ValuesToValues::CountIf(
         MoveToNonConst(kForEachTupleTypeIn),
-        []<typename T>(T, int& extra_arg1, int& extra_arg2) {
+        []<typename T>(T&&, int& extra_arg1, int& extra_arg2) {
           extra_arg1 += 1;
           extra_arg2 -= 1;
           return std::is_same_v<T, const int&>;
@@ -1051,7 +1401,7 @@ constexpr bool TestFunc() {
     int extra_arg1 = 0, extra_arg2 = 0;
     bool result = ValuesToValues::AllWithTemporary<int>(
         MoveToNonConst(kForEachTupleTypeIn),
-        []<typename T>(T, int& idx, int& extra_arg1, int& extra_arg2) {
+        []<typename T>(T&&, int& idx, int& extra_arg1, int& extra_arg2) {
           extra_arg1 += 1;
           extra_arg2 -= 1;
           CHECK_EQ(++idx, extra_arg1);
@@ -1068,7 +1418,7 @@ constexpr bool TestFunc() {
     int extra_arg1 = 0, extra_arg2 = 0;
     bool result = ValuesToValues::AnyWithTemporary<int>(
         MoveToNonConst(kForEachTupleTypeIn),
-        []<typename T>(T, int& idx, int& extra_arg1, int& extra_arg2) {
+        []<typename T>(T&&, int& idx, int& extra_arg1, int& extra_arg2) {
           extra_arg1 += 1;
           extra_arg2 -= 1;
           CHECK_EQ(++idx, extra_arg1);
@@ -1085,7 +1435,7 @@ constexpr bool TestFunc() {
     int extra_arg1 = 0, extra_arg2 = 0;
     bool result = ValuesToValues::CountIfWithTemporary<int>(
         MoveToNonConst(kForEachTupleTypeIn),
-        []<typename T>(T, int& idx, int& extra_arg1, int& extra_arg2) {
+        []<typename T>(T&&, int& idx, int& extra_arg1, int& extra_arg2) {
           extra_arg1 += 1;
           extra_arg2 -= 1;
           CHECK_EQ(++idx, extra_arg1);
@@ -1104,7 +1454,7 @@ constexpr bool TestFunc() {
     bool result = ValuesToValues::AllWithTemporary(
         MoveToNonConst(kForEachTupleTypeIn),
         /* idx = */ 42,
-        []<typename T>(T, int& idx, int& extra_arg1, int& extra_arg2) {
+        []<typename T>(T&&, int& idx, int& extra_arg1, int& extra_arg2) {
           extra_arg1 += 1;
           extra_arg2 -= 1;
           CHECK_EQ(++idx, 42 + extra_arg1);
@@ -1122,7 +1472,7 @@ constexpr bool TestFunc() {
     bool result = ValuesToValues::AnyWithTemporary(
         MoveToNonConst(kForEachTupleTypeIn),
         /* idx = */ 42,
-        []<typename T>(T, int& idx, int& extra_arg1, int& extra_arg2) {
+        []<typename T>(T&&, int& idx, int& extra_arg1, int& extra_arg2) {
           extra_arg1 += 1;
           extra_arg2 -= 1;
           CHECK_EQ(++idx, 42 + extra_arg1);
@@ -1140,7 +1490,7 @@ constexpr bool TestFunc() {
     bool result = ValuesToValues::CountIfWithTemporary(
         MoveToNonConst(kForEachTupleTypeIn),
         /* idx = */ 42,
-        []<typename T>(T, int& idx, int& extra_arg1, int& extra_arg2) {
+        []<typename T>(T&&, int& idx, int& extra_arg1, int& extra_arg2) {
           extra_arg1 += 1;
           extra_arg2 -= 1;
           CHECK_EQ(++idx, 42 + extra_arg1);
@@ -1354,7 +1704,7 @@ constexpr bool TestFunc() {
   constexpr std::tuple<const int&, float, char> kFlatMapTupleOut4{kForEachInt1, float{42.42}, 'A'};
   constexpr auto kFlatMapResult4 = ValuesToValues::FlatMap(
       MoveToNonConst(kForEachTupleTypeIn),
-      []<typename T>(T t, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
+      []<typename T>(T&& t, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
         CHECK_EQ(&kExtraArg1, &kForEachInt1);
         CHECK_EQ(&kExtraArg2, &kForEachInt2);
         if constexpr (std::is_same_v<T, char>) {
@@ -1373,7 +1723,7 @@ constexpr bool TestFunc() {
   constexpr auto kFlatMapResult5 = ValuesToValues::FlatMapWithTemporary<int>(
       MoveToNonConst(kForEachTupleTypeIn),
       []<typename T>(
-          T t, int& idx, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
+          T&& t, int& idx, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
         CHECK_EQ(&kExtraArg1, &kForEachInt1);
         CHECK_EQ(&kExtraArg2, &kForEachInt2);
         if constexpr (std::is_same_v<T, char>) {
@@ -1394,7 +1744,7 @@ constexpr bool TestFunc() {
       MoveToNonConst(kForEachTupleTypeIn),
       /* idx = */ 42,
       []<typename T>(
-          T t, int& idx, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
+          T&& t, int& idx, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
         CHECK_EQ(&kExtraArg1, &kForEachInt1);
         CHECK_EQ(&kExtraArg2, &kForEachInt2);
         if constexpr (std::is_same_v<T, char>) {
@@ -1585,7 +1935,7 @@ constexpr bool TestFunc() {
   constexpr std::tuple<const int&, float> kMapTupleOut4{kForEachInt1, float{42.42}};
   constexpr auto kMapResult4 = ValuesToValues::Map(
       MoveToNonConst(kForEachTupleTypeIn),
-      []<typename T>(T t, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
+      []<typename T>(T&& t, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
         CHECK_EQ(&kExtraArg1, &kForEachInt1);
         CHECK_EQ(&kExtraArg2, &kForEachInt2);
         if constexpr (std::is_same_v<T, char>) {
@@ -1603,7 +1953,7 @@ constexpr bool TestFunc() {
   constexpr auto kMapResult5 = ValuesToValues::MapWithTemporary<int>(
       MoveToNonConst(kForEachTupleTypeIn),
       []<typename T>(
-          T t, int& idx, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
+          T&& t, int& idx, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
         CHECK_EQ(&kExtraArg1, &kForEachInt1);
         CHECK_EQ(&kExtraArg2, &kForEachInt2);
         if constexpr (std::is_same_v<T, char>) {
@@ -1623,7 +1973,7 @@ constexpr bool TestFunc() {
       MoveToNonConst(kForEachTupleTypeIn),
       /* idx = */ 42,
       []<typename T>(
-          T t, int& idx, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
+          T&& t, int& idx, const int& kExtraArg1, const int& kExtraArg2) -> decltype(auto) {
         CHECK_EQ(&kExtraArg1, &kForEachInt1);
         CHECK_EQ(&kExtraArg2, &kForEachInt2);
         if constexpr (std::is_same_v<T, char>) {

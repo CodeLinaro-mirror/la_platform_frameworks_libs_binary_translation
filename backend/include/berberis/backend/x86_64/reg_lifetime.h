@@ -22,8 +22,15 @@
 #include "berberis/backend/common/machine_ir.h"
 #include "berberis/backend/x86_64/machine_ir.h"
 #include "berberis/base/arena_map.h"
+#include "berberis/base/arena_vector.h"
 
 namespace berberis::x86_64 {
+
+enum class RegType {
+  kUnknown,
+  kGeneral,
+  kXmm,
+};
 
 struct LiveIn {};
 struct LiveOut {};
@@ -34,12 +41,47 @@ struct LiveOut {};
 // actually reuse that register for the write portion so we are overcounting.
 struct RegLifetime {
   std::variant<LiveIn, berberis::MachineInsn*> start;
-  std::variant<LiveIn, LiveOut, berberis::MachineInsn*> end;
+  std::variant<LiveOut, berberis::MachineInsn*> end;
+  // Positions where the corresponding start/end instruction is found in insn_list
+  // with -1 used for LiveIn. and one past last instruction for LiveOut.
+  int start_pos;
+  int end_pos;
+  RegType reg_type;
+};
+
+struct RegLifetimeCount {
+  int general;
+  int xmm;
+  void Increment(RegType reg_type);
+  void Decrement(RegType reg_type);
+  bool operator==(const RegLifetimeCount&) const = default;
 };
 
 using RegLifetimeMap = ArenaMap<MachineReg, RegLifetime>;
+using RegLifetimeCounts = ArenaVector<RegLifetimeCount>;
 
-RegLifetimeMap CountRegLifetimeMap(MachineIR* machine_ir, MachineBasicBlock* bb);
+class RegLifetimeCounter {
+ public:
+  RegLifetimeCounter(MachineIR* machine_ir)
+      : machine_ir_(machine_ir),
+        lifetime_map_(machine_ir->arena()),
+        lifetime_counts_(machine_ir->arena()) {}
+
+  void Count(MachineBasicBlock* bb);
+  // Sets last use of reg to end and end_pos, updating both the map and counts.
+  void UpdateLastUse(MachineReg reg, berberis::MachineInsn* end, int end_pos);
+
+  RegLifetimeMap& GetMap() { return lifetime_map_; }
+  RegLifetimeCounts& GetCounts() { return lifetime_counts_; }
+
+ private:
+  void CountRegLifetimeMap(MachineBasicBlock* bb);
+  void CountRegLifetimes(MachineBasicBlock* bb);
+
+  MachineIR* machine_ir_;
+  RegLifetimeMap lifetime_map_;
+  RegLifetimeCounts lifetime_counts_;
+};
 
 }  // namespace berberis::x86_64
 

@@ -299,7 +299,7 @@ def _get_semantics_player_hook_proto(name, intr, make_template=True, listener=''
     if make_template:
       spec_arguments = _get_template_spec_arguments(intr.get('variants'))
       values = ', ' + ', '.join(
-          ['intrinsics::Value<%s>' % argument for argument in spec_arguments])
+          ['MetaValue<%s>' % argument for argument in spec_arguments])
       return 'template<%s>\n%s %s(%s%s)' % (
         template_parameters, result, name, params, values)
     else:
@@ -540,13 +540,12 @@ def _get_semantics_player_hook_template_switch(name, intr):
     expectations =  _get_expectations_for_variant(variant)
     yield '%scase intrinsics::TrivialDemultiplexer(%s):' % (
       INDENT, ', '.join(expectations))
-    yield 2 * INDENT + "// Disable LOG_NDEBUG to use DCHECK for debugging!"
     for expectation, variable in zip(expectations, variables):
-      yield 2 * INDENT + 'DCHECK_EQ(%s, %s);' % (expectation, variable)
+      yield 2 * INDENT + 'CHECK_EQ(%s, %s);' % (expectation, variable)
     yield 2 * INDENT + 'return %s(%s);' % (
       name,
       ','.join(list('arg%d' % arg[0] for arg in enumerate(intr['in'])) +
-               list(f'intrinsics::Value<{expectation}>{{}}'
+               list(f'MetaValue<{expectation}>{{}}'
                     for expectation in expectations)))
   yield INDENT + 'default:'
   yield 2 * INDENT + 'FATAL("Unsupported size");'
@@ -571,7 +570,7 @@ def _gen_mock_semantics_listener_hook(f, name, intr):
     template_parameters = _get_template_parameters(intr.get('variants'), extra = [])
     args = ', '.join([('arg%d' % n) for n, _ in enumerate(intr['in'])] + spec_arguments)
     values = ', ' + ', '.join(
-        ['intrinsics::Value<%s>' % argument for argument in spec_arguments])
+        ['MetaValue<%s>' % argument for argument in spec_arguments])
     print('template<%s>\n%s %s(%s%s) {' % (
       template_parameters, result, name, params, values), file=f)
     _gen_template_parameters_verifier(f, intr)

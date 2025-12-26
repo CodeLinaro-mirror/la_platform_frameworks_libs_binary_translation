@@ -22,6 +22,7 @@
 #include "berberis/base/arena_map.h"
 #include "berberis/base/checks.h"
 #include "berberis/base/dependent_false.h"
+#include "berberis/base/tuple_processing.h"
 #include "berberis/decoder/riscv64/decoder.h"
 #include "berberis/decoder/riscv64/semantics_player.h"
 #include "berberis/guest_state/guest_addr.h"
@@ -55,7 +56,36 @@ class HeavyOptimizerFrontend {
   template <auto kEnumValue>
   using TypeFromId = intrinsics::TypeFromId<kEnumValue>;
   template <auto ValueParam>
-  using Value = intrinsics::Value<ValueParam>;
+  using MetaValue = MetaValue<ValueParam>;
+
+  template <typename ValueType>
+  static constexpr auto ToFloat(ValueType value) {
+    return intrinsics::TemplateTypeIdToFloat(value);
+  }
+  template <typename ValueType>
+  static constexpr auto ToInt(ValueType value) {
+    return intrinsics::TemplateTypeIdToInt(value);
+  }
+  template <typename ValueType>
+  static constexpr auto ToNarrow(ValueType value) {
+    return intrinsics::TemplateTypeIdToNarrow(value);
+  }
+  template <typename ValueType>
+  static constexpr auto ToSigned(ValueType value) {
+    return intrinsics::TemplateTypeIdToSigned(value);
+  }
+  template <typename ValueType>
+  static constexpr auto SizeOf(ValueType value) {
+    return intrinsics::TemplateTypeIdSizeOf(value);
+  }
+  template <typename ValueType>
+  static constexpr auto ToUnsigned(ValueType value) {
+    return intrinsics::TemplateTypeIdToUnsigned(value);
+  }
+  template <typename ValueType>
+  static constexpr auto ToWide(ValueType value) {
+    return intrinsics::TemplateTypeIdToWide(value);
+  }
   static constexpr TemplateTypeId IntSizeToTemplateTypeId(uint8_t size, bool is_signed = false) {
     return intrinsics::IntSizeToTemplateTypeId(size, is_signed);
   }
@@ -82,7 +112,7 @@ class HeavyOptimizerFrontend {
   void Branch(int32_t offset);
   void BranchRegister(Register base, int16_t offset);
 
-  [[nodiscard]] Register GetImm(uint64_t imm);
+  [[nodiscard]] Register GetImm(int64_t imm);
   [[nodiscard]] Register Copy(Register value) {
     Register result = AllocTempReg();
     builder_.Gen<PseudoCopy>(result, value, 8);
@@ -104,7 +134,7 @@ class HeavyOptimizerFrontend {
   Register Slli(Register arg, int8_t imm);
   Register Srli(Register arg, int8_t imm);
   Register Srai(Register arg, int8_t imm);
-  Register ShiftImm32(Decoder::ShiftImm32Opcode opcode, Register arg, uint16_t imm);
+  Register ShiftImm32(Decoder::ShiftImm32Opcode opcode, Register arg, int8_t imm);
   Register Rori(Register arg, int8_t shamt);
   Register Roriw(Register arg, int8_t shamt);
   Register Lui(int32_t imm);
@@ -184,7 +214,7 @@ class HeavyOptimizerFrontend {
   //
 
   template <intrinsics::TemplateTypeId IntType, bool aq, bool rl>
-  Register Lr(Register addr, Value<IntType>, Value<aq>, Value<rl>) {
+  Register Lr(Register addr, MetaValue<IntType>, MetaValue<aq>, MetaValue<rl>) {
     // The immediate is sign extended to 64-bit.
     auto [aligned_addr, and_flags] =
         Gen<x86_64::AndqRegImm>(addr, ~int32_t{sizeof(Reservation) - 1});
@@ -201,7 +231,7 @@ class HeavyOptimizerFrontend {
   }
 
   template <intrinsics::TemplateTypeId IntType, bool aq, bool rl>
-  Register Sc(Register addr, Register data, Value<IntType>, Value<aq>, Value<rl>) {
+  Register Sc(Register addr, Register data, MetaValue<IntType>, MetaValue<aq>, MetaValue<rl>) {
     // Compute aligned_addr.
     // The immediate is sign extended to 64-bit.
     auto [aligned_addr, and_flags] =
@@ -250,31 +280,35 @@ class HeavyOptimizerFrontend {
     if (host_platform::kHasAVX) {
       // This code is defined as intrinsic but if we would call it as intrinsic it would be called
       // recursively.
-      builder_.Gen<x86_64::MachineInsn<device_arch_info::DeviceInsnInfo<
-          &MacroAssembler<x86_64::Assembler>::UnboxNanAVX<Float32>,
-          "UNBOX_F32",
-          true,
-          []<typename Opcode> { return Opcode::kMachineOpUnboxNanFloat32AVX; },
-          x86_64::device_arch_info::HasAVX,
-          std::tuple<device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg32,
-                                                   device_arch_info::kDef>,
-                     device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
-                                                   device_arch_info::kUseDef>>>>>(
-          unboxed_result.machine_reg(), result.machine_reg());
+      builder_.Gen<x86_64::MachineInsn<
+          device_arch_info::DeviceInsnInfo<
+              &MacroAssembler<x86_64::Assembler>::UnboxNanAVX<Float32>,
+              "UNBOX_F32",
+              true,
+              []<typename Opcode> { return Opcode::kMachineOpUnboxNanFloat32AVX; },
+              x86_64::device_arch_info::HasAVX,
+              std::tuple<device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg32,
+                                                       device_arch_info::kDef>,
+                         device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
+                                                       device_arch_info::kUseDef>>>,
+          x86_64::kSSA>>(std::tuple{
+          unboxed_result.machine_reg(), AllocTempSimdReg().machine_reg(), result.machine_reg()});
     } else {
       // This code is defined as intrinsic but if we would call it as intrinsic it would be called
       // recursively.
-      builder_.Gen<x86_64::MachineInsn<device_arch_info::DeviceInsnInfo<
-          &MacroAssembler<x86_64::Assembler>::UnboxNan<Float32>,
-          "UNBOX_F32",
-          true,
-          []<typename Opcode> { return Opcode::kMachineOpUnboxNanFloat32; },
-          device_arch_info::NoCPUIDRestriction,
-          std::tuple<device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg32,
-                                                   device_arch_info::kDef>,
-                     device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
-                                                   device_arch_info::kUseDef>>>>>(
-          unboxed_result.machine_reg(), result.machine_reg());
+      builder_.Gen<x86_64::MachineInsn<
+          device_arch_info::DeviceInsnInfo<
+              &MacroAssembler<x86_64::Assembler>::UnboxNan<Float32>,
+              "UNBOX_F32",
+              true,
+              []<typename Opcode> { return Opcode::kMachineOpUnboxNanFloat32; },
+              device_arch_info::NoCPUIDRestriction,
+              std::tuple<device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg32,
+                                                       device_arch_info::kDef>,
+                         device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
+                                                       device_arch_info::kUseDef>>>,
+          x86_64::kSSA>>(std::tuple{
+          unboxed_result.machine_reg(), AllocTempSimdReg().machine_reg(), result.machine_reg()});
     }
     return unboxed_result;
   }
@@ -284,29 +318,32 @@ class HeavyOptimizerFrontend {
     if (host_platform::kHasAVX) {
       // This code is defined as intrinsic but if we would call it as intrinsic it would be called
       // recursively.
-      builder_.Gen<x86_64::MachineInsn<device_arch_info::DeviceInsnInfo<
-          &MacroAssembler<x86_64::Assembler>::NanBoxAVX<Float32>,
-          "BOX_F32",
-          true,
-          []<typename Opcode> { return Opcode::kMachineOpNanBoxFloat32AVX; },
-          x86_64::device_arch_info::HasAVX,
-          std::tuple<device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
-                                                   device_arch_info::kDef>,
-                     device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg32,
-                                                   device_arch_info::kUseDef>>>>>(
-          value.machine_reg(), value.machine_reg());
+      builder_.Gen<x86_64::MachineInsn<
+          device_arch_info::DeviceInsnInfo<
+              &MacroAssembler<x86_64::Assembler>::NanBoxAVX<Float32>,
+              "BOX_F32",
+              true,
+              []<typename Opcode> { return Opcode::kMachineOpNanBoxFloat32AVX; },
+              x86_64::device_arch_info::HasAVX,
+              std::tuple<device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
+                                                       device_arch_info::kDef>,
+                         device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg32,
+                                                       device_arch_info::kUseDef>>>,
+          x86_64::kSSA>>(
+          std::tuple{value.machine_reg(), AllocTempSimdReg().machine_reg(), value.machine_reg()});
     } else {
       // This code is defined as intrinsic but if we would call it as intrinsic it would be called
       // recursively.
-      builder_.Gen<x86_64::MachineInsn<device_arch_info::DeviceInsnInfo<
-          &MacroAssembler<x86_64::Assembler>::NanBox<Float32>,
-          "BOX_F32",
-          true,
-          []<typename Opcode> { return Opcode::kMachineOpNanBoxFloat32; },
-          device_arch_info::NoCPUIDRestriction,
-          std::tuple<device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
-                                                   device_arch_info::kUseDef>>>>>(
-          value.machine_reg());
+      builder_.Gen<x86_64::MachineInsn<
+          device_arch_info::DeviceInsnInfo<
+              &MacroAssembler<x86_64::Assembler>::NanBox<Float32>,
+              "BOX_F32",
+              true,
+              []<typename Opcode> { return Opcode::kMachineOpNanBoxFloat32; },
+              device_arch_info::NoCPUIDRestriction,
+              std::tuple<device_arch_info::OperandInfo<x86_64::device_arch_info::FpReg64,
+                                                       device_arch_info::kUseDef>>>,
+          x86_64::kSSA>>(std::tuple{AllocTempSimdReg().machine_reg(), value.machine_reg()});
     }
   }
 
@@ -425,8 +462,14 @@ class HeavyOptimizerFrontend {
   template <CsrName kName>
   void SetCsr(Register arg) {
     if constexpr (sizeof(CsrFieldType<kName>) == 1) {
-      auto [tmp, and_flags] = Gen<x86_64::AndbRegImm>(arg, kCsrMask<kName>);
-      Gen<x86_64::MovbOpReg>({.base = x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<kName>}, tmp);
+      if constexpr (kCsrMask<kName> == 0xff) {
+        Gen<x86_64::MovbOpReg>({.base = x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<kName>},
+                               arg);
+      } else {
+        auto [tmp, and_flags] = Gen<x86_64::AndbRegImm>(arg, int8_t{kCsrMask<kName>});
+        Gen<x86_64::MovbOpReg>({.base = x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<kName>},
+                               tmp);
+      }
     } else if constexpr (sizeof(CsrFieldType<kName>) == 8) {
       auto [tmp, and_flags] =
           Gen<x86_64::AndqRegOp>(arg, {.disp = constants_pool::kConst<uint64_t{kCsrMask<kName>}>});
@@ -496,82 +539,87 @@ class HeavyOptimizerFrontend {
                                                   MachineBasicBlock* failure_bb);
 
   // Syntax sugar.
-  template <typename InsnType, typename... Args>
-  auto Gen(Args... args)
-      -> std::enable_if_t<(std::is_same_v<std::remove_cvref_t<Args>, MachineReg> + ... + 0) ==
-                              InsnType::kInfo.InputRegistersCount(),
+  template <typename InsnType, typename ArgsTuple>
+  auto Gen(ArgsTuple args_tuple)
+      -> std::enable_if_t<std::is_same_v<typename InsnType::InputArgsTuple, ArgsTuple>,
                           std::array<MachineReg, InsnType::kInfo.OutputRegistersCount()>> {
-    std::array<MachineReg, InsnType::kInfo.InputRegistersCount()> input;
-    int input_index = 0;
-    (
-        [&input, &input_index]<typename Arg>(Arg arg) {
-          if constexpr (std::is_same_v<std::remove_cvref_t<Arg>, MachineReg>) {
-            input[input_index++] = arg;
-          }
-        }(args),
-        ...);
-    std::array<MachineReg, InsnType::kInfo.OutputRegistersCount()> output;
-    input_index = 0;
-    int output_index = 0;
-    std::array<MachineReg, InsnType::kInfo.num_reg_operands> gen_args;
-    for (int index = 0; index < InsnType::kInfo.num_reg_operands; index++) {
-      if (InsnType::kInfo.reg_kinds[index].IsDef()) {
-        if (InsnType::kInfo.reg_kinds[index].RegClass() == &x86_64::kFLAGS) {
-          output[output_index] = GetFlagsRegister();
-        } else {
-          if (!InsnType::kInfo.reg_kinds[index].IsInput()) {
-            output[output_index] = AllocTempReg();
-          } else {
-            output[output_index] = AllocTempReg();
-            if (InsnType::kInfo.reg_kinds[index].IsInput()) {
-              builder_.Gen<PseudoCopy>(output[output_index],
-                                       input[input_index++],
-                                       InsnType::kInfo.reg_kinds[index].RegClass()->reg_size);
-            }
-          }
-        }
-        gen_args[index] = output[output_index++];
-      } else {
-        CHECK(InsnType::kInfo.reg_kinds[index].IsInput());
-        // If register is implicit we need to add extra PseudoCopy here even if it's pure input.
-        // Othwise we may attempt to make the same register to belong to two different, incompatible
-        // register classes if it's ALSO output of another instruction with a different implicit
-        // class. E.g. if output of division is used as input for shift.
-        if (InsnType::kInfo.reg_kinds[index].RegClass()->num_regs == 1 &&
-            InsnType::kInfo.reg_kinds[index].RegClass() != &x86_64::kFLAGS) {
-          CHECK(InsnType::kInfo.reg_kinds[index].RegClass() != &x86_64::kFLAGS);
-          gen_args[index] = AllocTempReg();
-          builder_.Gen<PseudoCopy>(gen_args[index],
-                                   input[input_index++],
-                                   InsnType::kInfo.reg_kinds[index].RegClass()->reg_size);
-        } else {
-          gen_args[index] = input[input_index++];
-        }
-      }
-    }
-    std::apply(
-        InsnType::template kGenAutoFunc<x86_64::MachineIRBuilder>,
-        std::tuple_cat(
-            std::tuple<x86_64::MachineIRBuilder&>{builder_}, gen_args, []<typename Arg>(Arg arg) {
-              if constexpr (std::is_same_v<std::remove_cvref_t<Arg>, MachineReg>) {
-                return std::tuple{};
-              } else {
-                return std::tuple{arg};
+    enum ProcessWay {
+      kFlagRegister,
+      kOutputRegister,
+      kImplicitInputRegister,
+      kPassthroughOperand,  // Input register, immediate or memory operand
+    };
+    struct ProcessInfo {
+      ProcessWay process_way;
+      int arg_index;
+      int pseudo_copy_size;
+    };
+    constexpr static auto kOperands =
+        TypesToValues::MapWithTemporary<typename InsnType::OperandsTuple,
+                                        /* arg_index, reg_index = */ std::tuple<int, int>>(
+            []<typename Operand>(std::tuple<int, int>& indexes) -> decltype(auto) {
+              auto& [arg_index, reg_index] = indexes;
+              if constexpr (device_arch_info::kIsRegister<Operand>) {
+                CHECK_NE(InsnType::kInfo.reg_kinds[reg_index].IsDef(),
+                         InsnType::kInfo.reg_kinds[reg_index].IsInput());
+                if (InsnType::kInfo.reg_kinds[reg_index].IsDef()) {
+                  if (InsnType::kInfo.reg_kinds[reg_index++].RegClass() == &x86_64::kFLAGS) {
+                    return ProcessInfo{.process_way = kFlagRegister};
+                  } else {
+                    return ProcessInfo{.process_way = kOutputRegister};
+                  }
+                } else if (InsnType::kInfo.reg_kinds[reg_index].RegClass()->num_regs == 1 &&
+                           InsnType::kInfo.reg_kinds[reg_index].RegClass() != &x86_64::kFLAGS) {
+                  return ProcessInfo{
+                      .process_way = kImplicitInputRegister,
+                      .arg_index = arg_index++,
+                      .pseudo_copy_size =
+                          InsnType::kInfo.reg_kinds[reg_index++].RegClass()->reg_size};
+                } else {
+                  reg_index++;
+                }
               }
-            }(args)...));
+              return ProcessInfo{.process_way = kPassthroughOperand, .arg_index = arg_index++};
+            });
+
+    std::array<MachineReg, InsnType::kInfo.OutputRegistersCount()> output;
+    builder_.Gen<InsnType>(
+        TypesToValues::MapWithTemporary<TypesToTypes::Zip<typename InsnType::ConstructorArgsTuple,
+                                                          ValuesToTypes::MetaValues<&kOperands>>,
+                                        /* output_idx = */ size_t>(
+            [&args_tuple, &output, this]<typename Operand>(
+                std::size_t& output_idx) -> std::tuple_element_t<0, Operand> {
+              constexpr ProcessInfo kOperand = std::tuple_element_t<1, Operand>{};
+              if constexpr (kOperand.process_way == kFlagRegister) {
+                return output[output_idx++] = GetFlagsRegister();
+              } else if constexpr (kOperand.process_way == kOutputRegister) {
+                return output[output_idx++] = AllocTempReg();
+              } else if constexpr (kOperand.process_way == kImplicitInputRegister) {
+                // If register is implicit we need to add extra PseudoCopy here even if it's pure
+                // input. Otherwise we may attempt to make the same register to belong to two
+                // different, incompatible register classes if it's ALSO output of another
+                // instruction with a different implicit class. E.g. if output of division is used
+                // as input for shift.
+                auto dst = AllocTempReg();
+                auto src = std::get<kOperand.arg_index>(args_tuple);
+                builder_.Gen<PseudoCopy>(dst, src, kOperand.pseudo_copy_size);
+                return dst;
+              } else {
+                static_assert(kOperand.process_way == kPassthroughOperand);
+                return std::get<kOperand.arg_index>(args_tuple);
+              }
+            }));
     return output;
   }
 
   BERBERIS_DECLARE_MACHINE_INSN_ADAPTER(
       /*may_discard*/ auto Gen,
-      (),
-      MachineInsn,
       InputArgsTuple,
       typename x86_64::MachineInsn<
           typename InsnType<typename CodeEmitter::Assemblers>::DeviceInsnInfo,
-          kSSAMode>::OutputArgsTuple,
+          x86_64::kSSA>::OutputArgsTuple,
       Gen,
-      ())
+      x86_64::kSSA)
 
   static x86_64::Assembler::Condition ToAssemblerCond(Decoder::BranchOpcode opcode);
 
@@ -635,7 +683,7 @@ HeavyOptimizerFrontend::GetCsr<CsrName::kFCsr>() {
       &builder_, tmp, GetFlagsRegister());
   auto [csr_reg] = Gen<x86_64::MovzxbqRegOp>(
       {.base = x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<CsrName::kFrm>});
-  auto [shifted_reg, shl_flags] = Gen<x86_64::ShlbRegImm>(csr_reg, 5);
+  auto [shifted_reg, shl_flags] = Gen<x86_64::ShlbRegImm>(csr_reg, int8_t{5});
   auto [ored_reg, or_flags] = Gen<x86_64::OrbRegReg>(shifted_reg, tmp);
   return ored_reg;
 }
@@ -657,7 +705,7 @@ template <>
 HeavyOptimizerFrontend::GetCsr<CsrName::kVxrm>() {
   auto [reg] = Gen<x86_64::MovzxbqRegOp>(
       {.base = x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<CsrName::kVcsr>});
-  auto [res, and_flags] = Gen<x86_64::AndbRegImm>(reg, 0b11);
+  auto [res, and_flags] = Gen<x86_64::AndbRegImm>(reg, int8_t{0b11});
   return res;
 }
 
@@ -666,7 +714,7 @@ template <>
 HeavyOptimizerFrontend::GetCsr<CsrName::kVxsat>() {
   auto [reg] = Gen<x86_64::MovzxbqRegOp>(
       {.base = x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<CsrName::kVcsr>});
-  auto [res, shr_flags] = Gen<x86_64::ShrbRegImm>(reg, 2);
+  auto [res, shr_flags] = Gen<x86_64::ShrbRegImm>(reg, int8_t{2});
   return res;
 }
 
@@ -698,7 +746,7 @@ inline void HeavyOptimizerFrontend::SetCsr<CsrName::kFCsr>(Register arg) {
   auto [rounding_mode, shld_flags] =
       Gen<x86_64::ShldlRegRegImm>(undef_rounding, arg, int8_t{32 - 5});
   auto [cleaned_rounding, and_flаgs] =
-      Gen<x86_64::AndbRegImm>(rounding_mode, kCsrMask<CsrName::kFrm>);
+      Gen<x86_64::AndbRegImm>(rounding_mode, int8_t{kCsrMask<CsrName::kFrm>});
   Gen<x86_64::MovbOpReg>({.base = x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<CsrName::kFrm>},
                          cleaned_rounding);
   InlineIntrinsicForHeavyOptimizerVoid<&intrinsics::FeSetExceptionsAndRound>(
@@ -725,7 +773,7 @@ inline void HeavyOptimizerFrontend::SetCsr<CsrName::kFrm>(uint8_t imm) {
 template <>
 inline void HeavyOptimizerFrontend::SetCsr<CsrName::kFrm>(Register arg) {
   // Use RCX as temporary register. We know it would be used by FeSetRound, too.
-  auto [tmp, and_flags] = Gen<x86_64::AndbRegImm>(arg, kCsrMask<CsrName::kFrm>);
+  auto [tmp, and_flags] = Gen<x86_64::AndbRegImm>(arg, int8_t{kCsrMask<CsrName::kFrm>});
   Gen<x86_64::MovbOpReg>({.base = x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<CsrName::kFrm>},
                          tmp);
   FeSetRound(tmp);
@@ -748,7 +796,7 @@ template <>
 inline void HeavyOptimizerFrontend::SetCsr<CsrName::kVxrm>(Register arg) {
   Gen<x86_64::AndbOpImm>({.base = x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<CsrName::kVcsr>},
                          0b100);
-  auto [tmp, and_flags] = Gen<x86_64::AndbRegImm>(arg, 0b11);
+  auto [tmp, and_flags] = Gen<x86_64::AndbRegImm>(arg, int8_t{0b11});
   Gen<x86_64::OrbOpReg>({x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<CsrName::kVcsr>}, tmp);
 }
 
@@ -768,7 +816,7 @@ inline void HeavyOptimizerFrontend::SetCsr<CsrName::kVxsat>(Register arg) {
   using Condition = x86_64::Assembler::Condition;
   Gen<x86_64::AndbOpImm>({.base = x86_64::kMachineRegRBP, .disp = kCsrFieldOffset<CsrName::kVcsr>},
                          0b11);
-  auto [test_flags] = Gen<x86_64::TestbRegImm>(arg, 1);
+  auto [test_flags] = Gen<x86_64::TestbRegImm>(arg, int8_t{1});
   auto [tmp] = Gen<x86_64::SetccReg>(Condition::kNotZero, test_flags);
   auto [expanded] = Gen<x86_64::MovzxbqRegReg>(tmp);
   auto [res, shl_flags] = Gen<x86_64::ShlbRegImm>(expanded, int8_t{2});

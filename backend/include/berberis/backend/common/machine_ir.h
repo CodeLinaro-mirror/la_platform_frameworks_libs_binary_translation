@@ -262,15 +262,10 @@ class MachineInsn {
         kind_(kind),
         recovery_info_{nullptr, kNullGuestAddr} {}
 
-  // To simplify optimizations instructions with use+def operands are generated as three operand
-  // instructions.  They are converted into series of PseudoCopy instructions and one use+def
-  // instruction before code generation.
-  static constexpr size_t kMaxLoweredInsns = 8;
-
  private:
   friend class MachineIR;
   virtual MachineInsn* Clone(Arena* arena) const = 0;
-  virtual std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const = 0;
+  virtual ArenaList<MachineInsn*> Lower(Arena* arena) const = 0;
   // We either recover by building explicit recovery blocks or by storing recovery pc.
   // TODO(b/200327919): Convert this to union? We'll need to know which one is used during
   // initialization and in has_side_effects.
@@ -342,7 +337,8 @@ class MachineBasicBlock {
         out_edges_(arena),
         live_in_(arena),
         live_out_(arena),
-        is_recovery_(false) {}
+        is_recovery_(false),
+        is_cold_{false} {}
 
   [[nodiscard]] uint32_t id() const { return id_; }
 
@@ -368,8 +364,10 @@ class MachineBasicBlock {
   [[nodiscard]] MachineRegVector& live_out() { return live_out_; }
 
   void MarkAsRecovery() { is_recovery_ = true; }
+  void MarkAsCold() { is_cold_ = true; }
 
   [[nodiscard]] bool is_recovery() const { return is_recovery_; }
+  [[nodiscard]] bool is_cold() const { return is_recovery_ || is_cold_; }
 
   [[nodiscard]] std::string GetDebugString() const;
 
@@ -383,6 +381,7 @@ class MachineBasicBlock {
   MachineRegVector live_in_;
   MachineRegVector live_out_;
   bool is_recovery_;
+  bool is_cold_;
 };
 
 using MachineBasicBlockList = ArenaList<MachineBasicBlock*>;
@@ -404,6 +403,10 @@ class MachineIR {
   [[nodiscard]] MachineReg AllocVReg() { return MachineReg::CreateVRegFromIndex(num_vreg_++); }
 
   [[nodiscard]] uint32_t ReserveBasicBlockId() { return num_bb_++; }
+
+  [[nodiscard]] MachineBasicBlock* NewBasicBlock() {
+    return NewInArena<MachineBasicBlock>(arena(), arena(), ReserveBasicBlockId());
+  }
 
   // Stack frame layout is:
   //     [arg slots][spill slots]
@@ -453,9 +456,7 @@ class MachineIR {
   }
 
   MachineInsn* CloneInsn(const MachineInsn* insn) { return insn->Clone(arena()); }
-  std::array<MachineInsn*, MachineInsn::kMaxLoweredInsns> LowerInsn(const MachineInsn* insn) {
-    return insn->Lower(arena());
-  }
+  MachineInsnList LowerInsn(const MachineInsn* insn) { return insn->Lower(arena()); }
 
  private:
   // Basic block number is useful when allocating analytical data
@@ -491,7 +492,7 @@ class PseudoBranch final : public MachineInsn {
   friend PseudoBranch* NewInArena<PseudoBranch, const PseudoBranch&>(Arena*, const PseudoBranch&);
   PseudoBranch(const PseudoBranch&) = default;
   MachineInsn* Clone(Arena* arena) const override;
-  std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
+  MachineInsnList Lower(Arena* arena) const override;
   const MachineBasicBlock* then_bb_;
 };
 
@@ -521,7 +522,7 @@ class PseudoCondBranch final : public MachineInsn {
       const PseudoCondBranch&);
   PseudoCondBranch(const PseudoCondBranch&) = default;
   MachineInsn* Clone(Arena* arena) const override;
-  std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
+  MachineInsnList Lower(Arena* arena) const override;
   CodeEmitter::Condition cond_;
   const MachineBasicBlock* then_bb_;
   const MachineBasicBlock* else_bb_;
@@ -554,7 +555,7 @@ class PseudoJump final : public MachineInsn {
   friend PseudoJump* NewInArena<PseudoJump, const PseudoJump&>(Arena*, const PseudoJump&);
   PseudoJump(const PseudoJump&) = default;
   MachineInsn* Clone(Arena* arena) const override;
-  std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
+  MachineInsnList Lower(Arena* arena) const override;
   GuestAddr target_;
   Kind kind_;
   // ABI outputs.
@@ -577,7 +578,7 @@ class PseudoIndirectJump final : public MachineInsn {
       const PseudoIndirectJump&);
   PseudoIndirectJump(const PseudoIndirectJump&);
   MachineInsn* Clone(Arena* arena) const override;
-  std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
+  MachineInsnList Lower(Arena* arena) const override;
   // Target and ABI outputs.
   MachineReg regs_[1 + 6];
 };
@@ -599,7 +600,7 @@ class PseudoCopy final : public MachineInsn {
   friend PseudoCopy* NewInArena<PseudoCopy, const PseudoCopy&>(Arena*, const PseudoCopy&);
   PseudoCopy(const PseudoCopy&);
   MachineInsn* Clone(Arena* arena) const override;
-  std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
+  MachineInsnList Lower(Arena* arena) const override;
   MachineReg regs_[2];
 };
 
@@ -623,7 +624,7 @@ class PseudoDefXReg final : public MachineInsn {
                                                                         const PseudoDefXReg&);
   PseudoDefXReg(const PseudoDefXReg&);
   MachineInsn* Clone(Arena* arena) const override;
-  std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
+  MachineInsnList Lower(Arena* arena) const override;
   MachineReg reg_;
 };
 
@@ -640,7 +641,7 @@ class PseudoDefReg final : public MachineInsn {
   friend PseudoDefReg* NewInArena<PseudoDefReg, const PseudoDefReg&>(Arena*, const PseudoDefReg&);
   PseudoDefReg(const PseudoDefReg&);
   MachineInsn* Clone(Arena* arena) const override;
-  std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
+  MachineInsnList Lower(Arena* arena) const override;
   MachineReg reg_;
 };
 
@@ -672,7 +673,7 @@ class PseudoReadFlags final : public MachineInsn {
       const PseudoReadFlags&);
   PseudoReadFlags(const PseudoReadFlags&);
   MachineInsn* Clone(Arena* arena) const override;
-  std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
+  MachineInsnList Lower(Arena* arena) const override;
   MachineReg regs_[2];
   bool with_overflow_;
 };
@@ -694,7 +695,7 @@ class PseudoWriteFlags final : public MachineInsn {
       const PseudoWriteFlags&);
   PseudoWriteFlags(const PseudoWriteFlags&);
   MachineInsn* Clone(Arena* arena) const override;
-  std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
+  MachineInsnList Lower(Arena* arena) const override;
   MachineReg regs_[2];
 };
 
@@ -715,7 +716,7 @@ class SSAPseudoWriteFlags final : public MachineInsn {
       const SSAPseudoWriteFlags&);
   SSAPseudoWriteFlags(const SSAPseudoWriteFlags&);
   MachineInsn* Clone(Arena* arena) const override;
-  std::array<MachineInsn*, kMaxLoweredInsns> Lower(Arena* arena) const override;
+  MachineInsnList Lower(Arena* arena) const override;
   MachineReg regs_[3];
 };
 

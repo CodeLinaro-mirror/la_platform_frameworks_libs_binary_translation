@@ -345,7 +345,7 @@ class GenIntrinsicsTests(unittest.TestCase):
             "in": ["uint32_t"],
             "out": ["uint32_t"],
         })
-    self.assertEqual(out, "CallIntrinsic<&intrinsics::Foo, Register>(arg0)")
+    self.assertEqual(out, "CallIntrinsic<&intrinsics::Foo, \"Foo\">(arg0)")
 
 
   def test_get_translator_hook_call_expr_void(self):
@@ -354,7 +354,7 @@ class GenIntrinsicsTests(unittest.TestCase):
             "in": [],
             "out": [],
         })
-    self.assertEqual(out, "CallIntrinsic<&intrinsics::Foo, void>()")
+    self.assertEqual(out, "CallIntrinsic<&intrinsics::Foo, \"Foo\">()")
 
 
   def test_get_translator_hook_raw_vector_body(self):
@@ -367,9 +367,9 @@ class GenIntrinsicsTests(unittest.TestCase):
     self.assertSequenceEqual(list(out),
                              ("switch (size) {",
                               "  case 64:",
-                              "    return CallIntrinsic<&intrinsics::Foo<64>, SimdRegister>(arg0, arg1);",
+                              "    return CallIntrinsic<&intrinsics::Foo<64>, \"Foo<64>\">(arg0, arg1);",
                               "  case 128:",
-                              "    return CallIntrinsic<&intrinsics::Foo<128>, SimdRegister>(arg0, arg1);",
+                              "    return CallIntrinsic<&intrinsics::Foo<128>, \"Foo<128>\">(arg0, arg1);",
                               "  default:",
                               "    LOG_ALWAYS_FATAL(\"Unsupported size\");",
                               "}")) # pyformat: disable
@@ -387,11 +387,11 @@ class GenIntrinsicsTests(unittest.TestCase):
                              ("auto format = intrinsics::GetVectorFormatInt(elem_size, elem_num, true);",
                               "switch (format) {",
                               "  case intrinsics::kVectorI32x2:" ,
-                              "    return CallIntrinsic<&intrinsics::Foo<int32_t, 2>, std::tuple<SimdRegister, Register>>(arg0, arg1);",
+                              "    return CallIntrinsic<&intrinsics::Foo<int32_t, 2>, \"Foo<int32_t, 2>\">(arg0, arg1);",
                               "  case intrinsics::kVectorI32x4:" ,
-                              "    return CallIntrinsic<&intrinsics::Foo<int32_t, 4>, std::tuple<SimdRegister, Register>>(arg0, arg1);",
+                              "    return CallIntrinsic<&intrinsics::Foo<int32_t, 4>, \"Foo<int32_t, 4>\">(arg0, arg1);",
                               "  case intrinsics::kVectorI32x1:" ,
-                              "    return CallIntrinsic<&intrinsics::Foo<int32_t, 1>, std::tuple<SimdRegister, Register>>(arg0, arg1);",
+                              "    return CallIntrinsic<&intrinsics::Foo<int32_t, 1>, \"Foo<int32_t, 1>\">(arg0, arg1);",
                               "  default:",
                               "    LOG_ALWAYS_FATAL(\"Unsupported format\");",
                               "}")) # pyformat: disable
@@ -454,12 +454,12 @@ class GenIntrinsicsTests(unittest.TestCase):
                              "intrinsics::TrivialDemultiplexer(intrinsics::kIdFromType<int32_t>):\n"
                              "      CHECK_EQ(intrinsics::kIdFromType<int32_t>, Type0);\n"
                              "      return "
-                             "Foo(arg0,arg1,MetaValue<intrinsics::kIdFromType<int32_t>>{});\n"
+                             "Foo(arg0,arg1,kMeta<intrinsics::kIdFromType<int32_t>>);\n"
                              "    case "
                              "intrinsics::TrivialDemultiplexer(intrinsics::kIdFromType<int64_t>):\n"
                              "      CHECK_EQ(intrinsics::kIdFromType<int64_t>, Type0);\n"
                              "      return "
-                             "Foo(arg0,arg1,MetaValue<intrinsics::kIdFromType<int64_t>>{});\n"
+                             "Foo(arg0,arg1,kMeta<intrinsics::kIdFromType<int64_t>>);\n"
                              "    default:\n"
                              "      FATAL(\"Unsupported size\");\n"
                              "  }\n"
@@ -487,15 +487,15 @@ class GenIntrinsicsTests(unittest.TestCase):
                              "      CHECK_EQ(intrinsics::kIdFromType<int32_t>, Type0);\n"
                              "      CHECK_EQ(intrinsics::kIdFromType<Float32>, Type1);\n"
                              "      return "
-                             "Foo(arg0,arg1,MetaValue<intrinsics::kIdFromType<int32_t>>{},"
-                             "MetaValue<intrinsics::kIdFromType<Float32>>{});\n"
+                             "Foo(arg0,arg1,kMeta<intrinsics::kIdFromType<int32_t>>,"
+                             "kMeta<intrinsics::kIdFromType<Float32>>);\n"
                              "    case intrinsics::TrivialDemultiplexer(intrinsics::kIdFromType<int64_t>, "
                              "intrinsics::kIdFromType<Float64>):\n"
                              "      CHECK_EQ(intrinsics::kIdFromType<int64_t>, Type0);\n"
                              "      CHECK_EQ(intrinsics::kIdFromType<Float64>, Type1);\n"
                              "      return "
-                             "Foo(arg0,arg1,MetaValue<intrinsics::kIdFromType<int64_t>>{},"
-                             "MetaValue<intrinsics::kIdFromType<Float64>>{});\n"
+                             "Foo(arg0,arg1,kMeta<intrinsics::kIdFromType<int64_t>>,"
+                             "kMeta<intrinsics::kIdFromType<Float64>>);\n"
                              "    default:\n"
                              "      FATAL(\"Unsupported size\");\n"
                              "  }\n"

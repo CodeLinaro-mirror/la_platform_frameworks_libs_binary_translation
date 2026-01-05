@@ -20,8 +20,8 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <tuple>
 #include <string>
+#include <tuple>
 
 #include "berberis/base/checks.h"
 
@@ -113,13 +113,6 @@ constexpr auto GetTemplateName() {
 
 template <typename kName>
 inline constexpr auto kGetTemplateName = GetTemplateName<kName>();
-
-template <typename TupleType>
-constexpr auto ToArray(TupleType&& tuple) {
-  return std::apply(
-      []<typename... Arg>(Arg&&... arg) { return std::array{std::forward<Arg>(arg)...}; },
-      std::forward<TupleType>(tuple));
-}
 
 }  // namespace berberis
 

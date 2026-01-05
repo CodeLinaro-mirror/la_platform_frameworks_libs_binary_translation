@@ -45,7 +45,7 @@ void HeavyOptimizerFrontend::CompareAndBranch(BranchOpcode opcode,
   ir->AddEdge(cur_bb, then_bb);
   ir->AddEdge(cur_bb, else_bb);
 
-  builder_.Gen<PseudoCondBranch>(
+  builder_.Gen<CondBranch>(
       ToAssemblerCond(opcode), then_bb, else_bb, std::get<0>(Gen<x86_64::CmpqRegReg>(arg1, arg2)));
 
   builder_.StartBasicBlock(then_bb);
@@ -113,18 +113,18 @@ void HeavyOptimizerFrontend::GenJump(GuestAddr target) {
 
   // Checking pending signals only on back jumps guarantees no infinite loops
   // without pending signal checks.
-  auto kind = target <= GetInsnAddr() ? PseudoJump::Kind::kJumpWithPendingSignalsCheck
-                                      : PseudoJump::Kind::kJumpWithoutPendingSignalsCheck;
+  auto kind = target <= GetInsnAddr() ? Jump::Kind::kJumpWithPendingSignalsCheck
+                                      : Jump::Kind::kJumpWithoutPendingSignalsCheck;
 
-  builder_.Gen<PseudoJump>(target, kind);
+  builder_.Gen<Jump>(target, kind);
 }
 
 void HeavyOptimizerFrontend::ExitGeneratedCode(GuestAddr target) {
-  builder_.Gen<PseudoJump>(target, PseudoJump::Kind::kExitGeneratedCode);
+  builder_.Gen<Jump>(target, Jump::Kind::kExitGeneratedCode);
 }
 
 void HeavyOptimizerFrontend::ExitRegionIndirect(Register target) {
-  builder_.Gen<PseudoIndirectJump>(target);
+  builder_.Gen<IndirectJump>(target);
 }
 
 void HeavyOptimizerFrontend::Undefined() {
@@ -160,13 +160,13 @@ void HeavyOptimizerFrontend::ResolveJumps() {
     }
 
     const MachineInsn* last_insn = bb->insn_list().back();
-    if (last_insn->opcode() != kMachineOpPseudoJump) {
+    if (last_insn->opcode() != kMachineOpJump) {
       continue;
     }
 
-    auto* jump = static_cast<const PseudoJump*>(last_insn);
-    if (jump->kind() == PseudoJump::Kind::kSyscall ||
-        jump->kind() == PseudoJump::Kind::kExitGeneratedCode) {
+    auto* jump = static_cast<const Jump*>(last_insn);
+    if (jump->kind() == Jump::Kind::kSyscall ||
+        jump->kind() == Jump::Kind::kExitGeneratedCode) {
       // Syscall or generated code exit must always exit region.
       continue;
     }
@@ -214,19 +214,19 @@ void HeavyOptimizerFrontend::ReplaceJumpWithBranch(MachineBasicBlock* bb,
                                                    MachineBasicBlock* target_bb) {
   auto ir = builder_.ir();
   const auto* last_insn = bb->insn_list().back();
-  CHECK_EQ(last_insn->opcode(), kMachineOpPseudoJump);
-  auto* jump = static_cast<const PseudoJump*>(last_insn);
-  GuestAddr target = static_cast<const PseudoJump*>(jump)->target();
+  CHECK_EQ(last_insn->opcode(), kMachineOpJump);
+  auto* jump = static_cast<const Jump*>(last_insn);
+  GuestAddr target = static_cast<const Jump*>(jump)->target();
   // Do not invalidate this iterator as it may be a target for another jump.
   // Instead overwrite the instruction.
   auto jump_it = std::prev(bb->insn_list().end());
 
-  if (jump->kind() == PseudoJump::Kind::kJumpWithoutPendingSignalsCheck) {
+  if (jump->kind() == Jump::Kind::kJumpWithoutPendingSignalsCheck) {
     // Simple branch for forward jump.
-    *jump_it = ir->NewInsn<PseudoBranch>(target_bb);
+    *jump_it = ir->NewInsn<berberis::Branch>(target_bb);
     ir->AddEdge(bb, target_bb);
   } else {
-    CHECK(jump->kind() == PseudoJump::Kind::kJumpWithPendingSignalsCheck);
+    CHECK(jump->kind() == Jump::Kind::kJumpWithPendingSignalsCheck);
     // See EmitCheckSignalsAndMaybeReturn.
     auto* exit_bb = ir->NewBasicBlock();
     // Note that we intentionally don't mark exit_bb as recovery and therefore don't request its
@@ -238,7 +238,7 @@ void HeavyOptimizerFrontend::ReplaceJumpWithBranch(MachineBasicBlock* bb,
                                                 kPendingSignalsPresent,
                                                 GetFlagsRegister());
     *jump_it = cmpb;
-    auto* cond_branch = ir->NewInsn<PseudoCondBranch>(
+    auto* cond_branch = ir->NewInsn<CondBranch>(
         x86_64::Assembler::Condition::kEqual, exit_bb, target_bb, GetFlagsRegister());
     bb->insn_list().push_back(cond_branch);
 
@@ -480,7 +480,7 @@ void HeavyOptimizerFrontend::GenRecoveryBlockForLastInsn() {
   // Note, even though there are two bb successors, we only explicitly branch to
   // the continue_bb, since jump to the recovery_bb is set up by the signal
   // handler.
-  builder_.Gen<PseudoBranch>(continue_bb);
+  builder_.Gen<berberis::Branch>(continue_bb);
 
   builder_.StartBasicBlock(recovery_bb);
   ExitGeneratedCode(GetInsnAddr());
@@ -708,12 +708,7 @@ void HeavyOptimizerFrontend::MemoryRegionReservationLoad(Register aligned_addr) 
   Gen<x86_64::MovqOpReg>({.base = x86_64::kMachineRegRBP, .disp = address_offset}, aligned_addr);
 
   // MemoryRegionReservation::SetOwner(aligned_addr, &(state->cpu)).
-  builder_.GenCallImm(bit_cast<uint64_t>(&MemoryRegionReservation::SetOwner),
-                      GetFlagsRegister(),
-                      std::array<x86_64::CallImm::Arg, 2>{{
-                          {aligned_addr, x86_64::CallImm::kIntRegType},
-                          {x86_64::kMachineRegRBP, x86_64::CallImm::kIntRegType},
-                      }});
+  CallIntrinsic<MemoryRegionReservation::SetOwner>(aligned_addr, x86_64::kMachineRegRBP);
 
   // Load reservation value and store it in CPUState.
   auto [reservation] = Gen<x86_64::MovqRegOp>({.base = aligned_addr});
@@ -739,7 +734,7 @@ Register HeavyOptimizerFrontend::MemoryRegionReservationExchange(Register aligne
       Gen<x86_64::MovqRegOp>({.base = x86_64::kMachineRegRBP, .disp = address_offset});
   builder_.GenPutImm(address_offset, kNullGuestAddr);
   // Compare aligned_addr to the one in CPUState.
-  builder_.Gen<PseudoCondBranch>(
+  builder_.Gen<CondBranch>(
       x86_64::Assembler::Condition::kNotEqual,
       failure_bb,
       addr_match_bb,
@@ -757,12 +752,13 @@ Register HeavyOptimizerFrontend::MemoryRegionReservationExchange(Register aligne
   ir->AddEdge(builder_.bb(), continue_bb);
   // Pseudo-def for use-def operand of XOR to make sure data-flow is integrate.
   builder_.Gen<PseudoDefReg>(result);
-  builder_.Gen<x86_64::XorqRegReg, x86_64::kNoSSA>(result, result, GetFlagsRegister());
-  builder_.Gen<PseudoBranch>(continue_bb);
+  Register xor_flags;
+  std::tie(result, xor_flags) = Gen<x86_64::XorlRegReg>(result, result);
+  builder_.Gen<berberis::Branch>(continue_bb);
 
   builder_.StartBasicBlock(failure_bb);
   builder_.Gen<x86_64::MovqRegImm>(result, 1);
-  builder_.Gen<PseudoBranch>(continue_bb);
+  builder_.Gen<berberis::Branch>(continue_bb);
 
   builder_.StartBasicBlock(continue_bb);
 
@@ -782,17 +778,15 @@ void HeavyOptimizerFrontend::MemoryRegionReservationSwapWithLockedOwner(
   ir->AddEdge(lock_success_bb, swap_success_bb);
   ir->AddEdge(lock_success_bb, failure_bb);
 
-  // lock_entry = MemoryRegionReservation::TryLock(aligned_addr, &(state->cpu)).
-  auto* call = builder_.GenCallImm(bit_cast<uint64_t>(&MemoryRegionReservation::TryLock),
-                                   GetFlagsRegister(),
-                                   std::array<x86_64::CallImm::Arg, 2>{{
-                                       {aligned_addr, x86_64::CallImm::kIntRegType},
-                                       {x86_64::kMachineRegRBP, x86_64::CallImm::kIntRegType},
-                                   }});
-  Register lock_entry = AllocTempReg();
+  static_assert(offsetof(ThreadState, cpu) == 0);  // Needed to use x86_64::kMachineRegRBP here.
+  // lock_entry = ExclusiveMonitor::TryLock(aligned_addr, &(state->cpu)).
+  MachineReg result =
+      CallIntrinsic<MemoryRegionReservation::TryLock>(aligned_addr, x86_64::kMachineRegRBP);
+  static_assert(offsetof(ThreadState, cpu) == 0);
   // Limit life-time of a narrow reg-class call result.
-  builder_.Gen<PseudoCopy>(lock_entry, call->IntResultAt(0), 8);
-  builder_.Gen<PseudoCondBranch>(x86_64::Assembler::Condition::kZero,
+  Register lock_entry = AllocTempReg();
+  builder_.Gen<berberis::Copy>(lock_entry, result, 8);
+  builder_.Gen<CondBranch>(x86_64::Assembler::Condition::kZero,
                                  failure_bb,
                                  lock_success_bb,
                                  std::get<0>(Gen<x86_64::TestqRegReg>(lock_entry, lock_entry)));
@@ -805,7 +799,7 @@ void HeavyOptimizerFrontend::MemoryRegionReservationSwapWithLockedOwner(
   // MemoryRegionReservation::Unlock(lock_entry)
   Gen<x86_64::MovqOpImm>({.base = lock_entry}, 0);
   // Zero-flag is set if CmpXchg is successful.
-  builder_.Gen<PseudoCondBranch>(
+  builder_.Gen<CondBranch>(
       x86_64::Assembler::Condition::kNotZero, failure_bb, swap_success_bb, host_flags);
 
   builder_.StartBasicBlock(swap_success_bb);

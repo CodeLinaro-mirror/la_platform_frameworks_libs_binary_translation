@@ -24,17 +24,6 @@
 
 namespace berberis {
 
-// Remove those PSEUDO_COPY instructions with identical source and
-// destination operands.
-void RemoveNopPseudoCopy(MachineIR* machine_ir) {
-  for (auto* machine_bb : machine_ir->bb_list()) {
-    machine_bb->insn_list().remove_if([](MachineInsn* machine_insn) {
-      return machine_insn->opcode() == PseudoCopy::kOpcode &&
-             machine_insn->RegAt(0) == machine_insn->RegAt(1);
-    });
-  }
-}
-
 // Remove forwarder blocks, those basic blocks that contain nothing
 // but unconditional jumps.  Jumps to those forwarder blocks are
 // redirected to their respective final destinations.
@@ -53,8 +42,8 @@ void RemoveForwarderBlocks(MachineIR* machine_ir) {
     if (machine_bb->insn_list().size() != 1) continue;
 
     const MachineInsn* last_insn = machine_bb->insn_list().back();
-    if (last_insn->opcode() == PseudoBranch::kOpcode) {
-      const PseudoBranch* branch_insn = static_cast<const PseudoBranch*>(last_insn);
+    if (last_insn->opcode() == Branch::kOpcode) {
+      const Branch* branch_insn = static_cast<const Branch*>(last_insn);
       forwarder_map[machine_bb->id()] = branch_insn->then_bb();
     }
   }
@@ -93,13 +82,13 @@ void RemoveForwarderBlocks(MachineIR* machine_ir) {
     }
 
     MachineInsn* last_insn = insn_list.back();
-    if (last_insn->opcode() == PseudoBranch::kOpcode) {
-      PseudoBranch* branch_insn = static_cast<PseudoBranch*>(last_insn);
+    if (last_insn->opcode() == Branch::kOpcode) {
+      Branch* branch_insn = static_cast<Branch*>(last_insn);
       if (auto* new_dest = forwarder_map[branch_insn->then_bb()->id()]) {
         branch_insn->set_then_bb(new_dest);
       }
-    } else if (last_insn->opcode() == PseudoCondBranch::kOpcode) {
-      PseudoCondBranch* branch_insn = static_cast<PseudoCondBranch*>(last_insn);
+    } else if (last_insn->opcode() == CondBranch::kOpcode) {
+      CondBranch* branch_insn = static_cast<CondBranch*>(last_insn);
       if (auto* new_then_bb = forwarder_map[branch_insn->then_bb()->id()]) {
         branch_insn->set_then_bb(new_then_bb);
       }
@@ -133,7 +122,7 @@ void RemoveForwarderBlocks(MachineIR* machine_ir) {
 // properties we are interested in. So we intentionally keep this order valid if it was set.
 void MoveColdBlocksToEnd(MachineIR* machine_ir) {
   // Since the first bb is region entry, we must keep it in place.
-  CHECK(!machine_ir->bb_list().front()->is_cold());
+  CHECK(!machine_ir->bb_list().front()->IsCold());
 
   // We are going to partition bb_list() into normal and cold
   // basic blocks. We preserve the order of normal basic blocks so
@@ -147,7 +136,7 @@ void MoveColdBlocksToEnd(MachineIR* machine_ir) {
   auto* bb_list = &(machine_ir->bb_list());
   auto normal_it = bb_list->begin();
   for (auto*& bb : *bb_list) {
-    if (!bb->is_cold()) {
+    if (!bb->IsCold()) {
       std::swap(*normal_it++, bb);  // can be the same
     }
   }

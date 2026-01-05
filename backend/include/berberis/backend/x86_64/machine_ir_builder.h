@@ -19,10 +19,14 @@
 
 #include <array>
 #include <iterator>
+#include <tuple>
+#include <utility>
 
 #include "berberis/backend/common/machine_ir_builder.h"
 #include "berberis/backend/x86_64/machine_ir.h"
 #include "berberis/base/logging.h"
+#include "berberis/base/tuple_processing.h"
+#include "berberis/device_arch_info/x86_64/call_imm.h"
 #include "berberis/guest_state/guest_addr.h"
 #include "berberis/guest_state/guest_state_opaque.h"
 
@@ -80,67 +84,253 @@ class MachineIRBuilder : public MachineIRBuilderBase<MachineIR> {
     }
   }
 
-  // Please use GenCallImm instead
-  template <typename CallImmType,
-            typename IntegralType,
-            std::enable_if_t<std::is_same_v<std::decay_t<CallImmType>, CallImm> &&
-                                 std::is_integral_v<IntegralType>,
-                             bool> = true>
-  /*may_discard*/ CallImmType* Gen(IntegralType imm) = delete;
-
-  /*may_discard*/ CallImm* GenCallImm(uint64_t imm, MachineReg flag_register) {
-    return GenCallImm(imm, flag_register, std::array<CallImm::Arg, 0>{});
+  template <typename IntrinsicType, typename ArgsType>
+  /*may_discard*/ auto GenCallImm(IntrinsicType func_ptr,
+                                  MachineReg flags_register,
+                                  ArgsType&& args) {
+    return GenCallImm<static_cast<IntrinsicType>(nullptr)>(
+        flags_register, std::forward<ArgsType>(args), func_ptr);
   }
 
-  template <size_t kNumberOfArguments>
-  /*may_discard*/ CallImm* GenCallImm(uint64_t imm,
-                                      MachineReg flag_register,
-                                      const std::array<CallImm::Arg, kNumberOfArguments>& args) {
-    auto* call = ir()->NewInsn<CallImm>(imm);
-    // Init registers clobbered according to ABI to notify the register allocator.
-    for (int i = 0; i < call->NumRegOperands(); ++i) {
-      call->SetRegAt(i, ir()->AllocVReg());
-    }
-
-    call->SetRegAt(x86_64::CallImm::GetFlagsArgIndex(), flag_register);
-
-    // Now generate CallImmArg instructions for arguments
-    GenCallImmArg(call, args);
-
-    InsertInsn(call);
-    return call;
+  template <typename IntrinsicType, typename ArgsType>
+  /*may_discard*/ auto GenCallImm(IntrinsicType func_ptr,
+                                  MachineReg flags_register,
+                                  ArgsType&& args,
+                                  const char* func_name) {
+    return GenCallImm<static_cast<IntrinsicType>(nullptr)>(
+        flags_register, std::forward<ArgsType>(args), func_ptr, func_name);
   }
 
-  template <typename CallImmArgType,
-            typename... Args,
-            std::enable_if_t<std::is_same_v<std::decay_t<CallImmArgType>, CallImmArg>, bool> = true>
-  /*may_discard*/ CallImmArgType* Gen(Args... args) = delete;
+  template <auto kIntrinsic, typename ArgsType, typename... FuncInfo>
+  /*may_discard*/ auto GenCallImm(MachineReg flags_register,
+                                  ArgsType&& args,
+                                  FuncInfo... func_info);
 
- private:
-  template <size_t kNumberOfArgumens>
-  void GenCallImmArg(CallImm* call, const std::array<CallImm::Arg, kNumberOfArgumens>& args) {
-    int general_register_position = 0;
-    int xmm_register_position = 0;
-    for (const auto& arg : args) {
-      MachineReg arg_reg = arg.reg;
-      CallImm::RegType reg_type = arg.reg_type;
-
-      // Rename arg vreg in case it's used in several call operands which have non-intersecting
-      // register classes. Reg-alloc will eliminate renaming where possible.
-      MachineReg renamed_arg_reg = ir()->AllocVReg();
-      auto* copy = ir()->NewInsn<PseudoCopy>(
-          renamed_arg_reg, arg_reg, (reg_type == CallImm::kIntRegType) ? 8 : 16);
-      auto* call_arg_insn = ir()->NewInsn<CallImmArg>(renamed_arg_reg, reg_type);
-      call->SetRegAt((reg_type == CallImm::kIntRegType)
-                         ? CallImm::GetIntArgIndex(general_register_position++)
-                         : CallImm::GetXmmArgIndex(xmm_register_position++),
-                     renamed_arg_reg);
-
-      InsertInsn(copy);
-      InsertInsn(call_arg_insn);
-    }
-  }
+  template <auto kIntrinsic, typename... FuncInfo>
+  /*may_discard*/ auto GenCallImmImpl(
+      MachineReg flags_register,
+      std::array<
+          MachineReg,
+          std::tuple_size_v<typename device_arch_info::CallImm<kIntrinsic>::ArgumentRegisters>>
+          args,
+      FuncInfo... func_info);
 };
+
+template <auto kIntrinsic, typename ArgsType, typename... FuncInfo>
+/*may_discard*/ auto MachineIRBuilder::GenCallImm(MachineReg flags_register,
+                                                  ArgsType&& args,
+                                                  FuncInfo... func_info) {
+  using CallImm = device_arch_info::CallImm<kIntrinsic>;
+  // If result comes in caller-provided buffer then there's hidden argument before first one.
+  using ExpandedParamTypes = TypesToTypes::Concat<
+      std::conditional_t<CallImm::kIsImplicitPointerResult, std::tuple<int64_t>, std::tuple<>>,
+      typename CallImm::CleanParamTypes>;
+  // Split GenCallImm argument values: 128-bit immediates have to come as two arguments.
+  auto split_args = ValuesToValues::FlatMap(std::move(args), []<typename Arg>(Arg arg) {
+    if constexpr (std::is_same_v<Arg, __int128_t> || std::is_same_v<Arg, __uint128_t>) {
+      return std::tuple{static_cast<int64_t>(arg), static_cast<int64_t>(arg >> 64)};
+    } else {
+      return std::tuple{arg};
+    }
+  });
+  // Now lengths of two tuples should match and we may process them.
+  auto array = ValuesToValues::ToArray<MachineReg>(
+      TypesToValues::Map<TypesToTypes::Enumerate<ExpandedParamTypes>>(
+          [&split_args, this]<typename SplitParamInfo>() {
+            constexpr std::size_t kIndex = std::tuple_element_t<0, SplitParamInfo>{};
+            using SplitParamType = std::tuple_element_t<1, SplitParamInfo>;
+            using SplitArgType = std::tuple_element_t<kIndex, decltype(split_args)>;
+            auto arg = std::get<kIndex>(split_args);
+
+            MachineReg physical_register = ir()->AllocVReg();
+            if constexpr (std::is_integral_v<SplitArgType>) {
+              static_assert(sizeof(SplitArgType) <= sizeof(int64_t));
+              // Note that Movq can use Movl if that's produces smaller code.
+              InsertInsn(ir()->NewInsn<MovqRegImm>(physical_register, static_cast<int64_t>(arg)));
+            } else {
+              if constexpr (std::is_integral_v<SplitParamType> && sizeof(SplitParamType) < 4) {
+                if constexpr (std::is_signed_v<SplitParamType>) {
+                  if constexpr (sizeof(SplitParamType) == 1) {
+                    InsertInsn(ir()->NewInsn<x86_64::MovsxblRegReg>(physical_register, arg));
+                  } else {
+                    static_assert(sizeof(SplitParamType) == 2);
+                    InsertInsn(ir()->NewInsn<x86_64::MovsxwlRegReg>(physical_register, arg));
+                  }
+                } else {
+                  static_assert(std::is_unsigned_v<SplitParamType>);
+                  if constexpr (sizeof(SplitParamType) == 1) {
+                    InsertInsn(ir()->NewInsn<x86_64::MovzxblRegReg>(physical_register, arg));
+                  } else {
+                    static_assert(sizeof(SplitParamType) == 2);
+                    InsertInsn(ir()->NewInsn<x86_64::MovzxwlRegReg>(physical_register, arg));
+                  }
+                }
+              } else {
+                // We need copies here to ensure that the arguments passed to the intrinsic are in
+                // virtual registers that can be independently allocated to the specific physical
+                // registers required by the intrinsic call ABI. Worst case scenario we may have one
+                // virtual register that would have to go into two different physical registers, in
+                // that case it's impossible for the register allocator to satofy the requirements,
+                // even in principle. These copies create new virtual registers that the register
+                // allocator can then assign to the correct physical registers.
+                InsertInsn(ir()->NewInsn<Copy>(physical_register, arg, sizeof(SplitParamType)));
+              }
+            }
+            return physical_register;
+          }));
+  return GenCallImmImpl<kIntrinsic>(flags_register, array, func_info...);
+}
+
+template <auto kIntrinsic, typename... FuncInfo>
+/*may_discard*/ auto MachineIRBuilder::GenCallImmImpl(
+    MachineReg flags_register,
+    std::array<MachineReg,
+               std::tuple_size_v<typename device_arch_info::CallImm<kIntrinsic>::ArgumentRegisters>>
+        args,
+    FuncInfo... func_info) {
+  using CallImm = device_arch_info::CallImm<kIntrinsic>;
+  std::array<MachineReg,
+             CallImm::kIsImplicitPointerResult ? 1 : std::size(CallImm::kResultsElements)>
+      results;
+  const char* kFuncName = nullptr;
+  // We may need one extra argument if function address and type are passed separately.
+  if constexpr (CallImm::kDynamicFunction) {
+    if constexpr (sizeof...(FuncInfo) == 1) {
+      // If we have a dynamic intrinsic then we accept one address as 64-bit immediate.
+      static_assert(
+          std::is_same_v<decltype(kIntrinsic), std::tuple_element_t<0, std::tuple<FuncInfo...>>>);
+    } else {
+      // If we have a dynamic intrinsic then we accept one address as 64-bit immediate.
+      static_assert(sizeof...(FuncInfo) == 2);
+      static_assert(
+          std::is_same_v<decltype(kIntrinsic), std::tuple_element_t<0, std::tuple<FuncInfo...>>>);
+      static_assert(!std::is_same_v<decltype(kIntrinsic), const char*>);
+      static_assert(std::is_same_v<const char*, std::tuple_element_t<1, std::tuple<FuncInfo...>>>);
+      kFuncName = std::get<1>(std::tuple{func_info...});
+    }
+  } else {
+    // Function name can be supplied with name of the intrinsics, too.
+    if constexpr (sizeof...(FuncInfo) == 1) {
+      static_assert(std::is_same_v<const char*, std::tuple_element_t<0, std::tuple<FuncInfo...>>>);
+      kFuncName = std::get<0>(std::tuple{func_info...});
+    } else {
+      // Otherwise address is part of the type.
+      static_assert(sizeof...(FuncInfo) == 0);
+      static constexpr StringLiteral kFuncStaticName = kGetTemplateName<MetaValue<kIntrinsic>>;
+      kFuncName = kFuncStaticName;
+    }
+  }
+  std::array<MachineReg, std::tuple_size_v<typename CallImm::ResultRegisters>> call_outs;
+  // Each register receives result for some elements, but in some cases more than one. If that
+  // happens then we always have argument that receives some other argument in the same register
+  // in position zero. We copy value into target register and then either Shrq or Psrlq/Vpsrlq to
+  // put result into the position. Note: we don't do zero or sign extension and don't load results
+  // from memory. This part may depend on the frontend needs and thus is not done in the backend.
+  constexpr bool kNeedExtraProcessing =
+      !CallImm::kIsImplicitPointerResult &&
+      ValuesToValues::Any(CallImm::kResultsElements,
+                          []<typename ResultElement>(ResultElement result_element) {
+                            return result_element.element_offset != 0;
+                          });
+  if constexpr (kNeedExtraProcessing) {
+    std::size_t call_outs_index = 0;
+    for (std::size_t index = 0; index < std::size(CallImm::kResultsElements); ++index) {
+      MachineReg reg = ir()->AllocVReg();
+      results[index] = reg;
+      auto& result_element = CallImm::kResultsElements[index];
+      if (result_element.element_offset == 0) {
+        call_outs[call_outs_index++] = reg;
+      }
+    }
+  } else {
+    for (auto& reg : call_outs) {
+      reg = ir()->AllocVReg();
+    }
+    results = call_outs;
+  }
+  auto* call =
+      Gen<MachineInsn<typename CallImm::template MachineInsn<CodeEmitter>::DeviceInsnInfo>>(
+          std::tuple_cat(
+              std::tuple{kFuncName},
+              ValuesToValues::Take<CallImm::kDynamicFunction>(
+                  std::tuple{bit_cast<const void*>(func_info)...}),
+              call_outs,
+              args,
+              TypesToValues::Map<typename CallImm::ClobberRegisters>(
+                  [flags_register, this]<typename RegisterClass>() {
+                    if constexpr (std::is_same_v<RegisterClass, device_arch_info::FLAGS>) {
+                      return flags_register;
+                    } else {
+                      return ir()->AllocVReg();
+                    }
+                  })));
+  if constexpr (kNeedExtraProcessing) {
+    MachineReg last_zero_based_register;
+    TypesToValues::ForEach<TypesToTypes::Enumerate<typename CallImm::CleanRetType>>(
+        [&last_zero_based_register, &results, flags_register, this]<typename IndexAndResultType>() {
+          constexpr std::size_t kIdx = std::tuple_element_t<0, IndexAndResultType>{};
+          constexpr auto result_element = CallImm::kResultsElements[kIdx];
+          if constexpr (result_element.element_offset == 0) {
+            last_zero_based_register = results[kIdx];
+          }
+          using ElementType = std::tuple_element_t<1, IndexAndResultType>;
+          // We need to special handle even the first register if we receive results in RAX/RDX but
+          // then have to move it into SSE register as per caller expectations.
+          if constexpr (result_element.element_offset != 0 ||
+                        ((result_element.clobber_class_index <=
+                          std::tuple_size_v<
+                              device_arch_info::call_imm_impl::SSEArgumentetersRegisters>) &&
+                         (std::is_same_v<ElementType, intrinsics::Float16> ||
+                          std::is_same_v<ElementType, intrinsics::Float32>))) {
+            if constexpr (result_element.clobber_class_index <=
+                          std::tuple_size_v<
+                              device_arch_info::call_imm_impl::SSEArgumentetersRegisters>) {
+              if constexpr (result_element.element_offset != 0) {
+                InsertInsn(ir()->NewInsn<ShrqRegImm, kSSA>(
+                    results[kIdx],
+                    last_zero_based_register,
+                    static_cast<int8_t>(result_element.element_offset * 8),
+                    flags_register));
+              }
+              if constexpr (std::is_same_v<ElementType, intrinsics::Float16>) {
+                MachineReg empty_xmm_register = ir()->AllocVReg();
+                InsertInsn(ir()->NewInsn<PseudoDefReg>(empty_xmm_register));
+                MachineReg xmm_register = ir()->AllocVReg();
+#ifdef __AVX__
+                InsertInsn(ir()->NewInsn<VpinsrwXRegXRegRegImm>(
+                    xmm_register, empty_xmm_register, results[kIdx], int8_t{0}));
+#else
+                InsertInsn(ir()->NewInsn<PinsrwXRegRegImm, kSSA>(
+                    xmm_register, empty_xmm_register, results[kIdx], int8_t{0}));
+#endif
+                results[kIdx] = xmm_register;
+              } else if constexpr (std::is_same_v<ElementType, intrinsics::Float32>) {
+                MachineReg xmm_register = ir()->AllocVReg();
+#ifdef __AVX__
+                InsertInsn(ir()->NewInsn<VmovdXRegReg>(xmm_register, results[kIdx]));
+#else
+                InsertInsn(ir()->NewInsn<MovdXRegReg>(xmm_register, results[kIdx]));
+#endif
+                results[kIdx] = xmm_register;
+              }
+            } else {
+#ifdef __AVX__
+              InsertInsn(ir()->NewInsn<VpsrlqXRegXRegImm>(
+                  results[kIdx],
+                  last_zero_based_register,
+                  static_cast<int8_t>(result_element.element_offset * 8)));
+#else
+              InsertInsn(ir()->NewInsn<PsrlqXRegImm, kSSA>(
+                  results[kIdx],
+                  last_zero_based_register,
+                  static_cast<int8_t>(result_element.element_offset * 8)));
+#endif
+            }
+          }
+        });
+  }
+  return std::pair{call, results};
+}
 
 }  // namespace berberis::x86_64
 

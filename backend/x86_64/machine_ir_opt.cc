@@ -57,7 +57,7 @@ class RegUsageBitSet {
     }
   }
 
-  void Clear() { reg_set_.Clear(); }
+  void ResetAll() { reg_set_.ResetAll(); }
 
  private:
   VRegBitSet reg_set_;
@@ -90,11 +90,24 @@ void SetInsnArgumentsUsed(const berberis::MachineInsn* insn, RegUsageBitSet& is_
 
 }  // namespace
 
+// Remove COPY and MOVQ instructions which have identical source and destination operands.
+void RemoveNopCopyAndMovq(MachineIR* machine_ir) {
+  for (auto* machine_bb : machine_ir->bb_list()) {
+    machine_bb->insn_list().remove_if([](berberis::MachineInsn* machine_insn) {
+      if (machine_insn->opcode() != kMachineOpCopy &&
+          machine_insn->opcode() != kMachineOpMovqRegReg) {
+        return false;
+      }
+      return machine_insn->RegAt(0) == machine_insn->RegAt(1);
+    });
+  }
+}
+
 void RemoveDeadCode(MachineIR* machine_ir) {
   RegUsageBitSet is_reg_used(machine_ir);
 
   for (auto* bb : machine_ir->bb_list()) {
-    is_reg_used.Clear();
+    is_reg_used.ResetAll();
 
     for (auto vreg : bb->live_out()) {
       is_reg_used.Set(vreg);
@@ -123,18 +136,18 @@ void ChangeBranchTarget(MachineBasicBlock* bb,
   CHECK_GT(bb->insn_list().size(), 0);
   auto last_insn = bb->insn_list().back();
 
-  // The branch instruction can either be PseudoCondBranch or PseudoBranch.
-  // When removing critical edges, the branch instruction is PseudoBranch if
+  // The branch instruction can either be CondBranch or Branch.
+  // When removing critical edges, the branch instruction is Branch if
   // and only if bb has an outedge to a recovery block.
-  if (last_insn->opcode() == kMachineOpPseudoBranch) {
-    auto insn = static_cast<PseudoBranch*>(last_insn);
+  if (last_insn->opcode() == kMachineOpBranch) {
+    auto insn = static_cast<Branch*>(last_insn);
     CHECK_EQ(insn->then_bb(), old_dst);
     insn->set_then_bb(new_dst);
     return;
   }
 
-  CHECK(last_insn->opcode() == kMachineOpPseudoCondBranch);
-  auto insn = static_cast<PseudoCondBranch*>(last_insn);
+  CHECK(last_insn->opcode() == kMachineOpCondBranch);
+  auto insn = static_cast<CondBranch*>(last_insn);
   if (insn->then_bb() == old_dst) {
     insn->set_then_bb(new_dst);
   } else if (insn->else_bb() == old_dst) {
@@ -158,7 +171,7 @@ void InsertNodeOnEdge(MachineIR* ir, MachineEdge* edge, int in_edge_index) {
   new_bb->in_edges().push_back(edge);
 
   ChangeBranchTarget(pred_bb, succ_bb, new_bb);
-  new_bb->insn_list().push_back(ir->NewInsn<PseudoBranch>(succ_bb));
+  new_bb->insn_list().push_back(ir->NewInsn<Branch>(succ_bb));
 }
 
 void RemoveCriticalEdges(MachineIR* machine_ir) {
@@ -248,7 +261,7 @@ bool IsForwarderBlock(MachineBasicBlock* bb) {
   }
 
   const berberis::MachineInsn* last_insn = bb->insn_list().back();
-  return last_insn->opcode() == PseudoBranch::kOpcode;
+  return last_insn->opcode() == Branch::kOpcode;
 }
 
 void UnlinkForwarderBlock(MachineBasicBlock* bb) {

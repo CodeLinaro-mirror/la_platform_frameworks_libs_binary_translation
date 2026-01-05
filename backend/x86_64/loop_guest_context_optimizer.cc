@@ -23,6 +23,7 @@
 #include "berberis/backend/x86_64/machine_ir.h"
 #include "berberis/base/algorithm.h"
 #include "berberis/base/logging.h"
+#include "berberis/base/tracing.h"
 #include "berberis/guest_state/guest_state_opaque.h"
 
 namespace berberis::x86_64 {
@@ -58,7 +59,7 @@ void ReplaceGetAndUpdateMap(MachineIR* ir,
 
   auto dst = insn->RegAt(0);
   auto copy_size = insn->opcode() == kMachineOpMovdqaXRegMemBaseDisp ? 16 : 8;
-  auto* new_insn = ir->NewInsn<PseudoCopy>(dst, mem_reg_map[disp].value().reg, copy_size);
+  auto* new_insn = ir->NewInsn<Copy>(dst, mem_reg_map[disp].value().reg, copy_size);
   *insn_it = new_insn;
 }
 
@@ -103,7 +104,7 @@ void ReplacePutAndUpdateMap(MachineIR* ir,
     MachineReg src = insn->RegAt(1);
     auto copy_size = insn->opcode() == kMachineOpMovdqaMemBaseDispXReg ? 16 : 8;
     auto* new_insn = static_cast<berberis::MachineInsn*>(
-        ir->NewInsn<PseudoCopy>(mem_reg_map[disp].value().reg, src, copy_size));
+        ir->NewInsn<Copy>(mem_reg_map[disp].value().reg, src, copy_size));
     *insn_it = new_insn;
   }
 }
@@ -310,6 +311,9 @@ void OptimizeLoopTree(MachineIR* machine_ir, LoopTreeNode* node, PredicateFuncti
 void RemoveLoopGuestContextAccesses(MachineIR* machine_ir) {
   // TODO(b/203826752): Provide a better heuristic for deciding which loop to optimize.
   auto loop_tree = BuildLoopTree(machine_ir);
+  if (IsConfigFlagSet(kVerboseTranslation) && machine_ir->ContainsIrreducibleLoops()) {
+    TRACE("Region contains at least one irreducible loop.");
+  }
 
   auto predicate = [](LoopTreeNode* node) -> bool {
     // TODO(b/203826752): Avoid repeating invoking ContainsCall for innerloops.

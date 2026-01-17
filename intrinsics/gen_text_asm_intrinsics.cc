@@ -28,6 +28,7 @@
 #include "berberis/base/checks.h"
 #include "berberis/base/config.h"
 #include "berberis/base/type_traits.h"
+#include "berberis/guest_state/guest_state_opaque.h"
 #include "berberis/intrinsics/common/intrinsics_bindings.h"
 #include "berberis/intrinsics/intrinsics_args.h"
 #include "berberis/intrinsics/macro_assembler.h"
@@ -135,8 +136,9 @@ constexpr void CallAssembler(MacroAssembler<TextAssembler>* as, int* register_nu
                              // scratch2 address in scratch buffer.
                              return std::tuple{typename MacroAssembler<TextAssembler>::Operand{
                                  .base = as->gpr_scratch,
-                                 .disp = static_cast<int32_t>(config::kScratchAreaSlotSize *
-                                                              scratch_counter++)}};
+                                 .disp = static_cast<int32_t>(
+                                     GetScratchAreaSlotOffset(scratch_counter++) -
+                                     GetScratchAreaSlotOffset(0))}};
                            } else if constexpr (device_arch_info::kIsRegister<Operand> &&
                                                 !device_arch_info::kIsFLAGS<Operand>) {
                              if constexpr (device_arch_info::kIsImplicitReg<Operand>) {
@@ -210,8 +212,7 @@ void GenerateOutputVariables(FILE* out, int indent) {
 
 template <typename IntrinsicBindingInfo>
 void GenerateTemporaries(FILE* out, int indent) {
-  TypesToValues::ForEachWithTemporary<TypesToTypes::Zip<typename IntrinsicBindingInfo::Operands,
-                                                        typename IntrinsicBindingInfo::Bindings>,
+  TypesToValues::ForEachWithTemporary<typename IntrinsicBindingInfo::OperandsAndBindings,
                                       /* id = */ std::size_t>([out, indent]<typename BindingInfo>(
                                                                   std::size_t& id) {
     using Operand = std::tuple_element_t<0, BindingInfo>;
@@ -234,9 +235,7 @@ void GenerateTemporaries(FILE* out, int indent) {
 template <typename IntrinsicBindingInfo>
 void GenerateInShadows(FILE* out, int indent) {
   TypesToValues::ForEach<
-      TypesToTypes::Zip<typename IntrinsicBindingInfo::Operands,
-                        typename IntrinsicBindingInfo::Bindings>>([out,
-                                                                   indent]<typename BindingInfo>() {
+      typename IntrinsicBindingInfo::OperandsAndBindings>([out, indent]<typename BindingInfo>() {
     using Operand = std::tuple_element_t<0, BindingInfo>;
     using Binding = std::tuple_element_t<1, BindingInfo>;
     using RegisterClass = Operand::Class;
@@ -336,8 +335,7 @@ void GenerateInShadows(FILE* out, int indent) {
 template <typename IntrinsicBindingInfo>
 void GenerateAssemblerOuts(FILE* out, int indent) {
   std::vector<std::string> outs;
-  TypesToValues::ForEachWithTemporary<TypesToTypes::Zip<typename IntrinsicBindingInfo::Operands,
-                                                        typename IntrinsicBindingInfo::Bindings>,
+  TypesToValues::ForEachWithTemporary<typename IntrinsicBindingInfo::OperandsAndBindings,
                                       /* tmp_id = */ int>([&outs]<typename BindingInfo>(
                                                               int& tmp_id) {
     using Operand = std::tuple_element_t<0, BindingInfo>;
@@ -372,8 +370,7 @@ void GenerateAssemblerIns(FILE* out,
                           bool need_gpr_macroassembler_scratch,
                           bool need_gpr_macroassembler_constants) {
   std::vector<std::string> ins;
-  TypesToValues::ForEach<TypesToTypes::Zip<typename IntrinsicBindingInfo::Operands,
-                                           typename IntrinsicBindingInfo::Bindings>>(
+  TypesToValues::ForEach<typename IntrinsicBindingInfo::OperandsAndBindings>(
       [&ins]<typename BindingInfo>() {
         using Operand = std::tuple_element_t<0, BindingInfo>;
         using Binding = std::tuple_element_t<1, BindingInfo>;
@@ -393,8 +390,7 @@ void GenerateAssemblerIns(FILE* out,
     ins.push_back(
         "\"m\"(*reinterpret_cast<const char*>(&constants_pool::kBerberisMacroAssemblerConstants))");
   }
-  TypesToValues::ForEachWithTemporary<TypesToTypes::Zip<typename IntrinsicBindingInfo::Operands,
-                                                        typename IntrinsicBindingInfo::Bindings>,
+  TypesToValues::ForEachWithTemporary<typename IntrinsicBindingInfo::OperandsAndBindings,
                                       /* arg_counter = */ int>(
       [&ins, register_numbers]<typename BindingInfo>(int& arg_counter) {
         using Operand = std::tuple_element_t<0, BindingInfo>;
@@ -414,9 +410,7 @@ void GenerateAssemblerIns(FILE* out,
 template <typename IntrinsicBindingInfo>
 void GenerateOutShadows(FILE* out, int indent) {
   TypesToValues::ForEach<
-      TypesToTypes::Zip<typename IntrinsicBindingInfo::Operands,
-                        typename IntrinsicBindingInfo::Bindings>>([out,
-                                                                   indent]<typename BindingInfo>() {
+      typename IntrinsicBindingInfo::OperandsAndBindings>([out, indent]<typename BindingInfo>() {
     using Operand = std::tuple_element_t<0, BindingInfo>;
     using Binding = std::tuple_element_t<1, BindingInfo>;
     using RegisterClass = Operand::Class;

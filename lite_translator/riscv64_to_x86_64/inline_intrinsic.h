@@ -315,19 +315,16 @@ class TryBindingBasedInlineIntrinsic {
 
     std::apply(
         IntrinsicBindingInfo::kEmitInsnFunc,
-        std::tuple_cat(
-            std::tuple<MacroAssembler<x86_64::Assembler>&>{as_},
-            TypesToValues::FlatMap<TypesToTypes::Zip<typename IntrinsicBindingInfo::Operands,
-                                                     typename IntrinsicBindingInfo::Bindings>>(
-                *this,
-                xmm_for_gp_result,
-                scratch_arg,
-                asm_call_info,
-                kRenameRbxInputToRcx,
-                kRenameRdxInputToRcx)));
+        std::tuple_cat(std::tuple<MacroAssembler<x86_64::Assembler>&>{as_},
+                       TypesToValues::FlatMap<typename IntrinsicBindingInfo::OperandsAndBindings>(
+                           *this,
+                           xmm_for_gp_result,
+                           scratch_arg,
+                           asm_call_info,
+                           kRenameRbxInputToRcx,
+                           kRenameRdxInputToRcx)));
 
-    TypesToValues::ForEach<TypesToTypes::Zip<typename IntrinsicBindingInfo::Operands,
-                                             typename IntrinsicBindingInfo::Bindings>>(
+    TypesToValues::ForEach<typename IntrinsicBindingInfo::OperandsAndBindings>(
         [&xmm_for_gp_result, this]<typename BindingInfo>() -> decltype(auto) {
           using Operand = std::tuple_element_t<0, BindingInfo>;
           using Binding = std::tuple_element_t<1, BindingInfo>;
@@ -477,13 +474,9 @@ class TryBindingBasedInlineIntrinsic {
         static_assert(kUsage == device_arch_info::kDef ||
                       kUsage == device_arch_info::kDefEarlyClobber);
         if constexpr (device_arch_info::kIsMemoryOperand<Operand>) {
-          if (scratch_arg >= config::kScratchAreaSize / config::kScratchAreaSlotSize) {
-            FATAL("Only two scratch registers are supported for now");
-          }
           return std::tuple{x86_64::Assembler::Operand{
               .base = as_.rbp,
-              .disp = static_cast<int>(offsetof(ThreadState, intrinsics_scratch_area) +
-                                       config::kScratchAreaSlotSize * scratch_arg++)}};
+              .disp = static_cast<int32_t>(GetScratchAreaSlotOffset(scratch_arg++))}};
         } else if constexpr (device_arch_info::kIsImplicitReg<Operand>) {
           return std::tuple{};
         } else if constexpr (RegisterClass::kAsRegister == 'x') {

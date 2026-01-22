@@ -31,6 +31,7 @@
 #include "berberis/base/arena_list.h"
 #include "berberis/base/arena_vector.h"
 #include "berberis/base/checks.h"
+#include "berberis/base/tuple_processing.h"
 #include "berberis/guest_state/guest_addr.h"
 
 namespace berberis {
@@ -605,12 +606,21 @@ class Copy final : public MachineInsn {
  public:
   static const MachineOpcode kOpcode;
 
+  template <const MachineRegClass* kRegClass>
+  Copy(MachineReg dst, MachineReg src, MetaValue<kRegClass>)
+      : Copy(dst, src, kCopyRegInfo<kRegClass>) {}
+  // For Spill/Reload. Either dst or src have to hard reg, the other one have to be a spill slot.
+  Copy(MachineReg dst, MachineReg src, const MachineRegClass* reg_class);
   Copy(MachineReg dst, MachineReg src, int size);
 
   std::string GetDebugString() const override;
   void Emit(CodeEmitter* as) const override;
 
  private:
+  template <const MachineRegClass* kRegClass>
+  static constexpr MachineRegKind kCopyRegInfo[2] = {{kRegClass, MachineRegKind::kDef},
+                                                     {kRegClass, MachineRegKind::kUse}};
+  Copy(MachineReg dst, MachineReg src, const MachineRegKind reg_info[2]);
   friend Copy* NewInArena<Copy, const Copy&>(Arena*, const Copy&);
   Copy(const Copy&);
   MachineInsn* Clone(Arena* arena) const override;
@@ -628,7 +638,9 @@ class PseudoDefReg final : public MachineInsn {
  public:
   static const MachineOpcode kOpcode;
 
-  explicit PseudoDefReg(MachineReg reg);
+  template <const MachineRegClass* kRegClass>
+  explicit PseudoDefReg(MachineReg reg, MetaValue<kRegClass>)
+      : PseudoDefReg(reg, kPseudoDefRegInfo<kRegClass>) {}
 
   [[nodiscard]] std::string GetDebugString() const override;
   void Emit(CodeEmitter* /*as*/) const override {
@@ -636,6 +648,9 @@ class PseudoDefReg final : public MachineInsn {
   }
 
  private:
+  template <const MachineRegClass* kRegClass>
+  static constexpr MachineRegKind kPseudoDefRegInfo[1] = {{kRegClass, MachineRegKind::kDef}};
+  PseudoDefReg(MachineReg reg, const MachineRegKind reg_info[1]);
   friend PseudoDefReg* NewInArena<PseudoDefReg, const PseudoDefReg&>(Arena*, const PseudoDefReg&);
   PseudoDefReg(const PseudoDefReg&);
   MachineInsn* Clone(Arena* arena) const override;

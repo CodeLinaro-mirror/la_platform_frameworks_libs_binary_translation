@@ -42,9 +42,9 @@ constexpr MachineInsnInfo<6> kEnterInfo = {
     // TODO(b/363608817): Try removing side effects declaration.
     kMachineInsnSideEffects};
 
-constexpr MachineRegKind kPseudoCondBranchInfo[] = {{&kFLAGS, MachineRegKind::kUse}};
+constexpr MachineRegKind kCondBranchInfo[] = {{&kFLAGS, MachineRegKind::kUse}};
 
-constexpr MachineRegKind kPseudoJumpInfoOptimizedABI[] = {
+constexpr MachineRegKind kJumpInfoOptimizedABI[] = {
     {&kRegisterClass<device_arch_info::R8>, MachineRegKind::kUse},
     {&kRegisterClass<device_arch_info::R9>, MachineRegKind::kUse},
     {&kRegisterClass<device_arch_info::R10>, MachineRegKind::kUse},
@@ -53,9 +53,9 @@ constexpr MachineRegKind kPseudoJumpInfoOptimizedABI[] = {
     {&kRegisterClass<device_arch_info::R13>, MachineRegKind::kUse},
 };
 
-constexpr MachineRegKind kPseudoIndirectJumpInfo[] = {{&kGeneralReg64, MachineRegKind::kUse}};
+constexpr MachineRegKind kIndirectJumpInfo[] = {{&kGeneralReg64, MachineRegKind::kUse}};
 
-constexpr MachineRegKind kPseudoIndirectJumpInfoOptimizedABI[] = {
+constexpr MachineRegKind kIndirectJumpInfoOptimizedABI[] = {
     {&kGeneralReg64, MachineRegKind::kUse},
     {&kRegisterClass<device_arch_info::R8>, MachineRegKind::kUse},
     {&kRegisterClass<device_arch_info::R9>, MachineRegKind::kUse},
@@ -65,16 +65,14 @@ constexpr MachineRegKind kPseudoIndirectJumpInfoOptimizedABI[] = {
     {&kRegisterClass<device_arch_info::R13>, MachineRegKind::kUse},
 };
 
-constexpr MachineRegKind kPseudoCopyReg32Info[] = {{&kReg32, MachineRegKind::kDef},
+constexpr MachineRegKind kCopyReg32Info[] = {{&kReg32, MachineRegKind::kDef},
                                                    {&kReg32, MachineRegKind::kUse}};
 
-constexpr MachineRegKind kPseudoCopyReg64Info[] = {{&kReg64, MachineRegKind::kDef},
+constexpr MachineRegKind kCopyReg64Info[] = {{&kReg64, MachineRegKind::kDef},
                                                    {&kReg64, MachineRegKind::kUse}};
 
-constexpr MachineRegKind kPseudoCopyXmmInfo[] = {{&kXmmReg, MachineRegKind::kDef},
+constexpr MachineRegKind kCopyXmmInfo[] = {{&kXmmReg, MachineRegKind::kDef},
                                                  {&kXmmReg, MachineRegKind::kUse}};
-
-constexpr MachineRegKind kPseudoDefReg64Info[] = {{&kReg64, MachineRegKind::kDef}};
 
 }  // namespace
 
@@ -117,7 +115,7 @@ CondBranch::CondBranch(Assembler::Condition cond,
                        MachineReg eflags)
     : MachineInsn(kMachineOpCondBranch,
                   1,
-                  x86_64::kPseudoCondBranchInfo,
+                  x86_64::kCondBranchInfo,
                   &eflags_,
                   kMachineInsnSideEffects),
       cond_(cond),
@@ -141,7 +139,7 @@ Jump::Jump(GuestAddr target, Kind kind)
 Jump::Jump(GuestAddr target, WithOptimizedABI, Kind kind)
     : MachineInsn(kMachineOpJump,
                   6,
-                  x86_64::kPseudoJumpInfoOptimizedABI,
+                  x86_64::kJumpInfoOptimizedABI,
                   args_,
                   kMachineInsnSideEffects),
       target_(target),
@@ -158,7 +156,7 @@ MachineInsnList Jump::Lower(Arena* arena) const {
 IndirectJump::IndirectJump(MachineReg target)
     : MachineInsn(kMachineOpIndirectJump,
                   1,
-                  x86_64::kPseudoIndirectJumpInfo,
+                  x86_64::kIndirectJumpInfo,
                   regs_,
                   kMachineInsnSideEffects) {
   regs_[0] = target;
@@ -167,7 +165,7 @@ IndirectJump::IndirectJump(MachineReg target)
 IndirectJump::IndirectJump(MachineReg target, WithOptimizedABI)
     : MachineInsn(kMachineOpIndirectJump,
                   1 + 6,
-                  x86_64::kPseudoIndirectJumpInfoOptimizedABI,
+                  x86_64::kIndirectJumpInfoOptimizedABI,
                   regs_,
                   kMachineInsnSideEffects) {
   regs_[0] = target;
@@ -193,12 +191,31 @@ const MachineOpcode Copy::kOpcode = kMachineOpCopy;
 Copy::Copy(MachineReg dst, MachineReg src, int size)
     : MachineInsn(kMachineOpCopy,
                   2,
-                  size > 8   ? x86_64::kPseudoCopyXmmInfo
-                  : size > 4 ? x86_64::kPseudoCopyReg64Info
-                             : x86_64::kPseudoCopyReg32Info,
+                  size > 8   ? x86_64::kCopyXmmInfo
+                  : size > 4 ? x86_64::kCopyReg64Info
+                             : x86_64::kCopyReg32Info,
                   regs_,
                   kMachineInsnCopy),
       regs_{dst, src} {}
+
+Copy::Copy(MachineReg dst, MachineReg src, const MachineRegKind reg_info[2])
+    : MachineInsn(kMachineOpCopy, 2, reg_info, regs_, kMachineInsnCopy), regs_{dst, src} {}
+
+Copy::Copy(MachineReg dst, MachineReg src, const MachineRegClass* reg_class)
+    : MachineInsn(kMachineOpCopy,
+                  2,
+                  reg_class->RegSize() > 8 ? kCopyRegInfo<&x86_64::kXmmReg>
+                  : x86_64::IsXReg(dst) || x86_64::IsXReg(src)
+                      ? reg_class->RegSize() > 4 ? kCopyRegInfo<&x86_64::kFpReg64>
+                                                 : kCopyRegInfo<&x86_64::kFpReg32>
+                  : reg_class->RegSize() > 4 ? kCopyRegInfo<&x86_64::kGeneralReg64>
+                                             : kCopyRegInfo<&x86_64::kGeneralReg32>,
+                  regs_,
+                  kMachineInsnCopy),
+      regs_{dst, src} {
+  CHECK(dst.IsHardReg() || dst.IsSpilledReg());
+  CHECK(src.IsHardReg() || src.IsSpilledReg());
+}
 
 Copy::Copy(const Copy& insn)
     : MachineInsn(insn, regs_), regs_{insn.regs_[0], insn.regs_[1]} {}
@@ -213,13 +230,8 @@ MachineInsnList Copy::Lower(Arena* arena) const {
 
 const MachineOpcode PseudoDefReg::kOpcode = kMachineOpPseudoDefReg;
 
-PseudoDefReg::PseudoDefReg(MachineReg reg)
-    : MachineInsn(kMachineOpPseudoDefReg,
-                  1,
-                  x86_64::kPseudoDefReg64Info,
-                  &reg_,
-                  kMachineInsnDefault),
-      reg_{reg} {}
+PseudoDefReg::PseudoDefReg(MachineReg reg, const MachineRegKind reg_info[1])
+    : MachineInsn(kMachineOpPseudoDefReg, 1, reg_info, &reg_, kMachineInsnDefault), reg_{reg} {}
 
 PseudoDefReg::PseudoDefReg(const PseudoDefReg& insn) : MachineInsn(insn, &reg_), reg_{insn.reg_} {}
 

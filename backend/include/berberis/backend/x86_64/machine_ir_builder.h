@@ -89,7 +89,7 @@ class MachineIRBuilder : public MachineIRBuilderBase<MachineIR> {
             return std::array{std::get<Binding::kArgInfo.from>(args_tuple)};
           } else if constexpr (HaveInput(Binding::kArgInfo)) {
             static_assert(device_arch_info::kIsRegister<Operand>);
-            // If register is implicit we need to add extra PseudoCopy here even if it's pure
+            // If register is implicit we need to add extra Copy here even if it's pure
             // input. Otherwise we may attempt to make the same register to belong to two
             // different, incompatible register classes if it's ALSO output of another
             // instruction with a different implicit class. E.g. if output of division is used
@@ -98,7 +98,11 @@ class MachineIRBuilder : public MachineIRBuilderBase<MachineIR> {
             if constexpr (std::tuple_size_v<typename Operand::Class::RegistersList> == 1 &&
                           !device_arch_info::kIsFLAGS<Operand>) {
               auto dst = ir()->AllocVReg();
-              Gen<Copy>(dst, src, Operand::Class::kSizeInBits / 8);
+              if constexpr (Operand::Class::kSizeInBits > 32) {
+                Gen<Copy>(dst, src, kMeta<&kGeneralReg64>);
+              } else {
+                Gen<Copy>(dst, src, kMeta<&kGeneralReg32>);
+              }
               src = dst;
             }
             if constexpr (HaveOutput(Binding::kArgInfo)) {
@@ -276,7 +280,24 @@ template <auto kIntrinsic, typename ArgsType, typename... FuncInfo>
             // that case it's impossible for the register allocator to satofy the requirements,
             // even in principle. These copies create new virtual registers that the register
             // allocator can then assign to the correct physical registers.
-            InsertInsn(ir()->NewInsn<Copy>(physical_register, arg, SplitParamType::SizeOf()));
+            if constexpr (SplitParamType::IsIntegral()) {
+              if constexpr (SplitParamType::SizeOf() == sizeof(int32_t)) {
+                InsertInsn(ir()->NewInsn<Copy>(physical_register, arg, kMeta<&kGeneralReg32>));
+              } else {
+                static_assert(SplitParamType::SizeOf() == sizeof(int64_t));
+                InsertInsn(ir()->NewInsn<Copy>(physical_register, arg, kMeta<&kGeneralReg64>));
+              }
+            } else {
+              if constexpr (SplitParamType::SizeOf() == sizeof(Float16) ||
+                            SplitParamType::SizeOf() == sizeof(Float32)) {
+                InsertInsn(ir()->NewInsn<Copy>(physical_register, arg, kMeta<&kFpReg32>));
+              } else if constexpr (SplitParamType::SizeOf() == sizeof(Float64)) {
+                InsertInsn(ir()->NewInsn<Copy>(physical_register, arg, kMeta<&kFpReg64>));
+              } else {
+                static_assert(SplitParamType::SizeOf() == sizeof(Int128));
+                InsertInsn(ir()->NewInsn<Copy>(physical_register, arg, kMeta<&kXmmReg>));
+              }
+            }
           }
         }
         return physical_register;
@@ -399,7 +420,7 @@ template <auto kIntrinsic, typename... FuncInfo>
               }
               if constexpr (ElementType::template IsSame<Float16>()) {
                 MachineReg empty_xmm_register = ir()->AllocVReg();
-                InsertInsn(ir()->NewInsn<PseudoDefReg>(empty_xmm_register));
+                InsertInsn(ir()->NewInsn<PseudoDefReg>(empty_xmm_register, kMeta<&kFpReg32>));
                 MachineReg xmm_register = ir()->AllocVReg();
 #ifdef __AVX__
                 InsertInsn(ir()->NewInsn<VpinsrwXRegXRegRegImm>(

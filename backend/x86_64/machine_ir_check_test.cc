@@ -201,7 +201,7 @@ TEST(MachineIRCheckTest, NoControlFlow) {
 
   MachineReg reg1 = machine_ir.AllocVReg();
   MachineReg reg2 = machine_ir.AllocVReg();
-  Copy* insn = machine_ir.NewInsn<Copy>(reg1, reg2, 8);
+  Copy* insn = machine_ir.NewInsn<Copy>(reg1, reg2, kMeta<&x86_64::kGeneralReg64>);
 
   bb->insn_list().push_back(insn);
 
@@ -299,7 +299,7 @@ TEST(MachineIRCheckTest, NoThenEdgeBranch) {
   EXPECT_EQ(x86_64::CheckMachineIR(machine_ir), x86_64::kMachineIRCheckDanglingBasicBlock);
 }
 
-TEST(MachineIRCheckTest, NoThenEdgePseudoCondBranch) {
+TEST(MachineIRCheckTest, NoThenEdgeCondBranch) {
   Arena arena;
   x86_64::MachineIR machine_ir(&arena);
 
@@ -327,7 +327,7 @@ TEST(MachineIRCheckTest, NoThenEdgePseudoCondBranch) {
   EXPECT_EQ(x86_64::CheckMachineIR(machine_ir), x86_64::kMachineIRControlFlowInsnSuccessorMismatch);
 }
 
-TEST(MachineIRCheckTest, NoElseEdgePseudoCondBranch) {
+TEST(MachineIRCheckTest, NoElseEdgeCondBranch) {
   Arena arena;
   x86_64::MachineIR machine_ir(&arena);
 

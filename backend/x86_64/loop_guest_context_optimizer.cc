@@ -58,8 +58,12 @@ void ReplaceGetAndUpdateMap(MachineIR* ir,
   }
 
   auto dst = insn->RegAt(0);
-  auto copy_size = insn->opcode() == kMachineOpMovdqaXRegMemBaseDisp ? 16 : 8;
-  auto* new_insn = ir->NewInsn<Copy>(dst, mem_reg_map[disp].value().reg, copy_size);
+  auto* new_insn =
+      regtype == MovType::kMovdqa
+          ? ir->NewInsn<Copy>(dst, mem_reg_map[disp].value().reg, kMeta<&kXmmReg>)
+      : regtype == MovType::kMovsd
+          ? ir->NewInsn<Copy>(dst, mem_reg_map[disp].value().reg, kMeta<&kFpReg64>)
+          : ir->NewInsn<Copy>(dst, mem_reg_map[disp].value().reg, kMeta<&kGeneralReg64>);
   *insn_it = new_insn;
 }
 
@@ -102,9 +106,12 @@ void ReplacePutAndUpdateMap(MachineIR* ir,
     *insn_it = new_insn;
   } else {
     MachineReg src = insn->RegAt(1);
-    auto copy_size = insn->opcode() == kMachineOpMovdqaMemBaseDispXReg ? 16 : 8;
-    auto* new_insn = static_cast<berberis::MachineInsn*>(
-        ir->NewInsn<Copy>(mem_reg_map[disp].value().reg, src, copy_size));
+    auto* new_insn =
+        regtype == MovType::kMovdqa
+            ? ir->NewInsn<Copy>(mem_reg_map[disp].value().reg, src, kMeta<&kXmmReg>)
+        : regtype == MovType::kMovsd
+            ? ir->NewInsn<Copy>(mem_reg_map[disp].value().reg, src, kMeta<&kFpReg64>)
+            : ir->NewInsn<Copy>(mem_reg_map[disp].value().reg, src, kMeta<&kGeneralReg64>);
     *insn_it = new_insn;
   }
 }
@@ -262,7 +269,7 @@ void OptimizeLoop(MachineIR* machine_ir, Loop* loop, const OptimizeLoopParams& p
   }
 
   MemRegMap mem_reg_map(sizeof(CPUState), std::nullopt, machine_ir->arena());
-  // Replace gets and puts with Pseudocopy and update mem_reg_map.
+  // Replace gets and puts with copy and update mem_reg_map.
   for (auto* bb : *loop) {
     for (auto insn_it = bb->insn_list().begin(); insn_it != bb->insn_list().end(); insn_it++) {
       // Skip insn if it accesses regs with low priority

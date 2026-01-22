@@ -169,7 +169,7 @@ void HeavyOptimizerFrontend::ResolveJumps() {
 
     GuestAddr target = jump->target();
     auto map_it = branch_targets_.find(target);
-    // All PseudoJump insns must add their targets to branch_targets.
+    // All Jump insns must add their targets to branch_targets.
     CHECK(map_it != branch_targets_.end());
 
     MachineInsnPosition pos = map_it->second;
@@ -747,7 +747,7 @@ Register HeavyOptimizerFrontend::MemoryRegionReservationExchange(Register aligne
 
   ir->AddEdge(builder_.bb(), continue_bb);
   // Pseudo-def for use-def operand of XOR to make sure data-flow is integrate.
-  builder_.Gen<PseudoDefReg>(result);
+  builder_.Gen<PseudoDefReg>(result, kMeta<&x86_64::kGeneralReg32>);
   Register xor_flags;
   std::tie(result, xor_flags) = Gen<x86_64::XorlRegReg>(result, result);
   builder_.Gen<berberis::Branch>(continue_bb);
@@ -781,7 +781,7 @@ void HeavyOptimizerFrontend::MemoryRegionReservationSwapWithLockedOwner(
   static_assert(offsetof(ThreadState, cpu) == 0);
   // Limit life-time of a narrow reg-class call result.
   Register lock_entry = AllocTempReg();
-  builder_.Gen<berberis::Copy>(lock_entry, result, 8);
+  builder_.Gen<berberis::Copy>(lock_entry, result, kMeta<&x86_64::kGeneralReg64>);
   builder_.Gen<CondBranch>(x86_64::Assembler::Condition::kZero,
                                  failure_bb,
                                  lock_success_bb,

@@ -107,7 +107,7 @@ class HeavyOptimizerFrontend {
   [[nodiscard]] Register GetImm(int64_t imm);
   [[nodiscard]] Register Copy(Register value) {
     Register result = AllocTempReg();
-    builder_.Gen<berberis::Copy>(result, value, 8);
+    builder_.Gen<berberis::Copy>(result, value, kMeta<&x86_64::kGeneralReg64>);
     return result;
   }
 
@@ -373,7 +373,7 @@ class HeavyOptimizerFrontend {
 
   FpRegister Fmv(FpRegister arg) {
     auto res = AllocTempReg();
-    builder_.Gen<berberis::Copy>(res, arg, 16);
+    builder_.Gen<berberis::Copy>(res, arg, kMeta<&x86_64::kXmmReg>);
     return res;
   }
 
@@ -474,7 +474,7 @@ class HeavyOptimizerFrontend {
             typename... AssemblerArgType>
   auto CallIntrinsic(AssemblerArgType... args) {
     using CallImm = x86_64::CallImm<static_cast<decltype(kFunction)>(nullptr)>;
-    typename CallImm::template ResultRegiesterTypes<MachineReg, FpRegister> result;
+    typename CallImm::template ResultRegisterTypes<MachineReg, FpRegister> result;
 
     if (!TryInlineIntrinsicForHeavyOptimizer<kFunction>(
             &builder_, result, GetFlagsRegister(), args...)) {
@@ -751,7 +751,7 @@ inline void HeavyOptimizerFrontend::SetCsr<CsrName::kFCsr>(Register arg) {
   // We don't care about the data in rounding_mode because we will shift in the
   // data we need.
   auto undef_rounding = AllocTempReg();
-  builder_.Gen<PseudoDefReg>(undef_rounding);
+  builder_.Gen<PseudoDefReg>(undef_rounding, kMeta<&x86_64::kGeneralReg32>);
   auto [rounding_mode, shld_flags] =
       Gen<x86_64::ShldlRegRegImm>(undef_rounding, arg, int8_t{32 - 5});
   auto [cleaned_rounding, and_flаgs] =

@@ -69,7 +69,6 @@ void GenCode(MachineIR* machine_ir, MachineCode* machine_code, const GenCodePara
     // Call this after all phases that create copy instructions.
     RenameCopyUses(machine_ir);
     RemoveDeadCode(machine_ir);
-    FoldWriteFlags(machine_ir);
     OptimizeReadFlags(machine_ir);
   }
 
@@ -97,7 +96,10 @@ void GenCode(MachineIR* machine_ir, MachineCode* machine_code, const GenCodePara
   if (!params.skip_emit) {
     CodeEmitter emitter(
         machine_code, machine_ir->FrameSize(), machine_ir->NumBasicBlocks(), machine_ir->arena());
-    machine_ir->Emit(&emitter);
+    bool region_contains_calls = machine_ir->Emit(&emitter);
+    if (region_contains_calls) {
+      machine_ir->set_contains_calls();
+    }
     emitter.Finalize();
   }
 }

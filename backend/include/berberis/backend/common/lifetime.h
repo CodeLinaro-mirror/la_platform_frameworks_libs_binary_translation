@@ -39,30 +39,36 @@ class VRegAccess {
 
   MachineReg GetVReg() const { return pos_.insn()->RegAt(index_); }
 
-  void RewriteVReg(MachineIR* machine_ir, MachineReg reg, int slot) {
-    pos_.insn()->SetRegAt(index_, reg);
-    if (slot != -1) {
-      int offset = machine_ir->SpillSlotOffset(slot);
-      MachineReg spill = MachineReg::CreateSpilledRegFromIndex(offset);
-      int size = GetRegClass()->RegSize();
-      if (IsUse()) {
-        if (pos_.insn()->is_copy() && !pos_.insn()->RegAt(0).IsSpilledReg()) {
-          // Rewrite the src of the copy itself, unless the result is mem-to-mem copy.
-          CHECK_EQ(1, index_);
-          pos_.insn()->SetRegAt(1, spill);
-        } else {
-          pos_.InsertBefore(machine_ir->NewInsn<Copy>(reg, spill, size));
-        }
-      }
-      if (IsDef()) {
-        if (pos_.insn()->is_copy() && !pos_.insn()->RegAt(1).IsSpilledReg()) {
-          // Rewrite the dst of the copy itself, unless the result is mem-to-mem copy.
-          CHECK_EQ(0, index_);
-          pos_.insn()->SetRegAt(0, spill);
-        } else {
-          pos_.InsertAfter(machine_ir->NewInsn<Copy>(spill, reg, size));
-        }
-      }
+  void RewriteVReg(MachineReg hard_reg) {
+    CHECK(pos_.insn()->RegAt(index_).IsVReg());
+    pos_.insn()->SetRegAt(index_, hard_reg);
+  }
+
+  void Spill(MachineIR* machine_ir, MachineReg hard_reg, int slot, bool needs_value_in_hard_reg) {
+    CHECK_NE(slot, -1);
+    CHECK(IsDef());
+    MachineReg spill = MachineReg::CreateSpilledRegFromIndex(machine_ir->SpillSlotOffset(slot));
+    if (!needs_value_in_hard_reg && pos_.insn()->is_copy() &&
+        !pos_.insn()->RegAt(1).IsSpilledReg()) {
+      // Rewrite the dst of the copy itself, unless the result is mem-to-mem copy.
+      CHECK_EQ(0, index_);
+      pos_.insn()->SetRegAt(0, spill);
+    } else {
+      pos_.InsertAfter(machine_ir->NewInsn<Copy>(spill, hard_reg, GetRegClass()->RegSize()));
+    }
+  }
+
+  void Reload(MachineIR* machine_ir, MachineReg hard_reg, int slot, bool needs_value_in_hard_reg) {
+    CHECK_NE(slot, -1);
+    CHECK(IsInput());
+    MachineReg spill = MachineReg::CreateSpilledRegFromIndex(machine_ir->SpillSlotOffset(slot));
+    if (!needs_value_in_hard_reg && pos_.insn()->is_copy() &&
+        !pos_.insn()->RegAt(0).IsSpilledReg()) {
+      // Rewrite the src of the copy itself, unless the result is mem-to-mem copy.
+      CHECK_EQ(1, index_);
+      pos_.insn()->SetRegAt(1, spill);
+    } else {
+      pos_.InsertBefore(machine_ir->NewInsn<Copy>(hard_reg, spill, GetRegClass()->RegSize()));
     }
   }
 
@@ -80,10 +86,6 @@ class VRegAccess {
   // One line.
   std::string GetInsnDebugString() const { return pos_.insn()->GetDebugString(); }
 
-  bool IsUse() const { return pos_.insn()->RegKindAt(index_).IsUse(); }
-
-  // IsUse() is true for def-early-clobber, while IsInput() is true when some valid input must be
-  // provided.
   bool IsInput() const { return pos_.insn()->RegKindAt(index_).IsInput(); }
 
   bool IsDef() const { return pos_.insn()->RegKindAt(index_).IsDef(); }
@@ -148,6 +150,35 @@ class VRegLiveRange {
     }
   }
 
+  void RewriteVReg(MachineIR* machine_ir, MachineReg hard_reg, int spill_slot) {
+    std::optional<std::tuple<VRegAccess*, bool>> last_def;
+
+    for (auto it = access_list().begin(); it != access_list().end(); ++it) {
+      VRegAccess& access = *it;
+      access.RewriteVReg(hard_reg);
+
+      if (spill_slot != -1 && access.IsDef()) {
+        last_def = {&access, DoesAccessNeedValueInHardReg(it)};
+      }
+    }
+
+    // Note that for COPY insns we may overwrite the hard register assigned above with
+    // a stack register.
+    if (spill_slot != -1) {
+      // We only need one reload per range, and only if the first access is an input.
+      if (!access_list().empty() && access_list().front().IsInput()) {
+        auto first_input = access_list().begin();
+        first_input->Reload(
+            machine_ir, hard_reg, spill_slot, DoesAccessNeedValueInHardReg(first_input));
+      }
+      // Only the last def in the range needs to be spilled to pass the value to other ranges.
+      if (last_def.has_value()) {
+        auto [def_acc, needs_value_in_hard_reg] = last_def.value();
+        def_acc->Spill(machine_ir, hard_reg, spill_slot, needs_value_in_hard_reg);
+      }
+    }
+  }
+
   // Multiline
   std::string GetDebugString() const {
     std::string out(StringPrintf("[%d, %d) {\n", begin(), end()));
@@ -161,6 +192,10 @@ class VRegLiveRange {
   }
 
  private:
+  bool DoesAccessNeedValueInHardReg(VRegAccessList::const_iterator it) const {
+    return std::next(it) != access_list_.end() && std::next(it)->IsInput();
+  }
+
   // Actual live range, might start before first use and end after last use.
   int begin_;
   int end_;
@@ -213,6 +248,15 @@ class VRegLifetime {
  public:
   using List = ArenaList<VRegLifetime>;
 
+  explicit VRegLifetime(Arena* arena)
+      : arena_(arena),
+        range_list_(arena),
+        reg_class_(nullptr),
+        hard_reg_(0),
+        spill_slot_(-1),
+        spill_weight_(0),
+        move_hint_(nullptr) {}
+
   VRegLifetime(Arena* arena, int begin)
       : arena_(arena),
         range_list_(1, VRegLiveRange(arena, begin), arena),
@@ -232,12 +276,19 @@ class VRegLifetime {
         move_hint_(nullptr) {}
 
   void StartLiveRange(int begin) {
-    CHECK_LE(end(), begin);
+    // Range list may be empty in tests.
+    if (!range_list_.empty()) {
+      CHECK_LE(end(), begin);
+    }
     range_list_.push_back(VRegLiveRange(arena_, begin));
   }
 
   void AppendAccess(const VRegAccess& access) {
-    if (access.IsDef() && !access.IsUse() && end() < access.begin()) {
+    if (range_list_.empty()) {
+      // This may happen for lifetimes constructed from split accesses.
+      range_list_.push_back(VRegLiveRange(arena_, access.begin()));
+    }
+    if (access.IsDef() && !access.IsInput() && end() < access.begin()) {
       // This is write-only access and there is a gap between it and previous access.
       // Can insert lifetime hole.
       if (range_list_.back().access_list().empty()) {
@@ -356,7 +407,8 @@ class VRegLifetime {
         continue;
       }
 
-      for (auto access_it = range_it->access_list().begin(); access_it != range_it->access_list().end();
+      for (auto access_it = range_it->access_list().begin();
+           access_it != range_it->access_list().end();
            ++access_it) {
         if (access_it->end() <= begin) {
           // Future tiny lifetime ends before 'begin'.
@@ -382,51 +434,65 @@ class VRegLifetime {
     return SPLIT_OK;
   }
 
-  void Split(const SplitPos& split_pos, ArenaList<VRegLifetime>* tiny_lifetimes) {
+  void Split(const SplitPos& split_pos, ArenaList<VRegLifetime>* new_lifetimes) {
     if (split_pos.range_it == range_list_.end()) {
       return;
     }
-    // Create tiny lifetime from each use after split pos.
-    for (auto [range_it, access_it] = std::tuple{split_pos.range_it, split_pos.access_it};
-         range_it != range_list_.end();
-         access_it = (++range_it)->access_list().begin()) {
-      for (; access_it != range_it->access_list().end(); ++access_it) {
-        tiny_lifetimes->emplace_back(arena_, *access_it);
-        tiny_lifetimes->back().SetSpill(GetSpill());
-      }
-    }
+    VRegLiveRangeList::iterator first_range_to_split = split_pos.range_it;
+    VRegAccessList& access_list = split_pos.range_it->access_list();
+    // Create special lifetime for the range for which we split the list of accesses.
+    if (split_pos.access_it != access_list.begin()) {
+      AddLifetimeFromAccessList(
+          new_lifetimes, split_pos.access_it, access_list.end(), GetSpill(), arena_);
 
-    // Erase transferred accesses (so they are not rewritten twice).
-    VRegLiveRangeList::iterator first_range_to_erase = split_pos.range_it;
-    if (split_pos.access_it != split_pos.range_it->access_list().begin()) {
-      // Erase only tail of the first range.
-      split_pos.range_it->access_list().erase(split_pos.access_it, split_pos.range_it->access_list().end());
-
-      // Recompute the end of the first range.
+      // Erase the accesses that were split off.
+      access_list.erase(split_pos.access_it, access_list.end());
+      // Recompute the end of the split range.
       int new_end = 0;
       // Since we erase after the begin, there must be at least one access
       // left in the front.
-      CHECK(!split_pos.range_it->access_list().empty());
-      for (auto access : split_pos.range_it->access_list()) {
+      CHECK(!access_list.empty());
+      for (auto access : access_list) {
         new_end = std::max(new_end, access.end());
       }
       split_pos.range_it->set_end</* kAllowShrink */ true>(new_end);
-
-      ++first_range_to_erase;
+      ++first_range_to_split;
     }
-    range_list_.erase(first_range_to_erase, range_list_.end());
+    // Create new lifetimes from ranges after split pos.
+    // Note: live ranges for live-ins/outs are shrunk to the actual range of the accesses.
+    for (auto range_it = first_range_to_split; range_it != range_list_.end(); ++range_it) {
+      AddLifetimeFromAccessList(new_lifetimes, range_it->access_list().begin(),
+                                range_it->access_list().end(), GetSpill(), arena_);
+    }
+    range_list_.erase(first_range_to_split, range_list_.end());
   }
 
   // Walk reg accesses and replace vreg with assigned hard reg.
   void Rewrite(MachineIR* machine_ir) {
     for (auto& range : range_list_) {
-      for (auto& access : range.access_list()) {
-        access.RewriteVReg(machine_ir, hard_reg_, spill_slot_);
-      }
+      range.RewriteVReg(machine_ir, hard_reg_, spill_slot_);
     }
   }
 
+  const VRegLiveRangeList& GetLiveRangesForTesting() const { return range_list_; }
+
  private:
+  // Helper function to create a new VRegLifetime from a list of VRegAccesses.
+  // Declaring it inside the class to avoid complicated forward declarations.
+  static void AddLifetimeFromAccessList(ArenaList<VRegLifetime>* lifetimes,
+                                        VRegAccessList::iterator start_it,
+                                        VRegAccessList::iterator end_it,
+                                        int spill_slot,
+                                        Arena* arena) {
+    if (start_it == end_it) {
+      return;
+    }
+    lifetimes->emplace_back(arena);
+    lifetimes->back().SetSpill(spill_slot);
+    for (auto it = start_it; it != end_it; ++it) {
+      lifetimes->back().AppendAccess(*it);
+    }
+  }
   // Arena for allocations.
   Arena* arena_;
   // List of live ranges, must be non-empty after lifetime is populated!

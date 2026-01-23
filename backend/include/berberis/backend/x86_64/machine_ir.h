@@ -318,11 +318,11 @@ class MachineInsn final : public MachineInsnX86_64 {
           []<typename Operand> {
             if constexpr (device_arch_info::kIsRegister<Operand> &&
                           Operand::kUsage == device_arch_info::kUseDef) {
-              return kTypes<
+              return kMetaTypes<
                   device_arch_info::OperandInfo<typename Operand::Class, device_arch_info::kDef>,
                   device_arch_info::OperandInfo<typename Operand::Class, device_arch_info::kUse>>;
             } else {
-              return kTypes<Operand>;
+              return kMetaTypes<Operand>;
             }
           }>,
       typename DeviceInsnInfo_::Operands>;
@@ -340,14 +340,14 @@ class MachineInsn final : public MachineInsnX86_64 {
       TypesToTypes::FlatMap<typename DeviceInsnInfo_::Operands, []<typename Operand> {
         if constexpr (device_arch_info::kIsRegister<Operand>) {
           if constexpr (kSSAMode == kSSA && Operand::kUsage == device_arch_info::kUseDef) {
-            return kTypes<MachineReg, MachineReg>;
+            return kMetaTypes<MachineReg, MachineReg>;
           } else {
-            return kTypes<MachineReg>;
+            return kMetaTypes<MachineReg>;
           }
         } else if constexpr (device_arch_info::kIsMemoryOperand<Operand>) {
-          return kTypes<MachineReg, MachineReg>;
+          return kMetaTypes<MachineReg, MachineReg>;
         } else {
-          return kTypes<>;
+          return kMetaTypes<>;
         }
       }>>>;
   template <auto>
@@ -365,15 +365,15 @@ class MachineInsn final : public MachineInsnX86_64 {
         if constexpr (device_arch_info::kIsComment<Operand> ||
                       device_arch_info::kIsCondition<Operand> ||
                       device_arch_info::kIsImmediate<Operand>) {
-          return kTypes<typename Operand::Class::Type>;
+          return kMetaTypes<typename Operand::Class::Type>;
         } else if constexpr (device_arch_info::kIsRegister<Operand>) {
           if constexpr (kSSAMode == kSSA && Operand::kUsage == device_arch_info::kUseDef) {
-            return kTypes<MachineReg, MachineReg>;
+            return kMetaTypes<MachineReg, MachineReg>;
           } else {
-            return kTypes<MachineReg>;
+            return kMetaTypes<MachineReg>;
           }
         } else if constexpr (device_arch_info::kIsMemoryOperand<Operand>) {
-          return kTypes<const MemoryOperand&>;
+          return kMetaTypes<const MemoryOperand&>;
         } else {
           static_assert(kDependentTypeFalse<Operand>);
         }
@@ -383,19 +383,19 @@ class MachineInsn final : public MachineInsnX86_64 {
         if constexpr (device_arch_info::kIsComment<Operand> ||
                       device_arch_info::kIsCondition<Operand> ||
                       device_arch_info::kIsImmediate<Operand>) {
-          return kTypes<typename Operand::Class::Type>;
+          return kMetaTypes<typename Operand::Class::Type>;
         } else if constexpr (device_arch_info::kIsRegister<Operand>) {
           if constexpr (Operand::kUsage == device_arch_info::kUse ||
                         Operand::kUsage == device_arch_info::kUseDef) {
-            return kTypes<MachineReg>;
+            return kMetaTypes<MachineReg>;
           } else if constexpr (Operand::kUsage == device_arch_info::kDef ||
                                Operand::kUsage == device_arch_info::kDefEarlyClobber) {
-            return kTypes<>;
+            return kMetaTypes<>;
           } else {
             static_assert(kDependentValueFalse<Operand::kUsage>);
           }
         } else if constexpr (device_arch_info::kIsMemoryOperand<Operand>) {
-          return kTypes<const MemoryOperand&>;
+          return kMetaTypes<const MemoryOperand&>;
         } else {
           static_assert(kDependentTypeFalse<Operand>);
         }
@@ -408,19 +408,19 @@ class MachineInsn final : public MachineInsnX86_64 {
                        if constexpr (device_arch_info::kIsComment<Operand> ||
                                      device_arch_info::kIsCondition<Operand> ||
                                      device_arch_info::kIsImmediate<Operand>) {
-                         return kTypes<>;
+                         return kMetaTypes<>;
                        } else if constexpr (device_arch_info::kIsRegister<Operand>) {
                          if constexpr (Operand::kUsage == device_arch_info::kDef ||
                                        Operand::kUsage == device_arch_info::kDefEarlyClobber ||
                                        Operand::kUsage == device_arch_info::kUseDef) {
-                           return kTypes<MachineReg>;
+                           return kMetaTypes<MachineReg>;
                          } else if constexpr (Operand::kUsage == device_arch_info::kUse) {
-                           return kTypes<>;
+                           return kMetaTypes<>;
                          } else {
                            static_assert(kDependentValueFalse<Operand::kUsage>);
                          }
                        } else if constexpr (device_arch_info::kIsMemoryOperand<Operand>) {
-                         return kTypes<>;
+                         return kMetaTypes<>;
                        } else {
                          static_assert(kDependentTypeFalse<Operand>);
                        }
@@ -439,7 +439,8 @@ class MachineInsn final : public MachineInsnX86_64 {
       ValuesToValues::ForEachWithTemporary(
           std::move(args),
           /* reg_idx, mem_idx = */ std::tuple{size_t{0}, size_t{0}},
-          [this]<typename ConstructorArg>(ConstructorArg arg, std::tuple<size_t, size_t>& indexes) {
+          [this]<typename ConstructorArg>(ConstructorArg&& arg,
+                                          std::tuple<size_t, size_t>& indexes) {
             if constexpr (std::is_same_v<ConstructorArg, Assembler::Condition>) {
               MachineInsnX86_64::set_cond(arg);
             } else if constexpr (std::is_integral_v<ConstructorArg>) {
@@ -579,15 +580,15 @@ class MachineInsn final : public MachineInsnX86_64 {
           if constexpr (device_arch_info::kIsComment<Operand> ||
                         device_arch_info::kIsCondition<Operand> ||
                         device_arch_info::kIsImmediate<Operand>) {
-            return kTypes<>;
+            return kMetaTypes<>;
           } else if constexpr (device_arch_info::kIsRegister<Operand>) {
             if constexpr (kSSAMode == kSSA && Operand::kUsage == device_arch_info::kUseDef) {
-              return kTypes<MachineReg, MachineReg>;
+              return kMetaTypes<MachineReg, MachineReg>;
             } else {
-              return kTypes<MachineReg>;
+              return kMetaTypes<MachineReg>;
             }
           } else if constexpr (device_arch_info::kIsMemoryOperand<Operand>) {
-            return kTypes<MachineReg, MachineReg>;
+            return kMetaTypes<MachineReg, MachineReg>;
           } else {
             static_assert(kDependentTypeFalse<Operand>);
           }
@@ -702,7 +703,7 @@ class MachineInsn final : public MachineInsnX86_64 {
           std::move(args),
           /* index = */ size_t{0},
           /* current_bit = */ size_t{1},
-          []<typename Arg>(Arg arg, size_t& index, size_t& current_bit) {
+          []<typename Arg>(Arg&& arg, size_t& index, size_t& current_bit) {
             if constexpr (std::is_same_v<Arg, const MemoryOperand&>) {
               if (arg.base != kInvalidMachineReg) {
                 index |= current_bit;
@@ -950,7 +951,7 @@ class MachineIR : public berberis::MachineIR {
            insn->opcode() == kMachineOpIndirectJump || insn->opcode() == kMachineOpJump;
   }
 
-  [[nodiscard]] bool ContainsIrreducibleLoops() const { return contains_irreducible_loops_; }
+  [[nodiscard]] bool contains_irreducible_loops() const { return contains_irreducible_loops_; }
 
   [[nodiscard]] BasicBlockOrder bb_order() const { return bb_order_; }
 
@@ -958,8 +959,8 @@ class MachineIR : public berberis::MachineIR {
 
   [[nodiscard]] ABI abi() const { return abi_; }
 
-  void SetInsnFoldingExecuted() { insn_folding_executed_ = true; }
-  void SetContainsIrreducibleLoops() { contains_irreducible_loops_ = true; }
+  void set_insn_folding_executed() { insn_folding_executed_ = true; }
+  void set_contains_irreducible_loops() { contains_irreducible_loops_ = true; }
 
   using berberis::MachineIR::NewInsn;
 

@@ -21,8 +21,9 @@
 #include <cstring>
 #include <tuple>
 
-#include "berberis/base/bit_util.h"
-#include "berberis/intrinsics/common/intrinsics_float.h"
+#include "berberis/base/checks.h"
+#include "berberis/base/float.h"
+#include "berberis/base/int.h"
 
 namespace berberis {
 
@@ -416,9 +417,9 @@ SIMD_128_FULL_REGISTER_GETTER_SETTER(UInt64x2, uint64);
 SIMD_128_FULL_REGISTER_GETTER_SETTER(Float64x2, float64);
 SIMD_128_FULL_REGISTER_GETTER_SETTER(Float32x4, float32);
 #endif
-SIMD_128_FLOAT_REGISTER_GETTER_SETTER(intrinsics::Float16, _Float16, float16);
-SIMD_128_FLOAT_REGISTER_GETTER_SETTER(intrinsics::Float32, float, float32);
-SIMD_128_FLOAT_REGISTER_GETTER_SETTER(intrinsics::Float64, double, float64);
+SIMD_128_FLOAT_REGISTER_GETTER_SETTER(Float16, _Float16, float16);
+SIMD_128_FLOAT_REGISTER_GETTER_SETTER(Float32, float, float32);
+SIMD_128_FLOAT_REGISTER_GETTER_SETTER(Float64, double, float64);
 #undef SIMD_128_FULL_REGISTER_GETTER_SETTER
 #undef SIMD_128_fLOAT_REGISTER_GETTER_SETTER
 #undef SIMD_128_SAFEINT_REGISTER_GETTER_SETTER

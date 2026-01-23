@@ -25,6 +25,7 @@
 #include "berberis/assembler/x86_64.h"
 #include "berberis/base/checks.h"
 #include "berberis/base/dependent_false.h"
+#include "berberis/base/float.h"
 #include "berberis/base/macros.h"
 #include "berberis/decoder/riscv64/decoder.h"
 #include "berberis/decoder/riscv64/semantics_player.h"
@@ -32,7 +33,6 @@
 #include "berberis/guest_state/guest_addr.h"
 #include "berberis/guest_state/guest_state.h"
 #include "berberis/intrinsics/intrinsics.h"
-#include "berberis/intrinsics/intrinsics_float.h"
 #include "berberis/intrinsics/macro_assembler.h"
 #include "berberis/lite_translator/lite_translate_region.h"
 #include "berberis/runtime_primitives/platform.h"
@@ -57,8 +57,8 @@ class LiteTranslator {
   static constexpr auto no_fp_register = Assembler::no_xmm_register;
   using SimdRegister = Assembler::XMMRegister;
   using Condition = Assembler::Condition;
-  using Float32 = intrinsics::Float32;
-  using Float64 = intrinsics::Float64;
+  using Float32 = Float32;
+  using Float64 = Float64;
 
   using TemplateTypeId = intrinsics::TemplateTypeId;
   template <typename Type>

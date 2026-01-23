@@ -22,14 +22,16 @@
 #include <type_traits>
 
 #include "berberis/base/bit_util.h"
+#include "berberis/base/float.h"  // Float32/Float64/ProcessNans
+#include "berberis/base/limits.h" // std::numeric_limits for Float32/Float64
 #include "berberis/intrinsics/guest_cpu_flags.h"
 #include "berberis/intrinsics/intrinsics.h"
 #if defined(__aarch64__)
 #include "berberis/intrinsics/common/intrinsics_float.h"
 #else
-#include "berberis/intrinsics/intrinsics_float.h"  // Float32/Float64/ProcessNans
+#include "berberis/intrinsics/intrinsics_float.h"  // ProcessNans, Float32/Float64 operations
 #endif
-#include "berberis/intrinsics/type_traits.h"
+#include "berberis/base/type_traits.h"
 
 namespace berberis::intrinsics {
 
@@ -61,15 +63,15 @@ std::tuple<uint64_t> FClass(FloatType arg) {
   const IntType raw_bits = bit_cast<IntType>(arg);
 
   switch (FPClassify(arg)) {
-    case intrinsics::FPInfo::kNaN:
+    case FPInfo::kNaN:
       return (raw_bits & quiet_bit) ? 0b10'0000'0000 : 0b01'0000'0000;
-    case intrinsics::FPInfo::kInfinite:
+    case FPInfo::kInfinite:
       return intrinsics::SignBit(arg) ? 0b00'0000'0001 : 0b00'1000'0000;
-    case intrinsics::FPInfo::kNormal:
+    case FPInfo::kNormal:
       return intrinsics::SignBit(arg) ? 0b00'0000'0010 : 0b00'0100'0000;
-    case intrinsics::FPInfo::kSubnormal:
+    case FPInfo::kSubnormal:
       return intrinsics::SignBit(arg) ? 0b00'0000'0100 : 0b00'0010'0000;
-    case intrinsics::FPInfo::kZero:
+    case FPInfo::kZero:
       return intrinsics::SignBit(arg) ? 0b00'0000'1000 : 0b00'0001'0000;
   }
 }

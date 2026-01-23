@@ -90,6 +90,16 @@ class MachineReg {
     return MachineReg{kFirstVRegNumber + static_cast<int>(index)};
   }
 
+  // Normally, hard registers are predefined by the hardware setup and come from
+  // MachineRegClass. This function allows creating them programmatically for
+  // testing purposes.
+  [[nodiscard]] static constexpr MachineReg CreateHardRegFromIndexForTesting(uint32_t index) {
+    // Hard registers are in the range [1, kFirstVRegNumber - 1].
+    // Index 0 maps to reg 1, index 1 maps to reg 2, etc.
+    CHECK_LT(index, static_cast<uint32_t>(kFirstVRegNumber - 1));
+    return MachineReg{1 + static_cast<int>(index)};
+  }
+
   [[nodiscard]] static constexpr MachineReg CreateSpilledRegFromIndex(uint32_t index) {
     CHECK_LE(index, -(std::numeric_limits<int>::min() - kLastSpilledRegNumber));
     return MachineReg{kLastSpilledRegNumber - static_cast<int>(index)};
@@ -159,32 +169,32 @@ struct MachineRegClass {
 };
 
 class MachineRegKind {
- private:
-  enum { kRegisterIsUsed = 0x01, kRegisterIsDefined = 0x02, kRegisterIsInput = 0x04 };
-
  public:
   enum StandardAccess {
-    kUse = kRegisterIsUsed | kRegisterIsInput,
-    kDef = kRegisterIsDefined,
-    kUseDef = kUse | kDef,
-    // Note: in kDefEarlyClobber, register is Used and Defined, but it's not an input!
-    kDefEarlyClobber = kRegisterIsUsed | kRegisterIsDefined
+    kNone = 0,
+    kUse,
+    kDef,
+    kUseDef,
+    kDefEarlyClobber,
   };
 
   // We need default constructor to initialize arrays
-  constexpr MachineRegKind() : reg_class_(nullptr), access_(StandardAccess(0)) {}
+  constexpr MachineRegKind() : reg_class_(nullptr), access_(StandardAccess(kNone)) {}
   constexpr MachineRegKind(const MachineRegClass* reg_class, StandardAccess access)
       : reg_class_(reg_class), access_(access) {}
 
   [[nodiscard]] constexpr const MachineRegClass* RegClass() const { return reg_class_; }
 
-  [[nodiscard]] constexpr bool IsUse() const { return access_ & kRegisterIsUsed; }
+  [[nodiscard]] constexpr bool IsDefEarlyClobber() const {
+    return access_ == kDefEarlyClobber;
+  }
 
-  [[nodiscard]] constexpr bool IsDef() const { return access_ & kRegisterIsDefined; }
+  [[nodiscard]] constexpr bool IsDef() const {
+    return access_ == kDef || access_ == kUseDef || access_ == kDefEarlyClobber;
+  }
 
-  // IsInput means that register must contain some kind of valid value and is not just used early.
-  // This allows us to distinguish between UseDef and DefEarlyClobber.
-  [[nodiscard]] constexpr bool IsInput() const { return access_ & kRegisterIsInput; }
+  // TODO(b/232598137): Rename to IsUse.
+  [[nodiscard]] constexpr bool IsInput() const { return access_ == kUse || access_ == kUseDef; }
 
  private:
   const MachineRegClass* reg_class_;
@@ -396,7 +406,8 @@ class MachineIR {
         num_vreg_(num_vreg),
         num_arg_slots_(0),
         num_spill_slots_(0),
-        bb_list_(arena) {}
+        bb_list_(arena),
+        contains_calls_(false) {}
 
   [[nodiscard]] int NumVReg() const { return num_vreg_; }
 
@@ -427,6 +438,9 @@ class MachineIR {
     }
   }
 
+  void set_contains_calls() { contains_calls_ = true; }
+  [[nodiscard]] bool contains_calls() const { return contains_calls_; }
+
   [[nodiscard]] uint32_t AllocSpill() { return num_spill_slots_++; }
 
   [[nodiscard]] uint32_t SpillSlotOffset(uint32_t slot) const {
@@ -446,7 +460,7 @@ class MachineIR {
   // DOT is a graph description language, which tools like Graphviz can visualize for you.
   [[nodiscard]] std::string GetDebugStringAsDot() const;
 
-  void Emit(CodeEmitter* as) const;
+  bool Emit(CodeEmitter* as) const;
 
   [[nodiscard]] Arena* arena() const { return arena_; }
 
@@ -468,12 +482,12 @@ class MachineIR {
   // this number.
   uint32_t num_bb_;
 
- private:
   Arena* const arena_;
   int num_vreg_;
   uint32_t num_arg_slots_;    // 16-byte slots for call args/results
   uint32_t num_spill_slots_;  // 16-byte slots for spilled registers
   MachineBasicBlockList bb_list_;
+  bool contains_calls_;
 };
 
 class Branch final : public MachineInsn {
@@ -612,6 +626,8 @@ class Copy final : public MachineInsn {
 // Example: xor rax, rax
 class PseudoDefReg final : public MachineInsn {
  public:
+  static const MachineOpcode kOpcode;
+
   explicit PseudoDefReg(MachineReg reg);
 
   [[nodiscard]] std::string GetDebugString() const override;

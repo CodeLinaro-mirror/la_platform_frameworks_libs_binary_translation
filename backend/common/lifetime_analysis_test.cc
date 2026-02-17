@@ -113,12 +113,13 @@ TEST_F(VRegLifetimeAnalysisTest, GetVRegLifetime_ExistingVRegIsInputButUndefined
   ASSERT_EQ(lifetime2, nullptr);
 }
 
-const MachineRegClass kRegClass{
-    .debug_name = "GPR",
+constexpr MachineRegClass kRegClass{
+    .debug_name = "TestGPR",
     .reg_size = 8,
-    .reg_mask = 0,
-    .num_regs = 0,
-    .regs = {},
+    .reg_mask = 0b11,
+    .num_regs = 2,
+    .regs = {MachineReg::CreateHardRegFromIndexForTesting(0),
+             MachineReg::CreateHardRegFromIndexForTesting(1)},
 };
 
 class GenericInsn : public MachineInsn {
@@ -229,7 +230,7 @@ class VRegAccessTest : public ::testing::Test {
     auto& insn_list = bb_->insn_list();
     ASSERT_TRUE(insn_list.empty());
 
-    insn_list.push_back(machine_ir_.NewInsn<PseudoDefReg>(active_reg));
+    insn_list.push_back(machine_ir_.NewInsn<PseudoDefReg>(active_reg, kMeta<&kRegClass>));
 
     insn_list.push_back(insn);
 
@@ -420,7 +421,7 @@ TEST_F(VRegAccessTest, RewriteVReg_NoReloadForDefEarlyClobber) {
 }
 
 TEST_F(VRegAccessTest, RewriteVReg_SpillForCopy) {
-  auto* copy = machine_ir_.NewInsn<Copy>(kVRegDst, kVRegSrc, 8);
+  auto* copy = machine_ir_.NewInsn<Copy>(kVRegDst, kVRegSrc, kMeta<&kRegClass>);
   ASSERT_NO_FATAL_FAILURE(TestRewriteVReg(copy, /*index=*/ 0));
 
   ASSERT_EQ(bb_->insn_list().size(), 1u);
@@ -430,7 +431,7 @@ TEST_F(VRegAccessTest, RewriteVReg_SpillForCopy) {
 }
 
 TEST_F(VRegAccessTest, RewriteVReg_SpillForCopyWithSubsequentUse) {
-    auto* copy = machine_ir_.NewInsn<Copy>(kVRegDst, kVRegSrc, 8);
+  auto* copy = machine_ir_.NewInsn<Copy>(kVRegDst, kVRegSrc, kMeta<&kRegClass>);
   ASSERT_NO_FATAL_FAILURE(TestRewriteVRegWithSubsequentUse(copy, /*index=*/ 0));
 
   ASSERT_EQ(bb_->insn_list().size(), 3u);
@@ -446,7 +447,7 @@ TEST_F(VRegAccessTest, RewriteVReg_SpillForCopyWithSubsequentUse) {
 }
 
 TEST_F(VRegAccessTest, RewriteVReg_ReloadForCopy) {
-  auto* copy = machine_ir_.NewInsn<Copy>(kVRegDst, kVRegSrc, 8);
+  auto* copy = machine_ir_.NewInsn<Copy>(kVRegDst, kVRegSrc, kMeta<&kRegClass>);
   ASSERT_NO_FATAL_FAILURE(TestRewriteVReg(copy, /*index=*/ 1));
 
   ASSERT_EQ(bb_->insn_list().size(), 1u);
@@ -456,7 +457,7 @@ TEST_F(VRegAccessTest, RewriteVReg_ReloadForCopy) {
 }
 
 TEST_F(VRegAccessTest, RewriteVReg_ReloadForCopyWithSubsequentUse) {
-  auto* copy = machine_ir_.NewInsn<Copy>(kVRegDst, kVRegSrc, 8);
+  auto* copy = machine_ir_.NewInsn<Copy>(kVRegDst, kVRegSrc, kMeta<&kRegClass>);
   ASSERT_NO_FATAL_FAILURE(TestRewriteVRegWithSubsequentUse(copy, /*index=*/ 1));
 
   ASSERT_EQ(bb_->insn_list().size(), 3u);

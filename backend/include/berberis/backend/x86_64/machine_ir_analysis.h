@@ -18,13 +18,52 @@
 #define BERBERIS_BACKEND_X86_64_MACHINE_IR_ANALYSIS_H_
 
 #include "berberis/backend/x86_64/machine_ir.h"
+#include "berberis/base/algorithm.h"
 #include "berberis/base/arena_alloc.h"
 #include "berberis/base/arena_vector.h"
-#include "berberis/base/logging.h"
+#include "berberis/base/checks.h"
 
 namespace berberis::x86_64 {
 
-using Loop = ArenaVector<MachineBasicBlock*>;
+class Loop {
+ public:
+  explicit Loop(Arena* arena) : body_(arena), entry_blocks_(arena) {}
+
+  Loop(const Loop&) = delete;
+  Loop& operator=(const Loop&) = delete;
+
+  auto begin() { return body_.begin(); }
+  auto end() { return body_.end(); }
+  auto begin() const { return body_.begin(); }
+  auto end() const { return body_.end(); }
+  auto size() const { return body_.size(); }
+
+  void reserve(size_t size) { body_.reserve(size); }
+
+  void AddToBody(MachineBasicBlock* bb) { body_.push_back(bb); }
+  void AddEntryBlock(MachineBasicBlock* bb) {
+    if (Contains(entry_blocks_, bb)) {
+      return;
+    }
+    entry_blocks_.push_back(bb);
+  }
+
+  MachineBasicBlock* at(size_t index) const { return body_.at(index); }
+
+  [[nodiscard]] bool is_reducible() const {
+    CHECK_GT(entry_blocks_.size(), 0u);
+    CHECK_GT(body_.size(), 0u);
+    return entry_blocks_.size() == 1;
+  }
+
+  const ArenaVector<MachineBasicBlock*>& body() const { return body_; }
+  const ArenaVector<MachineBasicBlock*>& entry_blocks() const { return entry_blocks_; }
+
+ private:
+  ArenaVector<MachineBasicBlock*> body_;
+  ArenaVector<MachineBasicBlock*> entry_blocks_;
+};
+
 using LoopVector = ArenaVector<Loop*>;
 
 class LoopTreeNode {
@@ -66,6 +105,7 @@ class LoopTree {
 LoopVector FindLoops(MachineIR* ir);
 LoopTree BuildLoopTree(MachineIR* ir);
 
+MachineBasicBlockList FindNonloopNodes(MachineIR* ir);
 MachineBasicBlockList GetReversePostOrderBBList(MachineIR* ir);
 
 }  // namespace berberis::x86_64

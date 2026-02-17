@@ -15,6 +15,7 @@
  */
 
 #include "gtest/gtest.h"
+#include "gmock/gmock.h"
 
 #include "berberis/backend/common/lifetime.h"
 
@@ -28,6 +29,13 @@ namespace berberis {
 
 namespace {
 
+using ::testing::Contains;
+using ::testing::ElementsAre;
+
+MATCHER_P2(MatchesLiveRange, begin, end, "") {
+  return arg.begin() == begin && arg.end() == end;
+}
+
 // TODO(b/459067902): Move this to a common test utils file.
 const MachineRegClass kRegClass{
     .debug_name = "GPR",
@@ -37,33 +45,46 @@ const MachineRegClass kRegClass{
     .regs = {},
 };
 
-class GenericInsn : public MachineInsn {
+// Sub is subset of Super.
+const MachineRegClass kRegSubClass{
+    .debug_name = "Sub",
+    .reg_size = 8,
+    .reg_mask = 0x2,  // bit 1
+    .num_regs = 0,
+    .regs = {},
+};
+
+const MachineRegClass kRegSuperClass{
+    .debug_name = "Super",
+    .reg_size = 8,
+    .reg_mask = 0x6,  // bits 1 and 2
+    .num_regs = 0,
+    .regs = {},
+};
+
+class FlexibleInsn : public MachineInsn {
  public:
-  static constexpr int kNumRegs = 2;
-  static constexpr MachineRegKind kRegKinds[kNumRegs] = {
-      {&kRegClass, MachineRegKind::kDef},
-      {&kRegClass, MachineRegKind::kUse},
-  };
   static const MachineOpcode kOpcode;
 
-  GenericInsn(MachineReg dst, MachineReg src)
-      : MachineInsn(kOpcode, kNumRegs, kRegKinds, regs_, kMachineInsnDefault) {
+  FlexibleInsn(MachineReg dst, MachineReg src, const MachineRegKind* reg_kinds)
+      : MachineInsn(kOpcode, 2, reg_kinds, regs_, kMachineInsnDefault) {
     SetRegAt(0, dst);
     SetRegAt(1, src);
   }
 
-  std::string GetDebugString() const override { return "GENERIC"; }
+  std::string GetDebugString() const override { return "FLEXIBLE"; }
   void Emit(CodeEmitter* /*as*/) const override { FATAL("not implemented"); }
 
  private:
-  GenericInsn(const GenericInsn& other) = delete;
+  FlexibleInsn(const FlexibleInsn& other) = delete;
   MachineInsn* Clone(Arena* /*arena*/) const override { FATAL("not implemented"); }
   MachineInsnList Lower(Arena* /*arena*/) const override { FATAL("not implemented"); }
 
-  MachineReg regs_[kNumRegs];
+  MachineReg regs_[2];
 };
 
-const MachineOpcode GenericInsn::kOpcode = MachineOpcode(0);
+const MachineOpcode FlexibleInsn::kOpcode = MachineOpcode(0);
+
 
 class VRegLifetimeTest : public ::testing::Test {
  protected:
@@ -72,8 +93,12 @@ class VRegLifetimeTest : public ::testing::Test {
         bb_(machine_ir_.NewBasicBlock()),
         lifetime_(&arena_) {}
 
-  VRegAccess CreateAccess(int begin, int end) {
-    auto* insn = machine_ir_.NewInsn<GenericInsn>(kVRegDst, kVRegSrc);
+  VRegAccess CreateAccess(int begin, int end, const MachineRegClass* reg_class = &kRegClass) {
+    MachineRegKind* reg_kinds = NewArrayInArena<MachineRegKind>(&arena_, 2);
+    reg_kinds[0] = {reg_class, MachineRegKind::kDef};
+    reg_kinds[1] = {reg_class, MachineRegKind::kUse};
+
+    auto* insn = machine_ir_.NewInsn<FlexibleInsn>(kVRegDst, kVRegSrc, reg_kinds);
     bb_->insn_list().push_back(insn);
     return VRegAccess(MachineInsnListPosition(&bb_->insn_list(), std::prev(bb_->insn_list().end())),
                       0,
@@ -126,10 +151,8 @@ TEST_F(VRegLifetimeTest, Split_SingleRange_Middle) {
   VRegLifetime::List new_lifetimes(&arena_);
   lifetime_.Split(split_pos, &new_lifetimes);
 
-  EXPECT_EQ(new_lifetimes.size(), 1u);
   EXPECT_EQ(lifetime_.end(), 9);
-  EXPECT_EQ(new_lifetimes.front().begin(), 11);
-  EXPECT_EQ(new_lifetimes.front().end(), 20);
+  EXPECT_THAT(new_lifetimes, ElementsAre(MatchesLiveRange(11, 20)));
 }
 
 TEST_F(VRegLifetimeTest, Split_MultipleRanges_SplitInBetween) {
@@ -147,10 +170,8 @@ TEST_F(VRegLifetimeTest, Split_MultipleRanges_SplitInBetween) {
   VRegLifetime::List new_lifetimes(&arena_);
   lifetime_.Split(split_pos, &new_lifetimes);
 
-  EXPECT_EQ(new_lifetimes.size(), 1u);
   EXPECT_EQ(lifetime_.end(), 10);
-  EXPECT_EQ(new_lifetimes.front().begin(), 21);
-  EXPECT_EQ(new_lifetimes.front().end(), 30);
+  EXPECT_THAT(new_lifetimes, ElementsAre(MatchesLiveRange(21, 30)));
 }
 
 TEST_F(VRegLifetimeTest, Split_MultipleRanges_SplitFirstRange) {
@@ -169,18 +190,11 @@ TEST_F(VRegLifetimeTest, Split_MultipleRanges_SplitFirstRange) {
   lifetime_.Split(split_pos, &new_lifetimes);
 
   // Expecting 2 new lifetimes: one from the remainder of first range, one from the second range.
-  EXPECT_EQ(new_lifetimes.size(), 2u);
-
   // Old lifetime
   EXPECT_EQ(lifetime_.end(), 9);
 
   // New lifetimes
-  auto it = new_lifetimes.begin();
-  EXPECT_EQ(it->begin(), 11);
-  EXPECT_EQ(it->end(), 20);
-  ++it;
-  EXPECT_EQ(it->begin(), 30);
-  EXPECT_EQ(it->end(), 40);
+  EXPECT_THAT(new_lifetimes, ElementsAre(MatchesLiveRange(11, 20), MatchesLiveRange(30, 40)));
 }
 
 TEST_F(VRegLifetimeTest, Split_PreservesSpillSlot) {
@@ -213,12 +227,69 @@ TEST_F(VRegLifetimeTest, Split_AtBeginning) {
   VRegLifetime::List new_lifetimes(&arena_);
   lifetime_.Split(split_pos, &new_lifetimes);
 
-  EXPECT_EQ(new_lifetimes.size(), 1u);
-  EXPECT_EQ(new_lifetimes.front().begin(), 0);
-  EXPECT_EQ(new_lifetimes.front().end(), 10);
+  EXPECT_THAT(new_lifetimes, ElementsAre(MatchesLiveRange(0, 10)));
   // The original lifetime is now empty.
   EXPECT_TRUE(lifetime_.GetLiveRangesForTesting().empty());
+}
 
+TEST_F(VRegLifetimeTest, LinkCoalescingCandidate) {
+  VRegLifetime other(&arena_);
+
+  lifetime_.LinkCoalescingCandidate(&other);
+
+  EXPECT_THAT(lifetime_.coalescing_candidates(), ElementsAre(&other));
+  EXPECT_THAT(other.coalescing_candidates(), ElementsAre(&lifetime_));
+}
+
+TEST_F(VRegLifetimeTest, Merge) {
+  StartLiveRange(0);
+  lifetime_.AppendAccess(CreateAccess(0, 10, &kRegSuperClass));
+
+  VRegLifetime other(&arena_);
+  other.StartLiveRange(20);
+  other.AppendAccess(CreateAccess(20, 30, &kRegSubClass));
+
+  // Setup coalescing candidates.
+  VRegLifetime others_candidate(&arena_);
+  other.LinkCoalescingCandidate(&others_candidate);
+
+  lifetime_.Merge(&other);
+
+  // Check ranges merged.
+  EXPECT_EQ(lifetime_.begin(), 0);
+  EXPECT_EQ(lifetime_.end(), 30);
+  EXPECT_THAT(lifetime_.GetLiveRangesForTesting(),
+              ElementsAre(MatchesLiveRange(0, 10), MatchesLiveRange(20, 30)));
+
+  // Check spill weight merged (1 from lifetime_ + 1 from other).
+  EXPECT_EQ(lifetime_.spill_weight(), 2);
+
+  // Check coalescing candidates merged.
+  EXPECT_THAT(lifetime_.coalescing_candidates(), ElementsAre(&others_candidate));
+
+  // Check candidate points back to lifetime_.
+  EXPECT_THAT(others_candidate.coalescing_candidates(), Contains(&lifetime_));
+}
+
+TEST_F(VRegLifetimeTest, Merge_InterleavedRanges) {
+  StartLiveRange(0);
+  AddAccess(0, 10);
+  StartLiveRange(20);
+  AddAccess(20, 30);
+
+  VRegLifetime other(&arena_);
+  other.StartLiveRange(10);
+  other.AppendAccess(CreateAccess(10, 20));
+  other.StartLiveRange(30);
+  other.AppendAccess(CreateAccess(30, 40));
+
+  lifetime_.Merge(&other);
+
+  EXPECT_THAT(lifetime_.GetLiveRangesForTesting(),
+              ElementsAre(MatchesLiveRange(0, 10),
+                          MatchesLiveRange(10, 20),
+                          MatchesLiveRange(20, 30),
+                          MatchesLiveRange(30, 40)));
 }
 
 } // namespace

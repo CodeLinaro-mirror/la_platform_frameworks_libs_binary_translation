@@ -132,11 +132,12 @@ bool HardRegAllocation::TryAssign(VRegLifetime* new_lifetime) {
   return true;
 }
 
-int HardRegAllocation::ConsiderSpill(VRegLifetime* new_lifetime) {
+std::tuple<int, SplitKind> HardRegAllocation::ConsiderSpill(VRegLifetime* new_lifetime) {
   CHECK_EQ(new_lifetime_, new_lifetime);
 
   spills_.clear();
   int weight = 0;
+  SplitKind combined_split_kind = SPLIT_OK;
 
   for (auto curr = lifetimes_.begin(); curr != lifetimes_.end(); ++curr) {
     VRegLifetime* curr_lifetime = *curr;
@@ -150,14 +151,17 @@ int HardRegAllocation::ConsiderSpill(VRegLifetime* new_lifetime) {
     SplitKind split_kind = curr_lifetime->FindSplitPos(new_lifetime->begin(), &split_pos);
     if (split_kind == SPLIT_IMPOSSIBLE) {
       // Lifetimes interfere in such a way that spill is not possible.
-      return kInfiniteSpillWeight;
+      return {kInfiniteSpillWeight, SPLIT_IMPOSSIBLE};
     } else if (split_kind == SPLIT_CONFLICT) {
       // An access within this lifetime conflicts with first access in 'new_lifetime'.
       // If we spill it, it will compete with 'new_lifetime' at reallocation,
       // and if it can only use register suitable for 'new_lifetime' as well,
       // 'new_lifetime' can be evicted back, resulting in double spill.
       if (curr_lifetime->GetRegClass()->IsSubsetOf(new_lifetime->GetRegClass())) {
-        return kInfiniteSpillWeight;
+        return {kInfiniteSpillWeight, SPLIT_IMPOSSIBLE};
+      }
+      if (combined_split_kind == SPLIT_OK) {
+        combined_split_kind = SPLIT_CONFLICT;
       }
     }
 
@@ -170,7 +174,7 @@ int HardRegAllocation::ConsiderSpill(VRegLifetime* new_lifetime) {
   }
 
   CHECK_LT(weight, kInfiniteSpillWeight);
-  return weight;
+  return {weight, combined_split_kind};
 }
 
 
@@ -213,7 +217,7 @@ VRegLifetimeAllocator::VRegLifetimeAllocator(MachineIR* machine_ir, VRegLifetime
           config::kMaxHardRegs, HardRegAllocation(machine_ir->arena()), machine_ir->arena()) {}
 
 int VRegLifetimeAllocator::ConsiderSpillHardReg(MachineReg hard_reg, VRegLifetime* lifetime) {
-  return allocations_[hard_reg.reg()].ConsiderSpill(lifetime);
+  return std::get<0>(allocations_[hard_reg.reg()].ConsiderSpill(lifetime));
 }
 
 bool VRegLifetimeAllocator::TryAssignHardReg(VRegLifetime* curr_lifetime, MachineReg hard_reg) {
@@ -240,15 +244,9 @@ void VRegLifetimeAllocator::AllocateLifetime(VRegLifetimeList::iterator lifetime
   LOG_REG_ALLOC(
       "allocating lifetime %s:\n%s", reg_class->GetDebugName(), lifetime->GetDebugString().c_str());
 
-  // First try preferred register.
-  MachineReg pref_reg = lifetime->FindMoveHint()->hard_reg();
-  if (reg_class->HasReg(pref_reg) && TryAssignHardReg(lifetime, pref_reg)) {
-    return;
-  }
-
   // Walk registers from reg class.
   for (MachineReg hard_reg : *reg_class) {
-    if (hard_reg != pref_reg && TryAssignHardReg(lifetime, hard_reg)) {
+    if (TryAssignHardReg(lifetime, hard_reg)) {
       return;
     }
   }
@@ -281,9 +279,36 @@ void VRegLifetimeAllocator::RewriteAllocatedLifetimes() {
 
 void VRegLifetimeAllocator::Allocate() {
   for (auto lifetime_it = lifetimes_->begin(); lifetime_it != lifetimes_->end(); ++lifetime_it) {
+    CHECK(!lifetime_it->IsEmpty());
     AllocateLifetime(lifetime_it);
   }
   RewriteAllocatedLifetimes();
+}
+
+void CoalesceLifetimes(VRegLifetimeList* lifetimes) {
+  for (auto& lifetime : *lifetimes) {
+    if (lifetime.IsEmpty()) {
+      // It's already merged and emptied.
+      continue;
+    }
+
+    const auto& candidates = lifetime.coalescing_candidates();
+    // Attention: candidates.size() may grow after Merge()! Iterating by index
+    // to avoid iterator invalidation.
+    for (size_t i = 0; i < candidates.size(); ++i) {
+      VRegLifetime* other = candidates.at(i);
+      CHECK_NE(&lifetime, other);
+      if (!other->IsEmpty() &&
+          // Narrowing reg class may lead to difficult to handle spills.
+          // TODO(b/459067902): support such spill and allow coalescing.
+          lifetime.GetRegClass() == other->GetRegClass() &&
+          // We can only merge non-interfering lifetimes.
+          !lifetime.TestInterference(*other)) {
+        lifetime.Merge(other);
+      }
+    }
+  }
+  lifetimes->remove_if([](const VRegLifetime& lifetime) { return lifetime.IsEmpty(); });
 }
 
 void CollectLifetimes(const MachineIR* machine_ir, VRegLifetimeList* lifetimes) {
@@ -307,8 +332,10 @@ void CollectLifetimes(const MachineIR* machine_ir, VRegLifetimeList* lifetimes) 
 }
 
 void AllocRegs(MachineIR* machine_ir) {
+  LOG_REG_ALLOC("Machine IR before reg alloc:\n%s\n", machine_ir->GetDebugString().c_str());
   VRegLifetimeList lifetimes(machine_ir->arena());
   CollectLifetimes(machine_ir, &lifetimes);
+  CoalesceLifetimes(&lifetimes);
 
   VRegLifetimeAllocator allocator(machine_ir, &lifetimes);
   allocator.Allocate();

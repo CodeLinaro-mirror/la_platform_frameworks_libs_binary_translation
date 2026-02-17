@@ -813,7 +813,7 @@ void TestRegAlloc() {
   MachineReg v0 = machine_ir.AllocVReg();
   builder.Gen<x86_64::MovqRegImm>(v0, 0);
   MachineReg vx0 = machine_ir.AllocVReg();
-  builder.Gen<PseudoDefReg>(vx0);
+  builder.Gen<PseudoDefReg>(vx0, kMeta<&x86_64::kXmmReg>);
   builder.Gen<x86_64::XorpdXRegXReg, x86_64::kNoSSA>(vx0, vx0);
 
   for (int i = 0; i < N; ++i) {
@@ -1013,7 +1013,7 @@ class ExecMachineIRTest : public ::testing::Test {
           kMachineRegXMM0,
           {.base = kMachineRegRBP,
            .disp = static_cast<int32_t>(offsetof(Data, slots) + i * sizeof(data_.slots[0]))});
-      builder_.Gen<Copy>(slots_[i], kMachineRegXMM0, 16);
+      builder_.Gen<Copy>(slots_[i], kMachineRegXMM0, kMeta<&x86_64::kXmmReg>);
     }
 
     for (size_t i = 0; i < std::size(kXmms); ++i) {
@@ -1047,7 +1047,7 @@ class ExecMachineIRTest : public ::testing::Test {
     }
 
     for (size_t i = 0; i < std::size(data_.slots); ++i) {
-      builder_.Gen<Copy>(kMachineRegXMM0, slots_[i], 16);
+      builder_.Gen<Copy>(kMachineRegXMM0, slots_[i], kMeta<&x86_64::kXmmReg>);
       builder_.Gen<x86_64::MovdquOpXReg>(
           {.base = kMachineRegRBP,
            .disp = static_cast<int32_t>(offsetof(Data, slots) + i * sizeof(data_.slots[0]))},
@@ -1070,25 +1070,25 @@ TEST_F(ExecMachineIRTest, Copy) {
   InitData(&data_);
   Data dst_data = data_;
 
-  builder_.Gen<Copy>(kGRegs[1], kGRegs[0], 8);
+  builder_.Gen<Copy>(kGRegs[1], kGRegs[0], kMeta<&x86_64::kGeneralReg64>);
   dst_data.gregs[1] = data_.gregs[0];
 
-  builder_.Gen<Copy>(slots_[0], kXmms[0], 8);
+  builder_.Gen<Copy>(slots_[0], kXmms[0], kMeta<&x86_64::kFpReg64>);
   dst_data.slots[0].lo = data_.xmms[0].lo;
 
-  builder_.Gen<Copy>(slots_[1], kXmms[1], 16);
+  builder_.Gen<Copy>(slots_[1], kXmms[1], kMeta<&x86_64::kXmmReg>);
   dst_data.slots[1] = data_.xmms[1];
 
-  builder_.Gen<Copy>(kXmms[3], kXmms[2], 16);
+  builder_.Gen<Copy>(kXmms[3], kXmms[2], kMeta<&x86_64::kXmmReg>);
   dst_data.xmms[3] = data_.xmms[2];
 
   // The minimum copy amount is 8 bytes. Copy of a smaller size will copy
   // garbage in upper bytes. This is in compliance with MachineIR assumptions,
   // but we cannot reliably test it.
-  builder_.Gen<Copy>(slots_[5], slots_[4], 8);
+  builder_.Gen<Copy>(slots_[5], slots_[4], kMeta<&x86_64::kFpReg64>);
   dst_data.slots[5].lo = data_.slots[4].lo;
 
-  builder_.Gen<Copy>(slots_[7], slots_[6], 16);
+  builder_.Gen<Copy>(slots_[7], slots_[6], kMeta<&x86_64::kXmmReg>);
   dst_data.slots[7] = data_.slots[6];
 
   Finalize();
@@ -1333,7 +1333,7 @@ TEST(ExecMachineIR, WriteFlags) {
   builder.Gen<x86_64::MovqRegImm>(kMachineRegRBP, bit_cast<uintptr_t>(&arg_flags));
   builder.Gen<x86_64::MovqRegOp>(kMachineRegRAX, {.base = kMachineRegRBP});
   builder.Gen<x86_64::WriteFlags, x86_64::kNoSSA>(kMachineRegRAX, x86_64::kMachineRegFLAGS);
-  // Assume PseudoReadFlags is verified by another test.
+  // Assume ReadFlags is verified by another test.
   builder.Gen<x86_64::ReadFlagsWithOverflow>(kMachineRegRAX, x86_64::kMachineRegFLAGS);
   builder.Gen<x86_64::MovqRegImm>(kMachineRegRBP, bit_cast<uintptr_t>(&res_flags));
   builder.Gen<x86_64::MovqOpReg>({.base = kMachineRegRBP}, kMachineRegRAX);

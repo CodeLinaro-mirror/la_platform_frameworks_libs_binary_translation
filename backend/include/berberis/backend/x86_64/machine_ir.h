@@ -36,6 +36,7 @@
 #include "berberis/base/tuple_processing.h"
 #include "berberis/device_arch_info/x86_64/device_arch_info.h"
 #include "berberis/guest_state/guest_state_arch.h"
+#include "berberis/intrinsics/intrinsics_args.h"
 
 namespace berberis {
 
@@ -114,12 +115,20 @@ inline constexpr auto kMachineRegFLAGS = MachineRegs::kFLAGS;
 inline constexpr auto kMachineRegRBP = MachineRegs::kRBP;
 inline constexpr auto kMachineRegRSP = MachineRegs::kRSP;
 
-inline bool IsGReg(MachineReg r) {
+constexpr bool IsGReg(MachineReg r) {
   return r.reg() >= MachineRegs::kR8.reg() && r.reg() <= MachineRegs::kR15.reg();
 }
 
-inline bool IsXReg(MachineReg r) {
+constexpr bool IsGReg(const MachineRegClass* c) {
+  return IsGReg(c->regs[0]);
+}
+
+constexpr bool IsXReg(MachineReg r) {
   return r.reg() >= MachineRegs::kXMM0.reg() && r.reg() <= MachineRegs::kXMM15.reg();
+}
+
+constexpr bool IsXReg(const MachineRegClass* c) {
+  return IsXReg(c->regs[0]);
 }
 
 // Context loads and stores use rbp as base.
@@ -183,10 +192,36 @@ inline constexpr MachineRegClass kRegisterClass =
 inline constexpr auto& kRAX = kRegisterClass<device_arch_info::RAX>;
 inline constexpr auto& kGeneralReg32 = kRegisterClass<device_arch_info::GeneralReg32>;
 inline constexpr auto& kGeneralReg64 = kRegisterClass<device_arch_info::GeneralReg64>;
-inline constexpr auto& kReg32 = kRegisterClass<device_arch_info::Reg32>;
-inline constexpr auto& kReg64 = kRegisterClass<device_arch_info::Reg64>;
+inline constexpr auto& kFpReg32 = kRegisterClass<device_arch_info::FpReg32>;
+inline constexpr auto& kFpReg64 = kRegisterClass<device_arch_info::FpReg64>;
 inline constexpr auto& kXmmReg = kRegisterClass<device_arch_info::XmmReg>;
 inline constexpr auto& kFLAGS = kRegisterClass<device_arch_info::FLAGS>;
+
+// Note: this logic have to match the logic of Copy::GetRegInfoByRegClass in x86_64/code.cc
+constexpr const MachineRegClass* GetRegClassForCopy(const MachineRegClass* reg_class) {
+  if (IsGReg(reg_class)) {
+    if (reg_class->reg_size <= int{sizeof(int32_t)}) {
+      return &kGeneralReg32;
+    } else {
+      CHECK_EQ(reg_class->reg_size, int{sizeof(int64_t)});
+      return &kGeneralReg64;
+    }
+  } else if (IsXReg(reg_class)) {
+    if (reg_class->reg_size > int{sizeof(int64_t)}) {
+      CHECK_EQ(reg_class->reg_size, int{sizeof(__int128)});
+      return &kXmmReg;
+    } else if (reg_class->reg_size == int{sizeof(int64_t)}) {
+      CHECK_EQ(reg_class->reg_size, int{sizeof(Float64)});
+      return &kFpReg64;
+    } else {
+      CHECK_EQ(reg_class->reg_size, int{sizeof(Float32)});
+      return &kFpReg32;
+    }
+  } else {
+    CHECK_EQ(reg_class, &kFLAGS);
+    return &kFLAGS;
+  }
+}
 
 class MachineInsnX86_64 : public MachineInsn {
  public:
@@ -309,23 +344,69 @@ template <typename DeviceInsnInfo_,
           // (== no use_def operands). Only kSSA and kNoSSA should be specified explicitly.
           auto kSSAMode = false>
 class MachineInsn final : public MachineInsnX86_64 {
+  struct OperandIndexes {
+    // Note: we never are supposed to read unused values they are there to trigger compile-time
+    // error on tuple element access  if that would ever happen, by accident.
+    size_t input_index;   // ~std::size_t{0} is not used.
+    size_t output_index;  // ~std::size_t{0} is not used.
+  };
+  // Precalculate indexes — see http://go/berberis-tuples#mystery-of-valuestotypes-and-metavalues
+  // for explanation about why we need that separate pass.
+  static constexpr auto kBindingIndexes = ValuesToValues::Zip(
+      std::move(kTupleMetaTypes<typename DeviceInsnInfo_::Operands>),
+      ValuesToTypes::MetaValues<ValuesToValues::ToArray<OperandIndexes>(
+          TypesToValues::MapWithTemporary<typename DeviceInsnInfo_::Operands,
+                                          /* in_index, out_index = */ OperandIndexes>(
+              []<typename Operand>(OperandIndexes& indexes) -> OperandIndexes {
+                auto& [in_index, out_index] = indexes;
+                // Only register operands can be outputs.
+                if constexpr (device_arch_info::kIsRegister<Operand>) {
+                  if constexpr (Operand::kUsage == device_arch_info::kUse) {
+                    return {in_index++, ~std::size_t{0}};
+                  } else if constexpr (Operand::kUsage == device_arch_info::kDef ||
+                                       Operand::kUsage == device_arch_info::kDefEarlyClobber) {
+                    return {~std::size_t{0}, out_index++};
+                  } else {
+                    static_assert(Operand::kUsage == device_arch_info::kUseDef);
+                    return {in_index++, out_index++};
+                  }
+                } else {
+                  return {in_index++, ~std::size_t{0}};
+                }
+              }))>{});
+  // Default bindings: all input arguments are InArg/ImmArg, all output registers are OutArgs,
+  // kUseDef arguments are InOutArg.
+  static constexpr auto kBindingsInfo = ValuesToValues::Map(
+      kBindingIndexes,
+      []<typename Operand, OperandIndexes kIndexes>(
+          std::pair<const MetaType<Operand>, MetaValue<kIndexes>>) {
+        if constexpr (device_arch_info::kIsComment<Operand> ||
+                      device_arch_info::kIsCondition<Operand> ||
+                      device_arch_info::kIsImmediate<Operand>) {
+          return kMetaType<ImmArg<kIndexes.input_index, typename Operand::Class::Type>>;
+        } else if constexpr (device_arch_info::kIsRegister<Operand>) {
+          if constexpr (Operand::kUsage == device_arch_info::kUse) {
+            return kMetaType<InArg<kIndexes.input_index>>;
+          } else if constexpr (Operand::kUsage == device_arch_info::kDef ||
+                               Operand::kUsage == device_arch_info::kDefEarlyClobber) {
+            return kMetaType<OutArg<kIndexes.output_index>>;
+          } else {
+            static_assert(Operand::kUsage == device_arch_info::kUseDef);
+            return kMetaType<InOutArg<kIndexes.input_index, kIndexes.output_index>>;
+          }
+        } else {
+          // Note: even if memory operand is not kUse we still have to treat it as input operand in
+          // IR, because we care about registers that are used to specify memory address, not about
+          // actual memory used by that operand.
+          static_assert(device_arch_info::kIsMemoryOperand<Operand>);
+          return kMetaType<InArg<kIndexes.input_index>>;
+        }
+      });
+
  public:
-  // This static simplifies constructing this MachineInsn in intrinsic implementations.
-  using OperandsTuple = std::conditional_t<
-      kSSAMode == kSSA,
-      TypesToTypes::FlatMap<
-          typename DeviceInsnInfo_::Operands,
-          []<typename Operand> {
-            if constexpr (device_arch_info::kIsRegister<Operand> &&
-                          Operand::kUsage == device_arch_info::kUseDef) {
-              return kMetaTypes<
-                  device_arch_info::OperandInfo<typename Operand::Class, device_arch_info::kDef>,
-                  device_arch_info::OperandInfo<typename Operand::Class, device_arch_info::kUse>>;
-            } else {
-              return kMetaTypes<Operand>;
-            }
-          }>,
-      typename DeviceInsnInfo_::Operands>;
+  // This type simplifies constructing this MachineInsn in intrinsic implementations.
+  // Note: bindings are always defined for the physical instruction, not an SSA-converted one.
+  using BindingsTuple = Type<&kBindingsInfo>;
 
  private:
   static_assert((std::is_same_v<decltype(kSSAMode), bool> && kSSAMode == false) ||
@@ -352,8 +433,9 @@ class MachineInsn final : public MachineInsnX86_64 {
       }>>>;
   template <auto>
   static constexpr MachineInsnInfo GenMachineInsnInfo();
-  static constexpr std::array<MachineInsnInfo,
-                              1 << (2 * device_arch_info::kCountMemoryOperands<OperandsTuple>)>
+  static constexpr std::array<
+      MachineInsnInfo,
+      1 << (2 * device_arch_info::kCountMemoryOperands<typename DeviceInsnInfo_::Operands>)>
   GenMachineInsnInfos();
   static constexpr std::array<X86Operand, std::tuple_size_v<typename DeviceInsnInfo_::Operands>>
   GenX86Operands();
@@ -402,39 +484,37 @@ class MachineInsn final : public MachineInsnX86_64 {
       }>;
   // Note: IR instructions may only produce registers right now, thus tuple is an array, currently.
   using OutputArgsTuple =
-      std::array<MachineReg,
-                 std::tuple_size_v<
-                     TypesToTypes::FlatMap<typename DeviceInsnInfo::Operands, []<typename Operand> {
-                       if constexpr (device_arch_info::kIsComment<Operand> ||
-                                     device_arch_info::kIsCondition<Operand> ||
-                                     device_arch_info::kIsImmediate<Operand>) {
-                         return kMetaTypes<>;
-                       } else if constexpr (device_arch_info::kIsRegister<Operand>) {
-                         if constexpr (Operand::kUsage == device_arch_info::kDef ||
-                                       Operand::kUsage == device_arch_info::kDefEarlyClobber ||
-                                       Operand::kUsage == device_arch_info::kUseDef) {
-                           return kMetaTypes<MachineReg>;
-                         } else if constexpr (Operand::kUsage == device_arch_info::kUse) {
-                           return kMetaTypes<>;
-                         } else {
-                           static_assert(kDependentValueFalse<Operand::kUsage>);
-                         }
-                       } else if constexpr (device_arch_info::kIsMemoryOperand<Operand>) {
-                         return kMetaTypes<>;
-                       } else {
-                         static_assert(kDependentTypeFalse<Operand>);
-                       }
-                     }>>>;
+      TypesToTypes::FlatMap<typename DeviceInsnInfo::Operands, []<typename Operand> {
+        if constexpr (device_arch_info::kIsComment<Operand> ||
+                      device_arch_info::kIsCondition<Operand> ||
+                      device_arch_info::kIsImmediate<Operand>) {
+          return kMetaTypes<>;
+        } else if constexpr (device_arch_info::kIsRegister<Operand>) {
+          if constexpr (Operand::kUsage == device_arch_info::kDef ||
+                        Operand::kUsage == device_arch_info::kDefEarlyClobber ||
+                        Operand::kUsage == device_arch_info::kUseDef) {
+            return kMetaTypes<MachineReg>;
+          } else if constexpr (Operand::kUsage == device_arch_info::kUse) {
+            return kMetaTypes<>;
+          } else {
+            static_assert(kDependentValueFalse<Operand::kUsage>);
+          }
+        } else if constexpr (device_arch_info::kIsMemoryOperand<Operand>) {
+          return kMetaTypes<>;
+        } else {
+          static_assert(kDependentTypeFalse<Operand>);
+        }
+      }>;
 
   MachineInsn& operator=(const MachineInsn&) = delete;
 
   explicit MachineInsn(ConstructorArgsTuple args)
       : MachineInsnX86_64(&GenMachineInsnInfo(args), x86_64_insn_info_.regs_) {
     if constexpr (std::tuple_size_v<ConstructorArgsTuple> > 0) {
-      static_assert(device_arch_info::kCountConditions<OperandsTuple> <= 1);
-      static_assert(device_arch_info::kCountImmediates<OperandsTuple> <= 1);
-      static_assert(device_arch_info::kCountMemoryOperands<OperandsTuple> +
-                        2 * device_arch_info::kCountComments<OperandsTuple> <=
+      static_assert(device_arch_info::kCountConditions<typename DeviceInsnInfo_::Operands> <= 1);
+      static_assert(device_arch_info::kCountImmediates<typename DeviceInsnInfo_::Operands> <= 1);
+      static_assert(device_arch_info::kCountMemoryOperands<typename DeviceInsnInfo_::Operands> +
+                        2 * device_arch_info::kCountComments<typename DeviceInsnInfo_::Operands> <=
                     3);
       ValuesToValues::ForEachWithTemporary(
           std::move(args),
@@ -479,8 +559,9 @@ class MachineInsn final : public MachineInsnX86_64 {
     }
   }
 
-  static constexpr std::array<MachineInsnInfo,
-                              1 << (2 * device_arch_info::kCountMemoryOperands<OperandsTuple>)>
+  static constexpr std::array<
+      MachineInsnInfo,
+      1 << (2 * device_arch_info::kCountMemoryOperands<typename DeviceInsnInfo_::Operands>)>
       kInfos = GenMachineInsnInfos();
   static constexpr std::array<X86Operand, std::tuple_size_v<typename DeviceInsnInfo::Operands>>
       kX86Operands = GenX86Operands();
@@ -492,7 +573,7 @@ class MachineInsn final : public MachineInsnX86_64 {
   static constexpr const MachineInsnInfo& kInfo = kInfos[0];
 
   int NumRegOperands() {
-    if constexpr (device_arch_info::kCountMemoryOperands<OperandsTuple> == 0) {
+    if constexpr (device_arch_info::kCountMemoryOperands<typename DeviceInsnInfo_::Operands> == 0) {
       return kInfo.num_reg_operands;
     } else {
       return kInfo.num_reg_operands + std::popcount(opcode() >> kLowMachineOpcodeBits);
@@ -509,8 +590,8 @@ class MachineInsn final : public MachineInsnX86_64 {
       FATAL("Attempt to emit SSA pseudo-instruction");
     } else {
       // Code below assumes that we have at most two memory operands.
-      static_assert(device_arch_info::kCountMemoryOperands<OperandsTuple> +
-                        2 * device_arch_info::kCountComments<OperandsTuple> <=
+      static_assert(device_arch_info::kCountMemoryOperands<typename DeviceInsnInfo_::Operands> +
+                        2 * device_arch_info::kCountComments<typename DeviceInsnInfo_::Operands> <=
                     3);
       std::apply(
           DeviceInsnInfo::kEmitInsnFunc,
@@ -606,8 +687,8 @@ class MachineInsn final : public MachineInsnX86_64 {
     if constexpr (kSSAMode == kSSA) {
       MachineInsnList result(arena);
       // Code below assumes that we have at most two memory operands.
-      static_assert(device_arch_info::kCountMemoryOperands<OperandsTuple> +
-                        2 * device_arch_info::kCountComments<OperandsTuple> <=
+      static_assert(device_arch_info::kCountMemoryOperands<typename DeviceInsnInfo_::Operands> +
+                        2 * device_arch_info::kCountComments<typename DeviceInsnInfo_::Operands> <=
                     3);
       result.push_back(
           NewInArena<MachineInsn<DeviceInsnInfo, kNoSSA>>(
@@ -659,8 +740,26 @@ class MachineInsn final : public MachineInsnX86_64 {
                         kind_idx++;
                         auto src = MachineInsnX86_64::RegAt(reg_idx++);
                         if (dst != src) {
-                          result.push_back(NewInArena<Copy>(
-                              arena, dst, src, kInfo.reg_kinds[kind_idx++].RegClass()->reg_size));
+                          if constexpr (device_arch_info::kIsFLAGS<Operand>) {
+                            result.push_back(NewInArena<Copy>(arena, dst, src, kMeta<&kFLAGS>));
+                          } else if constexpr (Operand::Class::kAsRegister == 'x') {
+                            if constexpr (Operand::Class::kSizeInBits > 64) {
+                              static_assert(Operand::Class::kSizeInBits == 128);
+                              result.push_back(NewInArena<Copy>(arena, dst, src, kMeta<&kXmmReg>));
+                            } else if constexpr (Operand::Class::kSizeInBits > 32) {
+                              result.push_back(NewInArena<Copy>(arena, dst, src, kMeta<&kFpReg64>));
+                            } else {
+                              result.push_back(NewInArena<Copy>(arena, dst, src, kMeta<&kFpReg32>));
+                            }
+                          } else {
+                            if constexpr (Operand::Class::kSizeInBits > 32) {
+                              result.push_back(
+                                  NewInArena<Copy>(arena, dst, src, kMeta<&kGeneralReg64>));
+                            } else {
+                              result.push_back(
+                                  NewInArena<Copy>(arena, dst, src, kMeta<&kGeneralReg32>));
+                            }
+                          }
                         }
                         return dst;
                       } else {
@@ -693,10 +792,10 @@ class MachineInsn final : public MachineInsnX86_64 {
 
   static const MachineInsnInfo& GenMachineInsnInfo(ConstructorArgsTuple args) {
     // Code below assumes that we have at most two memory operands.
-    static_assert(device_arch_info::kCountMemoryOperands<OperandsTuple> +
-                      2 * device_arch_info::kCountComments<OperandsTuple> <=
+    static_assert(device_arch_info::kCountMemoryOperands<typename DeviceInsnInfo_::Operands> +
+                      2 * device_arch_info::kCountComments<typename DeviceInsnInfo_::Operands> <=
                   3);
-    if constexpr (device_arch_info::kCountMemoryOperands<OperandsTuple> == 0) {
+    if constexpr (device_arch_info::kCountMemoryOperands<typename DeviceInsnInfo_::Operands> == 0) {
       return kInfos[0];
     } else {
       return kInfos[ValuesToValues::ProduceWithTemporary(
@@ -822,12 +921,12 @@ inline constexpr auto kBaseIndexRegistersUsed =
             }));
 
 template <typename DeviceInsnInfo, auto kSSAMode>
-constexpr auto MachineInsn<DeviceInsnInfo, kSSAMode>::GenMachineInsnInfos()
-    -> std::array<MachineInsn::MachineInsnInfo,
-                  1 << (2 * device_arch_info::kCountMemoryOperands<OperandsTuple>)> {
+constexpr auto MachineInsn<DeviceInsnInfo, kSSAMode>::GenMachineInsnInfos() -> std::array<
+    MachineInsn::MachineInsnInfo,
+    1 << (2 * device_arch_info::kCountMemoryOperands<typename DeviceInsnInfo::Operands>)> {
   return ValuesToValues::ToArray<MachineInsn::MachineInsnInfo>(
-      TypesToValues::Map<ValuesToTypes::MetaValues<
-          &kBaseIndexRegistersUsed<device_arch_info::kCountMemoryOperands<OperandsTuple>>>>(
+      TypesToValues::Map<ValuesToTypes::MetaValues<&kBaseIndexRegistersUsed<
+          device_arch_info::kCountMemoryOperands<typename DeviceInsnInfo::Operands>>>>(
           []<typename BaseIndexRegistersUsed> {
             return GenMachineInsnInfo<BaseIndexRegistersUsed::kValue>();
           }));
@@ -964,9 +1063,14 @@ class MachineIR : public berberis::MachineIR {
 
   using berberis::MachineIR::NewInsn;
 
+  template <typename T>
+  [[nodiscard]] T* NewInsn(std::tuple<>) {
+    return berberis::MachineIR::template NewInsn<T, std::tuple<>>({});
+  }
+
   template <typename T, typename... Args>
-  [[nodiscard]] T* NewInsn(Args... args) {
-    return berberis::MachineIR::template NewInsn<T, Args...>(args...);
+  [[nodiscard]] T* NewInsn(Args&&... args) {
+    return berberis::MachineIR::template NewInsn<T, Args...>(std::forward<Args>(args)...);
   }
 
   BERBERIS_DECLARE_MACHINE_INSN_ADAPTER(

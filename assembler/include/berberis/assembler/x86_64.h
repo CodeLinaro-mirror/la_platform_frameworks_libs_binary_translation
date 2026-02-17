@@ -90,11 +90,75 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
   static constexpr YMMRegister ymm15{15};
 
   // Macroassembler uses these names to support both x86-32 and x86-64 modes.
-  static constexpr Register gpr_a{0};
-  static constexpr Register gpr_c{1};
-  static constexpr Register gpr_d{2};
-  static constexpr Register gpr_b{3};
-  static constexpr Register gpr_s{4};
+  static constexpr Register kAccumulatorRegister{0};
+  static constexpr Register kCounterRegister{1};
+  static constexpr Register kDataRegister{2};
+  static constexpr Register kBaseRegister{3};
+  static constexpr Register kStackPointerRegister{4};
+
+  class Registers {
+   public:
+    static constexpr Register kNoRegister{no_register};
+    static constexpr Register kRAX{rax};
+    static constexpr Register kRCX{rcx};
+    static constexpr Register kRDX{rdx};
+    static constexpr Register kRBX{rbx};
+    static constexpr Register kRSP{rsp};
+    static constexpr Register kRBP{rbp};
+    static constexpr Register kRSI{rsi};
+    static constexpr Register kRDI{rdi};
+    static constexpr Register kR8{r8};
+    static constexpr Register kR9{r9};
+    static constexpr Register kR10{r10};
+    static constexpr Register kR11{r11};
+    static constexpr Register kr12{r12};
+    static constexpr Register kR13{r13};
+    static constexpr Register kR14{r14};
+    static constexpr Register kR15{r15};
+
+    static constexpr XMMRegister kNoXMMRegister{no_xmm_register};
+    static constexpr XMMRegister kXMM0{xmm0};
+    static constexpr XMMRegister kXMM1{xmm1};
+    static constexpr XMMRegister kXMM2{xmm2};
+    static constexpr XMMRegister kXMM3{xmm3};
+    static constexpr XMMRegister kXMM4{xmm4};
+    static constexpr XMMRegister kXMM5{xmm5};
+    static constexpr XMMRegister kXMM6{xmm6};
+    static constexpr XMMRegister kXMM7{xmm7};
+    static constexpr XMMRegister kXMM8{xmm8};
+    static constexpr XMMRegister kXMM9{xmm9};
+    static constexpr XMMRegister kXMM10{xmm10};
+    static constexpr XMMRegister kXMM11{xmm11};
+    static constexpr XMMRegister kXMM12{xmm12};
+    static constexpr XMMRegister kXMM13{xmm13};
+    static constexpr XMMRegister kXMM14{xmm14};
+    static constexpr XMMRegister kXMM15{xmm15};
+
+    static constexpr YMMRegister kNoYMMRegister{no_ymm_register};
+    static constexpr YMMRegister kYMM0{ymm0};
+    static constexpr YMMRegister kYMM1{ymm1};
+    static constexpr YMMRegister kYMM2{ymm2};
+    static constexpr YMMRegister kYMM3{ymm3};
+    static constexpr YMMRegister kYMM4{ymm4};
+    static constexpr YMMRegister kYMM5{ymm5};
+    static constexpr YMMRegister kYMM6{ymm6};
+    static constexpr YMMRegister kYMM7{ymm7};
+    static constexpr YMMRegister kYMM8{ymm8};
+    static constexpr YMMRegister kYMM9{ymm9};
+    static constexpr YMMRegister kYMM10{ymm10};
+    static constexpr YMMRegister kYMM11{ymm11};
+    static constexpr YMMRegister kYMM12{ymm12};
+    static constexpr YMMRegister kYMM13{ymm13};
+    static constexpr YMMRegister kYMM14{ymm14};
+    static constexpr YMMRegister kYMM15{ymm15};
+
+    // Macroassembler uses these names to support both x86-32 and x86-64 modes.
+    static constexpr Register kAccumulator{kAccumulatorRegister};
+    static constexpr Register kCounter{kCounterRegister};
+    static constexpr Register kData{kDataRegister};
+    static constexpr Register kBase{kBaseRegister};
+    static constexpr Register kStackPointer{kStackPointerRegister};
+  };
 
 // Instructions.
 #include "berberis/assembler/gen_assembler_x86_64-inl.h"  // NOLINT generated file!
@@ -287,51 +351,56 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
   using Label128Bit = Label64Bit;
 
   // Check if a given type is "a register with size" (for EmitInstruction).
-  template <typename ArgumentType>
-  struct IsRegister {
-    static constexpr bool value = std::is_same_v<ArgumentType, Register8Bit> ||
-                                  std::is_same_v<ArgumentType, Register32Bit> ||
-                                  std::is_same_v<ArgumentType, Register64Bit>;
-  };
+  static constexpr class {
+   public:
+    template <typename ArgumentType>
+    constexpr bool operator()() const {
+      return std::is_same_v<ArgumentType, Register8Bit> ||
+             std::is_same_v<ArgumentType, Register32Bit> ||
+             std::is_same_v<ArgumentType, Register64Bit>;
+    }
+  } kIsRegister;
 
   // Check if a given type is "a memory operand with size" (for EmitInstruction).
-  template <typename ArgumentType>
-  struct IsMemoryOperand {
-    static constexpr bool value =
-        std::is_same_v<ArgumentType, Memory32Bit> || std::is_same_v<ArgumentType, Memory64Bit>;
-  };
-
-  template <typename ArgumentType>
-  struct IsLabelOperand {
-    static constexpr bool value =
-        std::is_same_v<ArgumentType, Label32Bit> || std::is_same_v<ArgumentType, Label64Bit>;
-  };
-
-  template <typename... ArgumentsTypes>
-  void EmitRex(ArgumentsTypes... arguments) {
-    constexpr auto registers_count = kCountArguments<IsRegister, ArgumentsTypes...>;
-    constexpr auto operands_count = kCountArguments<IsMemoryOperand, ArgumentsTypes...>;
-    static_assert(registers_count + operands_count <= 2,
-                  "Only two-arguments instructions are supported, not VEX or EVEX");
-    uint8_t rex = 0;
-    if constexpr (registers_count == 2) {
-      rex = Rex<0b0100>(ArgumentByType<0, IsRegister>(arguments...)) |
-            Rex<0b0001>(ArgumentByType<1, IsRegister>(arguments...));
-    } else if constexpr (registers_count == 1 && operands_count == 1) {
-      rex = Rex<0b0100>(ArgumentByType<0, IsRegister>(arguments...)) |
-            Rex(ArgumentByType<0, IsMemoryOperand>(arguments...));
-    } else if constexpr (registers_count == 1) {
-      rex = Rex<0b0001>(ArgumentByType<0, IsRegister>(arguments...));
-    } else if constexpr (operands_count == 1) {
-      rex = Rex(ArgumentByType<0, IsMemoryOperand>(arguments...));
+  static constexpr class {
+   public:
+    template <typename ArgumentType>
+    constexpr bool operator()() const {
+      return std::is_same_v<ArgumentType, Memory32Bit> || std::is_same_v<ArgumentType, Memory64Bit>;
     }
+  } kIsMemoryOperand;
+
+  // Check if a given type is "a memory operand with size" (for EmitInstruction).
+  static constexpr class {
+   public:
+    template <typename ArgumentType>
+    constexpr bool operator()() const {
+      return std::is_same_v<ArgumentType, Label32Bit> || std::is_same_v<ArgumentType, Label64Bit>;
+    }
+  } kIsLabelOperand;
+
+  void EmitRex(auto extended_operands) {
+    static_assert(std::tuple_size_v<decltype(extended_operands)> == 2);
+    uint8_t rex = Rex<0b0100>(std::get<0>(extended_operands)) | Rex(std::get<1>(extended_operands));
     if (rex) {
       Emit8(rex);
     }
   }
 
-  template <uint8_t base_rex, typename ArgumentType>
-  uint8_t Rex(ArgumentType argument) {
+  // Stub implementation for opcode extension.
+  template <uint8_t base_rex>
+  static uint8_t Rex(uint8_t) {
+    static_assert(base_rex == 0b0100);
+    return 0;
+  }
+
+  // Stub implementation for labels.
+  static uint8_t Rex(Label32Bit) { return 0; }
+
+  static uint8_t Rex(Label64Bit) { return 0; }
+
+  template <uint8_t base_rex = 0b0001, typename ArgumentType>
+  static uint8_t Rex(ArgumentType argument) {
     if (argument.num_ & 0b1000) {
       // 64-bit argument requires REX.W bit
       if (std::is_same_v<ArgumentType, Register64Bit>) {
@@ -349,7 +418,7 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
     return 0;
   }
 
-  uint8_t Rex(Operand operand) {
+  static uint8_t Rex(Operand operand) {
     // REX.B and REX.X always come from operand.
     uint8_t rex = ((operand.base.num_ & 0b1000) >> 3) | ((operand.index.num_ & 0b1000) >> 2);
     if (rex) {
@@ -360,9 +429,9 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
     }
   }
 
-  uint8_t Rex(Memory32Bit operand) { return Rex(operand.operand); }
+  static uint8_t Rex(Memory32Bit operand) { return Rex(operand.operand); }
 
-  uint8_t Rex(Memory64Bit operand) {
+  static uint8_t Rex(Memory64Bit operand) {
     // 64-bit argument requires REX.W bit - and thus REX itself.
     return 0b0100'1000 | Rex(operand.operand);
   }
@@ -374,38 +443,27 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
     return rm_arg.num_ >= 8 && vex_arg.num_ < 8;
   }
 
-  template <uint8_t byte1,
-            uint8_t byte2,
-            uint8_t byte3,
-            bool reg_is_opcode_extension,
-            typename... ArgumentsTypes>
-  void EmitVex(ArgumentsTypes... arguments) {
-    constexpr auto registers_count = kCountArguments<IsRegister, ArgumentsTypes...>;
-    constexpr auto operands_count = kCountArguments<IsMemoryOperand, ArgumentsTypes...>;
-    constexpr auto labels_count = kCountArguments<IsLabelOperand, ArgumentsTypes...>;
-    constexpr auto vvvv_parameter = 2 - reg_is_opcode_extension - operands_count - labels_count;
+  template <uint8_t byte1, uint8_t byte2, uint8_t byte3>
+  void EmitVex(auto... extended_operands) {
     int vvvv = 0;
-    if constexpr (registers_count > vvvv_parameter) {
-      vvvv = ArgumentByType<vvvv_parameter, IsRegister>(arguments...).num_;
+    if constexpr (sizeof...(extended_operands) > 2) {
+      vvvv = std::get<2>(std::tuple{extended_operands...}).num_;
     }
     auto vex2 = byte2 | 0b111'00000;
-    if constexpr (operands_count == 1) {
-      auto operand = ArgumentByType<0, IsMemoryOperand>(arguments...);
-      vex2 ^= (operand.operand.base.num_ & 0b1000) << 2;
-      vex2 ^= (operand.operand.index.num_ & 0b1000) << 3;
-      if constexpr (!reg_is_opcode_extension) {
-        vex2 ^= (ArgumentByType<0, IsRegister>(arguments...).num_ & 0b1000) << 4;
+    if constexpr (sizeof...(extended_operands) > 0) {
+      // If instruction does have at least one operand then it does have ModRegRM byte and that
+      // implies two [extended] operands: rm and either reg or opcode extension.
+      static_assert(sizeof...(extended_operands) > 1);
+      auto reg = std::get<0>(std::tuple{extended_operands...});
+      if constexpr (BaseAssembler::kIsRegister.template operator()<decltype(reg)>()) {
+        vex2 ^= (reg.num_ & 0b1000) << 4;
       }
-    } else if constexpr (labels_count == 1) {
-      if constexpr (!reg_is_opcode_extension) {
-        vex2 ^= (ArgumentByType<0, IsRegister>(arguments...).num_ & 0b1000) << 4;
-      }
-    } else if constexpr (registers_count > 0) {
-      if constexpr (reg_is_opcode_extension) {
-        vex2 ^= (ArgumentByType<0, IsRegister>(arguments...).num_ & 0b1000) << 2;
-      } else {
-        vex2 ^= (ArgumentByType<0, IsRegister>(arguments...).num_ & 0b1000) << 4;
-        vex2 ^= (ArgumentByType<1, IsRegister>(arguments...).num_ & 0b1000) << 2;
+      auto rm = std::get<1>(std::tuple{extended_operands...});
+      if constexpr (BaseAssembler::kIsMemoryOperand.template operator()<decltype(rm)>()) {
+        vex2 ^= (rm.operand.base.num_ & 0b1000) << 2;
+        vex2 ^= (rm.operand.index.num_ & 0b1000) << 3;
+      } else if constexpr (BaseAssembler::kIsRegister.template operator()<decltype(rm)>()) {
+        vex2 ^= (rm.num_ & 0b1000) << 2;
       }
     }
     if (byte1 == 0xc4 && (vex2 & 0b0'1'1'11111) == 0b0'1'1'00001 && (byte3 & 0b1'0000'0'00) == 0) {
@@ -423,38 +481,43 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
   }
 
   template <typename ArgumentType1, typename ArgumentType2>
-  void EmitModRM(ArgumentType1 argument1, ArgumentType2 argument2) {
+  auto EmitModRM(ArgumentType1 argument1, ArgumentType2 argument2)
+      -> std::enable_if_t<BaseAssembler::kIsRegister.template operator()<ArgumentType2>()> {
     Emit8(0xc0 | ((argument1.num_ & 0b111) << 3) | (argument2.num_ & 0b111));
   }
 
   template <typename ArgumentType>
-  void EmitModRM(uint8_t opcode_extension, ArgumentType argument) {
+  auto EmitModRM(uint8_t opcode_extension, ArgumentType argument)
+      -> std::enable_if_t<BaseAssembler::kIsRegister.template operator()<ArgumentType>()> {
     CHECK_LE(opcode_extension, 0b111);
     Emit8(0xc0 | (opcode_extension << 3) | (argument.num_ & 0b111));
   }
 
-  template <typename ArgumentType>
-  constexpr void EmitOperandOp(ArgumentType argument, Operand operand) {
-    EmitOperandOp(static_cast<int>(argument.num_ & 0b111), operand);
+  constexpr auto EmitModRM(auto argument, auto memory_operand)
+      -> std::enable_if_t<sizeof(memory_operand.operand) >= 0> {
+    EmitModRM(static_cast<uint8_t>(argument.num_ & 0b111), memory_operand);
   }
 
-  template <size_t kImmediatesSize, typename ArgumentType>
-  constexpr void EmitRipOp(ArgumentType argument, const Label& label) {
-    EmitRipOp<kImmediatesSize>(static_cast<int>(argument.num_) & 0b111, label);
+  template <size_t kImmediatesSize>
+  constexpr auto EmitModRM(auto argument, auto label_operand)
+      -> std::enable_if_t<sizeof(label_operand.label) >= 0> {
+    EmitModRM<kImmediatesSize>(static_cast<uint8_t>(argument.num_ & 0b111), label_operand);
   }
 
   // Emit the ModR/M byte, and optionally the SIB byte and
   // 1- or 4-byte offset for a memory operand.  Also used to encode
   // a three-bit opcode extension into the ModR/M byte.
-  constexpr void EmitOperandOp(int num_ber, const Operand& addr);
+  constexpr auto EmitModRM(uint8_t number, auto memory_operand)
+      -> std::enable_if_t<sizeof(memory_operand.operand) >= 0>;
   // Helper functions to handle various ModR/M and SIB combinations.
   // Should *only* be called from EmitOperandOp!
-  constexpr void EmitIndexDispOperand(int reg, const Operand& addr);
+  constexpr void EmitIndexDispOperand(uint8_t reg, const Operand& addr);
   template <typename ArgType, void (AssemblerBase::*)(ArgType)>
-  constexpr void EmitBaseIndexDispOperand(int base_modrm_and_sib, const Operand& addr);
+  constexpr void EmitBaseIndexDispOperand(ArgType base_modrm_and_sib, const Operand& addr);
   // Emit ModR/M for rip-addressig.
   template <size_t kImmediatesSize>
-  constexpr void EmitRipOp(int num_, const Label& label);
+  constexpr auto EmitModRM(uint8_t num_, auto label_operand)
+      -> std::enable_if_t<sizeof(label_operand.label) >= 0>;
 
   friend BaseAssembler;
 };
@@ -464,68 +527,73 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
 // makes effective size of that function very small.
 //
 // But for this to happen function have to be inline and in header.
-constexpr inline void Assembler::EmitOperandOp(int num_ber, const Operand& addr) {
-  // Additional info (register num_ber, etc) is limited to 3 bits.
-  CHECK_LE(unsigned(num_ber), 7);
+constexpr inline auto Assembler::EmitModRM(uint8_t number, auto memory_operand)
+    -> std::enable_if_t<sizeof(memory_operand.operand) >= 0> {
+  // Additional info (register number, etc) is limited to 3 bits.
+  CHECK_LE(unsigned(number), 7);
 
   // Reg field must be shifted by 3 bits.
-  int reg = num_ber << 3;
+  int reg = number << 3;
 
   // On x86 %rsp cannot be index, only base.
-  CHECK(addr.index != rsp);
+  CHECK(memory_operand.operand.index != rsp);
 
   // If base is not %rsp/r12 and we don't have index, then we don't have SIB byte.
   // All other cases have "ModR/M" and SIB bytes.
-  if (addr.base != rsp && addr.base != r12 && addr.index == no_register) {
+  if (memory_operand.operand.base != rsp && memory_operand.operand.base != r12 &&
+      memory_operand.operand.index == no_register) {
     // If we have base register then we could use the same logic as for other common cases.
-    if (addr.base != no_register) {
-      EmitBaseIndexDispOperand<uint8_t, &Assembler::Emit8>((addr.base.num_ & 7) | reg, addr);
+    if (memory_operand.operand.base != no_register) {
+      EmitBaseIndexDispOperand<uint8_t, &Assembler::Emit8>(
+          (memory_operand.operand.base.num_ & 7) | reg, memory_operand.operand);
     } else {
       Emit16(0x2504 | reg);
-      Emit32(addr.disp);
+      Emit32(memory_operand.operand.disp);
     }
-  } else if (addr.index == no_register) {
+  } else if (memory_operand.operand.index == no_register) {
     // Note: when ModR/M and SIB are used "no index" is encoded as if %rsp is used in place of
     // index (that's why %rsp couldn't be used as index - see check above).
     EmitBaseIndexDispOperand<int16_t, &Assembler::Emit16>(
-        0x2004 | ((addr.base.num_ & 7) << 8) | reg, addr);
-  } else if (addr.base == no_register) {
-    EmitIndexDispOperand(reg, addr);
+        0x2004 | ((memory_operand.operand.base.num_ & 7) << 8) | reg, memory_operand.operand);
+  } else if (memory_operand.operand.base == no_register) {
+    EmitIndexDispOperand(reg, memory_operand.operand);
   } else {
-    EmitBaseIndexDispOperand<int16_t, &Assembler::Emit16>(0x04 | (addr.scale << 14) |
-                                                              ((addr.index.num_ & 7) << 11) |
-                                                              ((addr.base.num_ & 7) << 8) | reg,
-                                                          addr);
+    EmitBaseIndexDispOperand<int16_t, &Assembler::Emit16>(
+        0x04 | (memory_operand.operand.scale << 14) |
+            ((memory_operand.operand.index.num_ & 7) << 11) |
+            ((memory_operand.operand.base.num_ & 7) << 8) | reg,
+        memory_operand.operand);
   }
 }
 
-constexpr inline void Assembler::EmitIndexDispOperand(int reg, const Operand& addr) {
+constexpr inline void Assembler::EmitIndexDispOperand(uint8_t reg, const Operand& memory_operand) {
   // We only have index here, no base, use SIB but put %rbp in "base" field.
-  Emit16(0x0504 | (addr.scale << 14) | ((addr.index.num_ & 7) << 11) | reg);
-  Emit32(addr.disp);
+  Emit16(0x0504 | (memory_operand.scale << 14) | ((memory_operand.index.num_ & 7) << 11) | reg);
+  Emit32(memory_operand.disp);
 }
 
 template <size_t kImmediatesSize>
-constexpr inline void Assembler::EmitRipOp(int num_, const Label& label) {
-  Emit8(0x05 | (num_ << 3));
-  jumps_.push_back(Jump{&label, pc(), false});
+constexpr inline auto Assembler::EmitModRM(uint8_t number, auto label_operand)
+    -> std::enable_if_t<sizeof(label_operand.label) >= 0> {
+  Emit8(0x05 | (number << 3));
+  jumps_.push_back(Jump{&label_operand.label, pc(), false});
   Emit32(0xffff'fffc - kImmediatesSize);
 }
 
-template <typename ArgType, void (AssemblerBase::* EmitBase)(ArgType)>
-constexpr inline void Assembler::EmitBaseIndexDispOperand(int base_modrm_and_sib,
-                                                          const Operand& addr) {
-  if (addr.disp == 0 && addr.base != rbp && addr.base != r13) {
+template <typename ArgType, void (AssemblerBase::*EmitBase)(ArgType)>
+constexpr inline void Assembler::EmitBaseIndexDispOperand(ArgType base_modrm_and_sib,
+                                                          const Operand& memory_operand) {
+  if (memory_operand.disp == 0 && memory_operand.base != rbp && memory_operand.base != r13) {
     // We can omit zero displacement only if base isn't %rbp/%r13
     (this->*EmitBase)(base_modrm_and_sib);
-  } else if (IsInRange<int8_t>(addr.disp)) {
+  } else if (IsInRange<int8_t>(memory_operand.disp)) {
     // If disp could it in byte then use byte-disp.
     (this->*EmitBase)(base_modrm_and_sib | 0x40);
-    Emit8(addr.disp);
+    Emit8(memory_operand.disp);
   } else {
     // Otherwise use full-disp.
     (this->*EmitBase)(base_modrm_and_sib | 0x80);
-    Emit32(addr.disp);
+    Emit32(memory_operand.disp);
   }
 }
 

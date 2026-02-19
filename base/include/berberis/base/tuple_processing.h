@@ -1080,7 +1080,6 @@ class TypesToTypes {
    public:
     using Result = std::tuple<std::tuple_element_t<kIndex, Tuples>...>;
   };
-
 };
 
 template <typename TupleType>

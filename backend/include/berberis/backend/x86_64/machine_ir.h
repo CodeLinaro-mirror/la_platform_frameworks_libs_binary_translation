@@ -735,26 +735,11 @@ class MachineInsn final : public MachineInsnX86_64 {
                         kind_idx++;
                         auto src = MachineInsnX86_64::RegAt(reg_idx++);
                         if (dst != src) {
-                          if constexpr (device_arch_info::kIsFLAGS<Operand>) {
-                            result.push_back(NewInArena<Copy>(arena, dst, src, kMeta<&kFLAGS>));
-                          } else if constexpr (Operand::Class::kAsRegister == 'x') {
-                            if constexpr (Operand::Class::kSizeInBits > 64) {
-                              static_assert(Operand::Class::kSizeInBits == 128);
-                              result.push_back(NewInArena<Copy>(arena, dst, src, kMeta<&kXmmReg>));
-                            } else if constexpr (Operand::Class::kSizeInBits > 32) {
-                              result.push_back(NewInArena<Copy>(arena, dst, src, kMeta<&kFpReg64>));
-                            } else {
-                              result.push_back(NewInArena<Copy>(arena, dst, src, kMeta<&kFpReg32>));
-                            }
-                          } else {
-                            if constexpr (Operand::Class::kSizeInBits > 32) {
-                              result.push_back(
-                                  NewInArena<Copy>(arena, dst, src, kMeta<&kGeneralReg64>));
-                            } else {
-                              result.push_back(
-                                  NewInArena<Copy>(arena, dst, src, kMeta<&kGeneralReg32>));
-                            }
-                          }
+                          result.push_back(NewInArena<Copy>(
+                              arena,
+                              dst,
+                              src,
+                              kMeta<GetRegClassForCopy(&kRegisterClass<typename Operand::Class>)>));
                         }
                         return dst;
                       } else {

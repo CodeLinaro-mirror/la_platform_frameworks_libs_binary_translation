@@ -24,6 +24,7 @@
 #include "berberis/backend/x86_64/machine_ir.h"
 #include "berberis/backend/x86_64/reg_lifetime.h"
 #include "berberis/base/arena_vector.h"
+#include "berberis/base/config_globals.h"
 
 namespace berberis::x86_64 {
 
@@ -43,23 +44,56 @@ using MemRegUsageMap = ArenaVector<std::optional<MappedRegUsage>>;
 class LocalGuestContextOptimizer {
  public:
   explicit LocalGuestContextOptimizer(x86_64::MachineIR* machine_ir)
-      : machine_ir_(machine_ir),
-        mem_reg_map_(sizeof(CPUState), std::nullopt, machine_ir->arena()),
-        reg_lifetime_counter_(machine_ir) {}
+      : machine_ir_(machine_ir), context_map_(CreateContextMap(machine_ir)) {}
 
-  // Removes entries from mem_reg_map_ with last use <= pos.
-  void UnmapOlderThan(size_t pos, RegType reg_type);
-  const RegLifetimeCounter& GetLifetimeCounterForTesting() const { return reg_lifetime_counter_; }
-  const MemRegUsageMap& GetMemRegUsageMapForTesting() const { return mem_reg_map_; }
+  // Removes entries from mem_reg_map with last use <= pos.
+  void UnmapOlderThan(MachineBasicBlock* bb, size_t pos, RegType reg_type);
+  const RegLifetimeCounter& GetLifetimeCounterForTesting(MachineBasicBlock* bb) const {
+    const ContextMapping& cm = std::holds_alternative<ContextMapping>(context_map_)
+                                   ? std::get<ContextMapping>(context_map_)
+                                   : std::get<ContextMappingArray>(context_map_).at(bb->id());
+    return cm.reg_counter;
+  }
+  const MemRegUsageMap& GetMemRegUsageMapForTesting(MachineBasicBlock* bb) const {
+    const ContextMapping& cm = std::holds_alternative<ContextMapping>(context_map_)
+                                   ? std::get<ContextMapping>(context_map_)
+                                   : std::get<ContextMappingArray>(context_map_).at(bb->id());
+    return cm.mem_reg_map;
+  }
   void RemoveLocalGuestContextAccesses(const OptimizeLocalParams& params);
 
  private:
-  std::optional<MachineReg> ReplaceGetAndUpdateMap(const MachineInsnList::iterator insn_it);
-  void ReplacePutAndUpdateMap(MachineInsnList& insn_list, const MachineInsnList::iterator insn_it);
+  struct ContextMapping {
+    MemRegUsageMap mem_reg_map;
+    RegLifetimeCounter reg_counter;
+  };
+  using ContextMappingArray = ArenaVector<ContextMapping>;
+
+  static std::variant<ContextMapping, ContextMappingArray> CreateContextMap(MachineIR* machine_ir) {
+    return IsConfigFlagSet(kGlobalContextOptimization)
+               ? std::variant<ContextMapping, ContextMappingArray>(ContextMappingArray(
+                     machine_ir->NumBasicBlocks(),
+                     ContextMapping{
+                         MemRegUsageMap(sizeof(CPUState), std::nullopt, machine_ir->arena()),
+                         RegLifetimeCounter(machine_ir)},
+                     machine_ir->arena()))
+               : std::variant<ContextMapping, ContextMappingArray>(ContextMapping{
+                     MemRegUsageMap(sizeof(CPUState), std::nullopt, machine_ir->arena()),
+                     RegLifetimeCounter(machine_ir)});
+  }
+
+  ContextMapping& GetContextMapping(MachineBasicBlock* bb) {
+    return std::holds_alternative<ContextMapping>(context_map_)
+               ? std::get<ContextMapping>(context_map_)
+               : std::get<ContextMappingArray>(context_map_).at(bb->id());
+  }
+
+  std::optional<MachineReg> ReplaceGetAndUpdateMap(MachineBasicBlock* bb,
+                                                   const MachineInsnList::iterator insn_it);
+  void ReplacePutAndUpdateMap(MachineBasicBlock* bb, const MachineInsnList::iterator insn_it);
 
   MachineIR* machine_ir_;
-  MemRegUsageMap mem_reg_map_;
-  RegLifetimeCounter reg_lifetime_counter_;
+  std::variant<ContextMapping, ContextMappingArray> context_map_;
 };
 
 void RemoveLocalGuestContextAccesses(x86_64::MachineIR* machine_ir,

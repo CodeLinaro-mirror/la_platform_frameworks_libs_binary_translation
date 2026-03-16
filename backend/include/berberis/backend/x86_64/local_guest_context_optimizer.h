@@ -31,6 +31,7 @@ namespace berberis::x86_64 {
 struct OptimizeLocalParams {
   size_t general_reg_limit = 13;
   size_t simd_reg_limit = 13;
+  bool global_opt_enabled = IsConfigFlagSet(kGlobalContextOptimization);
 };
 
 struct PredecessorReg {
@@ -60,9 +61,11 @@ class LocalGuestContextOptimizer {
         machine_ir_->abi() == MachineIR::ABI::kOptimizedEnabled
             ? (params_.general_reg_limit >= 6 ? params_.general_reg_limit - 6 : 0UL)
             : params_.general_reg_limit;
-    offsets_used_reservation_.reserve(sizeof(CPUState));
-    global_mappings_.resize(machine_ir->NumBasicBlocks(),
-                            ArenaVector<DispRegMapping>(machine_ir->arena()));
+    if (params.global_opt_enabled) {
+      offsets_used_reservation_.reserve(sizeof(CPUState));
+      global_mappings_.resize(machine_ir->NumBasicBlocks(),
+                              ArenaVector<DispRegMapping>(machine_ir->arena()));
+    }
   }
 
   // Removes entries from mem_reg_map with last use <= pos.

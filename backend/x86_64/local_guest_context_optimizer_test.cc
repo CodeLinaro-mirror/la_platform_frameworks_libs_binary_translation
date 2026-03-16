@@ -350,7 +350,10 @@ TEST(MachineIRLocalGuestContextOptimizer, EligibleForGlobalOpt) {
 
   ASSERT_EQ(x86_64::CheckMachineIR(machine_ir), x86_64::kMachineIRCheckSuccess);
 
-  auto optimizer = x86_64::LocalGuestContextOptimizer(&machine_ir, x86_64::OptimizeLocalParams{});
+  auto optimizer = x86_64::LocalGuestContextOptimizer(&machine_ir,
+                                                      x86_64::OptimizeLocalParams{
+                                                          .global_opt_enabled = true,
+                                                      });
   optimizer.RemoveLocalGuestContextAccesses();
   ASSERT_EQ(x86_64::CheckMachineIR(machine_ir), x86_64::kMachineIRCheckSuccess);
 
@@ -394,7 +397,10 @@ TEST(MachineIRLocalGuestContextOptimizer, GlobalGuestContextOptimization) {
 
   ASSERT_EQ(x86_64::CheckMachineIR(machine_ir), x86_64::kMachineIRCheckSuccess);
 
-  x86_64::RemoveLocalGuestContextAccesses(&machine_ir, x86_64::OptimizeLocalParams{});
+  x86_64::RemoveLocalGuestContextAccesses(&machine_ir,
+                                          x86_64::OptimizeLocalParams{
+                                              .global_opt_enabled = true,
+                                          });
   ASSERT_EQ(x86_64::CheckMachineIR(machine_ir), x86_64::kMachineIRCheckSuccess);
 
   EXPECT_TRUE(Contains(bb0->live_out(), reg0));

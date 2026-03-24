@@ -93,6 +93,7 @@ class VRegLifetimeTest : public ::testing::Test {
         bb_(machine_ir_.NewBasicBlock()),
         lifetime_(&arena_) {}
 
+  template <bool kIsUse = false>
   VRegAccess CreateAccess(int begin, int end, const MachineRegClass* reg_class = &kRegClass) {
     MachineRegKind* reg_kinds = NewArrayInArena<MachineRegKind>(&arena_, 2);
     reg_kinds[0] = {reg_class, MachineRegKind::kDef};
@@ -101,7 +102,7 @@ class VRegLifetimeTest : public ::testing::Test {
     auto* insn = machine_ir_.NewInsn<FlexibleInsn>(kVRegDst, kVRegSrc, reg_kinds);
     bb_->insn_list().push_back(insn);
     return VRegAccess(MachineInsnListPosition(&bb_->insn_list(), std::prev(bb_->insn_list().end())),
-                      0,
+                      kIsUse ? 1 : 0,
                       begin,
                       end);
   }
@@ -132,7 +133,7 @@ TEST_F(VRegLifetimeTest, Split_NoSplitAtEnd) {
   ASSERT_EQ(kind, SPLIT_OK);
 
   VRegLifetime::List new_lifetimes(&arena_);
-  lifetime_.Split(split_pos, &new_lifetimes);
+  lifetime_.Split(split_pos, kind, &new_lifetimes);
 
   EXPECT_TRUE(new_lifetimes.empty());
   EXPECT_EQ(lifetime_.end(), 10);
@@ -149,7 +150,7 @@ TEST_F(VRegLifetimeTest, Split_SingleRange_Middle) {
   ASSERT_EQ(kind, SPLIT_OK);
 
   VRegLifetime::List new_lifetimes(&arena_);
-  lifetime_.Split(split_pos, &new_lifetimes);
+  lifetime_.Split(split_pos, kind, &new_lifetimes);
 
   EXPECT_EQ(lifetime_.end(), 9);
   EXPECT_THAT(new_lifetimes, ElementsAre(MatchesLiveRange(11, 20)));
@@ -168,7 +169,7 @@ TEST_F(VRegLifetimeTest, Split_MultipleRanges_SplitInBetween) {
   ASSERT_EQ(kind, SPLIT_OK);
 
   VRegLifetime::List new_lifetimes(&arena_);
-  lifetime_.Split(split_pos, &new_lifetimes);
+  lifetime_.Split(split_pos, kind, &new_lifetimes);
 
   EXPECT_EQ(lifetime_.end(), 10);
   EXPECT_THAT(new_lifetimes, ElementsAre(MatchesLiveRange(21, 30)));
@@ -187,7 +188,7 @@ TEST_F(VRegLifetimeTest, Split_MultipleRanges_SplitFirstRange) {
   ASSERT_EQ(kind, SPLIT_OK);
 
   VRegLifetime::List new_lifetimes(&arena_);
-  lifetime_.Split(split_pos, &new_lifetimes);
+  lifetime_.Split(split_pos, kind, &new_lifetimes);
 
   // Expecting 2 new lifetimes: one from the remainder of first range, one from the second range.
   // Old lifetime
@@ -210,7 +211,7 @@ TEST_F(VRegLifetimeTest, Split_PreservesSpillSlot) {
   ASSERT_EQ(kind, SPLIT_OK);
 
   VRegLifetime::List new_lifetimes(&arena_);
-  lifetime_.Split(split_pos, &new_lifetimes);
+  lifetime_.Split(split_pos, kind, &new_lifetimes);
 
   ASSERT_EQ(new_lifetimes.size(), 1u);
   EXPECT_EQ(new_lifetimes.front().GetSpill(), kSpillSlot);
@@ -222,10 +223,10 @@ TEST_F(VRegLifetimeTest, Split_AtBeginning) {
 
   SplitPos split_pos;
   // Split at 0.
-  lifetime_.FindSplitPos(0, &split_pos);
+  SplitKind kind = lifetime_.FindSplitPos(0, &split_pos);
 
   VRegLifetime::List new_lifetimes(&arena_);
-  lifetime_.Split(split_pos, &new_lifetimes);
+  lifetime_.Split(split_pos, kind, &new_lifetimes);
 
   EXPECT_THAT(new_lifetimes, ElementsAre(MatchesLiveRange(0, 10)));
   // The original lifetime is now empty.
@@ -262,7 +263,7 @@ TEST_F(VRegLifetimeTest, Merge) {
               ElementsAre(MatchesLiveRange(0, 10), MatchesLiveRange(20, 30)));
 
   // Check spill weight merged (1 from lifetime_ + 1 from other).
-  EXPECT_EQ(lifetime_.spill_weight(), 2);
+  EXPECT_EQ(lifetime_.ComputeWeight(), 2);
 
   // Check coalescing candidates merged.
   EXPECT_THAT(lifetime_.coalescing_candidates(), ElementsAre(&others_candidate));
@@ -290,6 +291,42 @@ TEST_F(VRegLifetimeTest, Merge_InterleavedRanges) {
                           MatchesLiveRange(10, 20),
                           MatchesLiveRange(20, 30),
                           MatchesLiveRange(30, 40)));
+}
+
+TEST_F(VRegLifetimeTest, ComputeWeight) {
+  // Empty lifetime
+  EXPECT_EQ(lifetime_.ComputeWeight(), 0);
+
+  // Range 1: Def only
+  StartLiveRange(0);
+  lifetime_.AppendAccess(CreateAccess(0, 10));  // Def
+  // Has Def, no Input at start. Weight = 1.
+  EXPECT_EQ(lifetime_.ComputeWeight(), 1);
+
+  // Range 2: Input only
+  StartLiveRange(20);
+  lifetime_.AppendAccess(CreateAccess<true>(20, 30));  // Use
+  // Range 2: [20, 30). Input at start. Has Def? No. Weight contribution = 1.
+  // Lifetime total = 1 + 1 = 2.
+  EXPECT_EQ(lifetime_.ComputeWeight(), 2);
+
+  // Range 3: Input then Def
+  StartLiveRange(40);
+  lifetime_.AppendAccess(CreateAccess<true>(40, 50));  // Input
+  lifetime_.AppendAccess(CreateAccess(50, 60));     // Def
+  // Range 3: [40, 60). Input at start? Yes. Has Def? Yes.
+  // Weight contribution: 1 + 1 = 2.
+  // Lifetime total: 2 + 2 = 4.
+  EXPECT_EQ(lifetime_.ComputeWeight(), 4);
+
+  // Range 4: Def then Input
+  StartLiveRange(70);
+  lifetime_.AppendAccess(CreateAccess(70, 80));     // Def
+  lifetime_.AppendAccess(CreateAccess<true>(80, 90));  // Input
+  // Range 4: [70, 90). Input at start? No. Has Def? Yes.
+  // Weight contribution: 1.
+  // Lifetime total: 4 + 1 = 5.
+  EXPECT_EQ(lifetime_.ComputeWeight(), 5);
 }
 
 } // namespace

@@ -17,6 +17,7 @@
 #include "berberis/backend/common/lifetime.h"
 
 #include <algorithm>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -126,7 +127,23 @@ void VRegLifetime::AppendAccess(const VRegAccess& access) {
   } else {
     reg_class_ = access.GetRegClass();
   }
-  ++spill_weight_;
+}
+
+int VRegLifetime::ComputeWeight() const {
+  int weight = 0;
+  for (const auto& range : range_list_) {
+    const auto& accesses = range.access_list();
+    if (accesses.empty()) {
+      continue;
+    }
+    if (accesses.front().IsInput()) {
+      ++weight;
+    }
+    if (range.has_def()) {
+      ++weight;
+    }
+  }
+  return weight;
 }
 
 std::string VRegLifetime::GetDebugString() const {
@@ -167,16 +184,10 @@ SplitKind VRegLifetime::FindSplitPos(int begin, SplitPos* pos) {
         continue;
       }
 
-      if (access_it->begin() < begin) {
-        // Future tiny lifetime starts before but ends after 'begin'.
-        // Problematic case we don't allow.
-        return SPLIT_IMPOSSIBLE;
-      }
-
       // Future tiny lifetime starts at or after 'begin'.
       pos->range_it = range_it;
       pos->access_it = access_it;
-      return access_it->begin() == begin ? SPLIT_CONFLICT : SPLIT_OK;
+      return access_it->begin() <= begin ? SPLIT_CONFLICT : SPLIT_OK;
     }
   }
 
@@ -209,8 +220,6 @@ void VRegLifetime::Merge(VRegLifetime* other) {
   reg_class_ = reg_class_->GetIntersection(other->reg_class_);
   CHECK(reg_class_);
 
-  spill_weight_ += other->spill_weight_;
-
   for (auto candidate : other->coalescing_candidates_) {
     if (candidate != this) {
       LinkCoalescingCandidate(candidate);
@@ -220,19 +229,36 @@ void VRegLifetime::Merge(VRegLifetime* other) {
   other->coalescing_candidates_.clear();
 }
 
-void VRegLifetime::Split(const SplitPos& split_pos, ArenaList<VRegLifetime>* new_lifetimes) {
+void VRegLifetime::Split(const SplitPos& split_pos,
+                         SplitKind split_kind,
+                         ArenaList<VRegLifetime>* new_lifetimes) {
   if (split_pos.range_it == range_list_.end()) {
     return;
   }
-  VRegLiveRangeList::iterator first_range_to_split = split_pos.range_it;
-  VRegAccessList& access_list = split_pos.range_it->access_list();
-  // Create special lifetime for the range for which we split the list of accesses.
-  if (split_pos.access_it != access_list.begin()) {
+  auto first_range_to_split = split_pos.range_it;
+  auto first_access_to_split = split_pos.access_it;
+  auto& access_list = split_pos.range_it->access_list();
+
+  // Separate lifetime for the conflicting access if needed.
+  if (split_kind == SPLIT_CONFLICT_WITH_ACCESS_SEPARATION) {
+    CHECK(split_pos.access_it != split_pos.range_it->access_list().end());
+    auto next_access_it = std::next(split_pos.access_it);
     AddLifetimeFromAccessList(
-        new_lifetimes, split_pos.access_it, access_list.end(), GetSpill(), arena_);
+        new_lifetimes, split_pos.access_it, next_access_it, GetSpill(), arena_);
+    access_list.erase(split_pos.access_it, next_access_it);
+    split_pos.range_it->UpdateHasDef();
+    first_access_to_split = next_access_it;
+  }
+  // If we split the list of accesses in the first range, create a separate lifetime for them.
+  if (first_access_to_split != access_list.begin() &&
+      // May happen if first access is separated above.
+      first_access_to_split != access_list.end()) {
+    AddLifetimeFromAccessList(
+        new_lifetimes, first_access_to_split, access_list.end(), GetSpill(), arena_);
 
     // Erase the accesses that were split off.
-    access_list.erase(split_pos.access_it, access_list.end());
+    access_list.erase(first_access_to_split, access_list.end());
+    split_pos.range_it->UpdateHasDef();
     // Recompute the end of the split range.
     int new_end = 0;
     // Since we erase after the begin, there must be at least one access

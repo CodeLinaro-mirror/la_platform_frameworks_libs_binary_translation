@@ -28,18 +28,6 @@ namespace berberis {
 
 using x86_64::Assembler;
 
-namespace {
-
-bool IsGeneralRegChar(char c) {
-  return strchr("zbscipl", c) != nullptr;
-}
-
-bool IsSimdRegChar(char c) {
-  return strchr("fd", c) != nullptr;
-}
-
-}  // namespace
-
 void GenWrapGuestFunction(MachineCode* mc,
                           GuestAddr pc,
                           const char* signature,
@@ -92,7 +80,8 @@ void GenWrapGuestFunction(MachineCode* mc,
   int stack_argc = 0;
   int host_stack_argc = 0;
   for (size_t i = 1; signature[i] != '\0'; ++i) {
-    if (IsGeneralRegChar(signature[i])) {
+    if (signature[i] == 'z' || signature[i] == 'b' || signature[i] == 's' || signature[i] == 'c' ||
+        signature[i] == 'i' || signature[i] == 'p' || signature[i] == 'l') {
       static constexpr Assembler::Register kParamRegs[] = {
           Assembler::rdi,
           Assembler::rsi,
@@ -117,7 +106,7 @@ void GenWrapGuestFunction(MachineCode* mc,
         ++stack_argc;
       }
       ++argc;
-    } else if (IsSimdRegChar(signature[i])) {
+    } else if (signature[i] == 'f' || signature[i] == 'd') {
       static constexpr Assembler::XMMRegister kParamRegs[] = {
           Assembler::xmm0,
           Assembler::xmm1,
@@ -150,10 +139,11 @@ void GenWrapGuestFunction(MachineCode* mc,
   as.Movl({.base = Assembler::rsp, .disp = kStackArgcOffset}, stack_argc * 8);
 
   // Set resc.
-  if (IsGeneralRegChar(signature[0])) {
+  if (signature[0] == 'z' || signature[0] == 'b' || signature[0] == 's' ||
+      signature[0] == 'c' | signature[0] == 'i' || signature[0] == 'p' || signature[0] == 'l') {
     as.Movl({.base = Assembler::rsp, .disp = kRescOffset}, 1);
     as.Movl({.base = Assembler::rsp, .disp = kSimdRescOffset}, 0);
-  } else if (IsSimdRegChar(signature[0])) {
+  } else if (signature[0] == 'f' || signature[0] == 'd') {
     as.Movl({.base = Assembler::rsp, .disp = kRescOffset}, 0);
     as.Movl({.base = Assembler::rsp, .disp = kSimdRescOffset}, 1);
   } else {
@@ -168,9 +158,10 @@ void GenWrapGuestFunction(MachineCode* mc,
   as.Call(guest_runner);
 
   // Get the result.
-  if (IsGeneralRegChar(signature[0])) {
+  if (signature[0] == 'z' || signature[0] == 'b' || signature[0] == 's' ||
+      signature[0] == 'c' | signature[0] == 'i' || signature[0] == 'p' || signature[0] == 'l') {
     as.Movq(Assembler::rax, {.base = Assembler::rsp, .disp = kArgvOffset});
-  } else if (IsSimdRegChar(signature[0])) {
+  } else if (signature[0] == 'f' || signature[0] == 'd') {
     as.Movq(Assembler::xmm0, {.base = Assembler::rsp, .disp = kSimdArgvOffset});
   } else {
     CHECK_EQ('v', signature[0]);

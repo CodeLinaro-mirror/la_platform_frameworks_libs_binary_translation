@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "../init_kernel_args.h"
+#include "init_kernel_args.h"
 
 #include <sys/auxv.h>
 #include <unistd.h>

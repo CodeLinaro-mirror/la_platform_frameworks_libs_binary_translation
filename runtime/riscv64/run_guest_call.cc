@@ -21,6 +21,7 @@
 
 #include "berberis/base/bit_util.h"
 #include "berberis/calling_conventions/calling_conventions_riscv64.h"
+#include "berberis/runtime/execute_guest.h"
 #include "berberis/guest_abi/guest_arguments.h"
 #include "berberis/guest_os_primitives/guest_thread_manager.h"
 #include "berberis/guest_os_primitives/scoped_pending_signals.h"

@@ -417,14 +417,16 @@ def _gen_att_instruction_variants(
     if label_present:
       print('.p2align 5, 0x90', file=file)
       print('0:', file=file)
+      print('nop', file=file)
       if not insn_name.endswith('SHORT'):
-        for _ in range(256):
+        for _ in range(255):
           print('nop', file=file)
       print('1:', file=file)
     print('%s %s' % (fixed_name, ', '.join(reversed(insn_args))), file=file)
     if label_present:
+      print('nop', file=file)
       if not insn_name.endswith('SHORT'):
-        for _ in range(256):
+        for _ in range(255):
           print('nop', file=file)
       print('2:', file=file)
 

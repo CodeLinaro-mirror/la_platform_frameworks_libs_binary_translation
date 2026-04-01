@@ -23,6 +23,7 @@
 #include <type_traits>  // std::is_same
 
 #include "berberis/assembler/x86_32_or_x86_64.h"
+#include "berberis/base/bit_util.h"
 #include "berberis/base/checks.h"
 
 namespace berberis {
@@ -578,7 +579,7 @@ template <size_t kImmediatesSize>
 constexpr inline auto Assembler::EmitModRM(uint8_t number, auto label_operand)
     -> std::enable_if_t<sizeof(label_operand.label) >= 0> {
   Emit8(0x05 | (number << 3));
-  jumps_.push_back(Jump{&label_operand.label, pc(), false});
+  jumps_.push_back(Jump{&label_operand.label, pc()});
   Emit32(0xffff'fffc - kImmediatesSize);
 }
 

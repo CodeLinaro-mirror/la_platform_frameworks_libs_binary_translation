@@ -29,7 +29,6 @@
 // #include "string.h"
 // #include <bit>  // std::bit_cast
 // #include <type_traits>  // std::is_same_v
-// #include "berberis/base/bit_util.h"
 // #include "berberis/guest_state/guest_addr.h"
 // #include "berberis/guest_state/guest_state.h"
 // #include "berberis/intrinsics/common/intrinsics_float.h"
@@ -4407,8 +4406,8 @@ TEST(TESTSUITE, FpConditionalCompare) {
   };
 
   TestHarness test(code, sizeof(code));
-  test.state()->cpu.v[0] = berberis::bit_cast<uint64_t>(2.0);
-  test.state()->cpu.v[1] = berberis::bit_cast<uint64_t>(1.0);
+  test.state()->cpu.v[0] = std::bit_cast<uint64_t>(2.0);
+  test.state()->cpu.v[1] = std::bit_cast<uint64_t>(1.0);
   // 'eq' is true.
   test.SetNZCV(0b0100);
   EXPECT_TRUE(test.Run());

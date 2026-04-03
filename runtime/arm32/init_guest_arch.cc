@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
-#include "berberis/runtime/init_guest_arch.h"
+
 #include "berberis/kernel_api/kernel_helpers.h"
+
+#include "init_guest_arch.h"
 
 namespace berberis {
 

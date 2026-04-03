@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-#include "berberis/runtime_primitives/runtime_library.h"
+#include "berberis/runtime_library/runtime_library.h"
 
 #include <cstdint>
 #include <cstring>
 
+#include "berberis/base/bit_util.h"
 #include "berberis/base/checks.h"
 #include "berberis/calling_conventions/calling_conventions_arm.h"
 #include "berberis/guest_abi/guest_arguments.h"
@@ -28,6 +29,7 @@
 #include "berberis/guest_state/guest_addr.h"
 #include "berberis/guest_state/guest_state.h"
 #include "berberis/instrument/guest_call.h"
+#include "berberis/runtime/execute_guest.h"
 #include "berberis/runtime_primitives/virtual_guest_call_frame.h"
 
 namespace berberis {

@@ -21,6 +21,7 @@
 #include <unistd.h>
 
 #include <algorithm>  // copy_n, fill_n
+#include <bit>
 #include <cfenv>
 #include <csignal>
 #include <cstdint>
@@ -2096,7 +2097,7 @@ TEST_F(Riscv64InterpreterTest, SyscallWrite) {
   // File descriptor
   SetXReg<10>(state_.cpu, pipefd[1]);
   // String
-  SetXReg<11>(state_.cpu, bit_cast<uint64_t>(&message[0]));
+  SetXReg<11>(state_.cpu, std::bit_cast<uint64_t>(&message[0]));
   // Size
   SetXReg<12>(state_.cpu, sizeof(message));
 

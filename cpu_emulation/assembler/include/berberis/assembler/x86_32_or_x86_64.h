@@ -941,10 +941,9 @@ constexpr inline void Assembler<DerivedAssemblerType>::ResolveJumps() {
         AddRelocation(0, RelocationType::RelocRecoveryPoint, pc, label->position());
         break;
       case kShortJump: {
-        int32_t offset = label->position() - pc;
-        int8_t adjusted_offset = *AddrAs<int8_t>(pc) + offset;
-        CHECK_EQ(*AddrAs<int8_t>(pc) + offset, adjusted_offset);
-        *AddrAs<int8_t>(pc) = adjusted_offset;
+        int32_t offset = *AddrAs<int8_t>(pc) + label->position() - pc;
+        CHECK(IsInRange<int8_t>(offset));
+        *AddrAs<int8_t>(pc) = static_cast<int8_t>(offset);
         break;
       }
       default: {

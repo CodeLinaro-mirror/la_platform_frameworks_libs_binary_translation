@@ -27,11 +27,8 @@
 #include "berberis/guest_os_primitives/guest_thread_manager.h"  // GetCurrentGuestThread
 #include "berberis/guest_os_primitives/scoped_pending_signals.h"
 #include "berberis/guest_state/guest_addr.h"
-#include "berberis/runtime/execute_guest.h"
 #include "berberis/guest_state/guest_state.h"
 #include "berberis/runtime_primitives/virtual_guest_call_frame.h"
-
-#include "init_kernel_args.h"
 
 namespace berberis {
 

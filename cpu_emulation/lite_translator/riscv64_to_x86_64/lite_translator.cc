@@ -368,7 +368,7 @@ void LiteTranslator::BranchRegister(Register base, int16_t offset) {
 }
 
 Register LiteTranslator::Load(Decoder::LoadOperandType operand_type, Register arg, int16_t offset) {
-  x86_64::Assembler::Label* recovery_label = as_.MakeLabel();
+  AssemblerBase::Label* recovery_label = as_.MakeLabel();
   as_.SetRecoveryPoint(recovery_label);
 
   Register res = AllocTempReg();
@@ -402,7 +402,7 @@ Register LiteTranslator::Load(Decoder::LoadOperandType operand_type, Register ar
 
   // TODO(b/144326673): Emit the recovery code at the end of the region so it doesn't interrupt
   // normal code flow with the jump and doesn't negatively affect instruction cache locality.
-  x86_64::Assembler::Label* cont = as_.MakeLabel();
+  AssemblerBase::Label* cont = as_.MakeLabel();
   as_.Jmp(*cont);
   as_.Bind(recovery_label);
   ExitGeneratedCode(GetInsnAddr());
@@ -415,7 +415,7 @@ void LiteTranslator::Store(Decoder::MemoryDataOperandType operand_type,
                            Register arg,
                            int16_t offset,
                            Register data) {
-  x86_64::Assembler::Label* recovery_label = as_.MakeLabel();
+  AssemblerBase::Label* recovery_label = as_.MakeLabel();
   as_.SetRecoveryPoint(recovery_label);
 
   Assembler::Operand asm_memop{.base = arg, .disp = offset};
@@ -438,7 +438,7 @@ void LiteTranslator::Store(Decoder::MemoryDataOperandType operand_type,
 
   // TODO(b/144326673): Emit the recovery code at the end of the region so it doesn't interrupt
   // normal code flow with the jump and doesn't negatively affect instruction cache locality.
-  x86_64::Assembler::Label* cont = as_.MakeLabel();
+  AssemblerBase::Label* cont = as_.MakeLabel();
   as_.Jmp(*cont);
   as_.Bind(recovery_label);
   ExitGeneratedCode(GetInsnAddr());

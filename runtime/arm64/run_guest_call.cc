@@ -21,7 +21,6 @@
 
 #include "berberis/base/bit_util.h"
 #include "berberis/calling_conventions/calling_conventions_arm64.h"
-#include "berberis/runtime/execute_guest.h"
 #include "berberis/guest_abi/guest_arguments_arch.h"
 #include "berberis/guest_os_primitives/guest_thread.h"
 #include "berberis/guest_os_primitives/guest_thread_manager.h"  // GetCurrentGuestThread

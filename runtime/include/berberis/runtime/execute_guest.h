@@ -17,12 +17,12 @@
 #ifndef BERBERIS_RUNTIME_EXECUTE_GUEST_H_
 #define BERBERIS_RUNTIME_EXECUTE_GUEST_H_
 
+#include "berberis/guest_state/guest_addr.h"
 #include "berberis/guest_state/guest_state_opaque.h"
 
 namespace berberis {
 
 void ExecuteGuest(ThreadState* state);
-void ExecuteGuestCall(ThreadState* state);
 
 }  // namespace berberis
 

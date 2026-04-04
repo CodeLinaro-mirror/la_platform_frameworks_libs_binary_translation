@@ -34,7 +34,7 @@
 #include "berberis/guest_state/guest_state.h"
 #include "berberis/kernel_api/sys_mman_emulation.h"
 #include "berberis/proxy_loader/proxy_loader.h"
-#include "berberis/runtime_library/runtime_library.h"                // RunMain
+#include "berberis/runtime_library/runtime_library.h"                // ExecuteGuestCall
 #include "berberis/runtime_primitives/host_function_wrapper_impl.h"  // MakeTrampolineCallable
 #include "berberis/runtime_primitives/virtual_guest_call_frame.h"
 #include "berberis/tiny_loader/tiny_loader.h"

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "init_kernel_args.h"
+#include "berberis/runtime_library/runtime_library.h"
 
 #include <sys/auxv.h>
 #include <unistd.h>

@@ -17,6 +17,7 @@
 #ifndef BERBERIS_DECODER_RISCV64_DECODER_H_
 #define BERBERIS_DECODER_RISCV64_DECODER_H_
 
+#include <bit>
 #include <climits>
 #include <cstdint>
 #include <cstring>
@@ -1424,7 +1425,7 @@ class Decoder {
     };
     const JumpAndLinkArgs args = {
         .dst = 0,
-        .offset = bit_cast<int16_t>(kJHigh[GetBits<8, 5>()]) | kJLow[GetBits<2, 6>()],
+        .offset = std::bit_cast<int16_t>(kJHigh[GetBits<8, 5>()]) | kJLow[GetBits<2, 6>()],
         .insn_len = 2,
     };
     insn_consumer_->JumpAndLink(args);

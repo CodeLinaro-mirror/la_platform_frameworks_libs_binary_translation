@@ -19,10 +19,12 @@
 #ifndef BERBERIS_ASSEMBLER_X86_64_H_
 #define BERBERIS_ASSEMBLER_X86_64_H_
 
+#include <bit>          // std::bit_cast
 #include <type_traits>  // std::is_same
 
 #include "berberis/assembler/x86_32_or_x86_64.h"
-#include "berberis/base/logging.h"
+#include "berberis/base/bit_util.h"
+#include "berberis/base/checks.h"
 
 namespace berberis {
 
@@ -226,7 +228,7 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
     // First we do call - with address taken from last 8 bytes, then we jump over
     // these 8 bytes.
     Emit64(0x08eb'0000'0002'15ff);
-    Emit64(bit_cast<int64_t>(target));
+    Emit64(std::bit_cast<int64_t>(target));
   }
 
   // Unhide Jcc(Label), hidden by special version below.
@@ -258,7 +260,7 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
     // only jump ±2GiB and in 64 bit mode which is not enough to reach arbitrary
     // address), then jmpq with address stored right after jmpq.
     Emit64(0x0000'0000'25ff'0e70 | static_cast<int8_t>(ToReverseCond(cc)));
-    Emit64(bit_cast<int64_t>(target));
+    Emit64(std::bit_cast<int64_t>(target));
   }
 
   // Emit short relative jcc to an absolute address.
@@ -277,10 +279,11 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
     Emit8(0x80 | static_cast<uint8_t>(cc));
     Emit32(0xcccc'cccc);
     // Set last 4 bytes to displacement from current pc to 'target'.
-    AddRelocation(pc() - 4, RelocationType::RelocAbsToDisp32, pc(), bit_cast<intptr_t>(target));
+    AddRelocation(
+        pc() - 4, RelocationType::RelocAbsToDisp32, pc(), std::bit_cast<intptr_t>(target));
   }
 
-  void Jcc(Condition cc, const void* target) { Jcc(cc, bit_cast<uintptr_t>(target)); }
+  void Jcc(Condition cc, const void* target) { Jcc(cc, std::bit_cast<uintptr_t>(target)); }
 
   // Unhide Jmp(Reg), hidden by special version below.
   using BaseAssembler::Jmp;
@@ -303,7 +306,7 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
     // addressing (with offset 0).
     Emit16(0x25ff);
     Emit32(0x0000'0000);
-    Emit64(bit_cast<int64_t>(target));
+    Emit64(std::bit_cast<int64_t>(target));
   }
 
   // Emit short relative jump to an absolute address.
@@ -316,7 +319,7 @@ class Assembler : public x86_32_or_x86_64::Assembler<Assembler> {
     AddRelocation(pc() - 4, RelocationType::RelocAbsToDisp32, pc(), target);
   }
 
-  void Jmp(const void* target) { Jmp(bit_cast<uintptr_t>(target)); }
+  void Jmp(const void* target) { Jmp(std::bit_cast<uintptr_t>(target)); }
 
 #endif
 
@@ -576,7 +579,7 @@ template <size_t kImmediatesSize>
 constexpr inline auto Assembler::EmitModRM(uint8_t number, auto label_operand)
     -> std::enable_if_t<sizeof(label_operand.label) >= 0> {
   Emit8(0x05 | (number << 3));
-  jumps_.push_back(Jump{&label_operand.label, pc(), false});
+  jumps_.push_back(Jump{&label_operand.label, pc()});
   Emit32(0xffff'fffc - kImmediatesSize);
 }
 
